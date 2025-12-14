@@ -1,0 +1,96 @@
+{
+  "name": "mailclient",
+  "version": "0.1.0",
+  "description": "Privacy-focused mail client with LLM-powered tagging",
+  "author": "Pluribus",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "dev": "vite",
+    "dev:electron": "tsc -p tsconfig.main.json && mkdir -p dist/adapters/db && cp src/adapters/db/schema.sql dist/adapters/db/ && electron .",
+    "build": "rm -f tsconfig.main.tsbuildinfo && tsc -p tsconfig.main.json && cp src/adapters/db/schema.sql dist/adapters/db/ && vite build",
+    "start": "electron .",
+    "typecheck": "tsc --noEmit",
+    "dist": "npm run build && electron-builder --mac",
+    "dist:dmg": "npm run build && electron-builder --mac dmg"
+  },
+  "build": {
+    "appId": "com.pluribus.mailclient",
+    "productName": "Mail",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "src/adapters/db/schema.sql",
+        "to": "schema.sql"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg"
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "dmg": {
+      "title": "${productName}-${version}",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.27.0",
+    "@radix-ui/react-dialog": "^1.1.4",
+    "@radix-ui/react-scroll-area": "^1.2.2",
+    "@radix-ui/react-tooltip": "^1.1.6",
+    "better-sqlite3": "^11.3.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "date-fns": "^3.6.0",
+    "dompurify": "^3.1.0",
+    "electron-store": "^8.2.0",
+    "imapflow": "^1.0.164",
+    "mailparser": "^3.7.1",
+    "nodemailer": "^6.9.15",
+    "obra-icons-react": "^1.23.1",
+    "tailwind-merge": "^2.6.0",
+    "zustand": "^4.5.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/typography": "^0.5.15",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/dompurify": "^3.0.5",
+    "@types/mailparser": "^3.4.6",
+    "@types/node": "^22.0.0",
+    "@types/nodemailer": "^6.4.16",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "electron": "^32.0.0",
+    "electron-builder": "^26.0.12",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "sharp": "^0.34.5",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0"
+  }
+}

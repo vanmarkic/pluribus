@@ -1,0 +1,377 @@
+/**
+ * IMAP Sync Adapter
+ * 
+ * Implements mail sync using ImapFlow.
+ * Optimized for large mailboxes with lazy body loading.
+ */
+
+import { ImapFlow } from 'imapflow';
+import { simpleParser } from 'mailparser';
+import type { MailSync, EmailRepo, AttachmentRepo, FolderRepo, SecureStorage } from '../../core/ports';
+import type { Account, Email, EmailBody, SyncProgress, SyncOptions } from '../../core/domain';
+
+type ProgressCallback = (p: SyncProgress) => void;
+
+// Connection TTL: close idle connections after 10 minutes
+const CONNECTION_TTL_MS = 10 * 60 * 1000;
+
+// ============================================
+// Row Mapper (IMAP message -> Domain Email)
+// ============================================
+
+type ImapMessage = {
+  uid: number;
+  envelope: {
+    messageId?: string;
+    subject?: string;
+    from?: Array<{ address?: string; name?: string }>;
+    to?: Array<{ address?: string }>;
+    date?: Date;
+  };
+  flags?: Set<string>;
+  size?: number;
+  bodyStructure?: unknown;
+};
+
+function mapImapToEmail(
+  msg: ImapMessage,
+  accountId: number,
+  folderId: number,
+  hasAttachments: boolean
+): Omit<Email, 'id'> {
+  const env = msg.envelope;
+  return {
+    messageId: env.messageId || `local-${Date.now()}-${msg.uid}`,
+    accountId,
+    folderId,
+    uid: msg.uid,
+    subject: env.subject || '(no subject)',
+    from: {
+      address: env.from?.[0]?.address || 'unknown',
+      name: env.from?.[0]?.name || null,
+    },
+    to: (env.to || []).map((a) => a.address || ''),
+    date: env.date || new Date(),
+    snippet: '',
+    sizeBytes: msg.size || 0,
+    isRead: msg.flags?.has('\\Seen') || false,
+    isStarred: msg.flags?.has('\\Flagged') || false,
+    hasAttachments,
+    bodyFetched: false,
+  };
+}
+
+// Standard IMAP folder names (vary by provider)
+export const STANDARD_FOLDERS = {
+  inbox: ['INBOX'],
+  sent: ['Sent', 'Sent Items', 'Sent Mail', '[Gmail]/Sent Mail'],
+  drafts: ['Drafts', '[Gmail]/Drafts'],
+  trash: ['Trash', 'Deleted Items', '[Gmail]/Trash'],
+  archive: ['Archive', 'All Mail', '[Gmail]/All Mail'],
+} as const;
+
+export function createMailSync(
+  emailRepo: EmailRepo,
+  attachmentRepo: AttachmentRepo,
+  folderRepo: FolderRepo,
+  secrets: SecureStorage
+): MailSync {
+  const connections = new Map<number, { client: ImapFlow; lastUsed: number }>();
+  const progressCallbacks: ProgressCallback[] = [];
+
+  // Periodic cleanup of stale connections
+  const cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [accountId, conn] of connections.entries()) {
+      if (now - conn.lastUsed > CONNECTION_TTL_MS) {
+        try { conn.client.logout(); } catch {}
+        connections.delete(accountId);
+      }
+    }
+  }, 60000); // Check every minute
+
+  // Clear interval on process exit
+  if (typeof process !== 'undefined') {
+    process.on('beforeExit', () => clearInterval(cleanupInterval));
+  }
+
+  function emit(progress: SyncProgress) {
+    progressCallbacks.forEach(cb => {
+      try { cb(progress); } catch {}
+    });
+  }
+
+  async function getConnection(account: Account): Promise<ImapFlow> {
+    const existing = connections.get(account.id);
+    if (existing?.client?.usable) {
+      existing.lastUsed = Date.now();
+      return existing.client;
+    }
+
+    const password = await secrets.getPassword(account.email);
+    if (!password) throw new Error(`No password for account ${account.email}. Please set it first.`);
+
+    const client = new ImapFlow({
+      host: account.imapHost,
+      port: account.imapPort,
+      secure: account.imapPort === 993,
+      auth: { user: account.username, pass: password },
+      logger: false,
+      greetingTimeout: 10000,
+      socketTimeout: 30000,
+    });
+
+    await client.connect();
+    connections.set(account.id, { client, lastUsed: Date.now() });
+    return client;
+  }
+
+  function checkAttachments(structure: any): boolean {
+    if (!structure) return false;
+    const check = (part: any): boolean => {
+      if (part.disposition === 'attachment') return true;
+      if (part.childNodes) return part.childNodes.some(check);
+      return false;
+    };
+    return check(structure);
+  }
+
+  return {
+    async sync(account, options: SyncOptions = {}) {
+      // Poka-yoke: Prevent sync with invalid/mock accounts that would cause FK violations
+      if (!account.id || account.id <= 0) {
+        throw new Error(`Cannot sync with invalid account ID: ${account.id}. Use testConnection() for testing.`);
+      }
+
+      const {
+        headersOnly = true,
+        batchSize = 500,
+        maxMessages,
+        folder = 'INBOX',
+      } = options;
+
+      let totalNew = 0;
+      const newEmailIds: number[] = [];
+
+      try {
+        emit({ accountId: account.id, folder, phase: 'connecting', current: 0, total: 0, newCount: 0 });
+
+        const client = await getConnection(account);
+        const lock = await client.getMailboxLock(folder);
+
+        try {
+          const mailbox = client.mailbox;
+          if (!mailbox) throw new Error(`Could not open ${folder}`);
+
+          // Get or create folder record
+          const uidValidity = mailbox.uidValidity ? Number(mailbox.uidValidity) : undefined;
+          const folderRecord = await folderRepo.getOrCreate(
+            account.id, folder,
+            folder.split('/').pop() || folder,
+            uidValidity
+          );
+
+          // Check UIDVALIDITY change
+          if (folderRecord.uidValidity && uidValidity && folderRecord.uidValidity !== uidValidity) {
+            console.warn(`UIDVALIDITY changed for ${folder}, clearing`);
+            await folderRepo.clear(folderRecord.id);
+          }
+
+          emit({ accountId: account.id, folder, phase: 'counting', current: 0, total: 0, newCount: 0 });
+
+          // Search for new messages
+          const searchCriteria: any = folderRecord.lastUid > 0
+            ? { uid: `${folderRecord.lastUid + 1}:*` }
+            : { all: true };
+
+          const searchResult = await client.search(searchCriteria, { uid: true });
+          let uids = Array.isArray(searchResult) ? searchResult : [];
+          if (maxMessages && uids.length > maxMessages) {
+            uids = uids.slice(-maxMessages);
+          }
+
+          const total = uids.length;
+          if (total === 0) {
+            emit({ accountId: account.id, folder, phase: 'complete', current: 0, total: 0, newCount: 0 });
+            return { newCount: 0, newEmailIds: [] };
+          }
+
+          emit({ accountId: account.id, folder, phase: 'fetching', current: 0, total, newCount: 0 });
+
+          let processed = 0;
+          let maxUid = folderRecord.lastUid;
+
+          // Process in batches
+          for (let i = 0; i < uids.length; i += batchSize) {
+            const batch = uids.slice(i, i + batchSize);
+            const emails: Omit<Email, 'id'>[] = [];
+
+            for await (const msg of client.fetch(batch, {
+              uid: true,
+              envelope: true,
+              flags: true,
+              bodyStructure: true,
+              size: true,
+            })) {
+              if (!msg.envelope) continue;
+
+              const email = mapImapToEmail(
+                msg as ImapMessage,
+                account.id,
+                folderRecord.id,
+                checkAttachments(msg.bodyStructure)
+              );
+              emails.push(email);
+
+              if (msg.uid > maxUid) maxUid = msg.uid;
+              processed++;
+            }
+
+            // Batch insert
+            const result = await emailRepo.insertBatch(emails);
+            totalNew += result.count;
+            newEmailIds.push(...result.ids);
+
+            emit({
+              accountId: account.id, folder,
+              phase: 'storing',
+              current: processed, total,
+              newCount: totalNew,
+            });
+
+            // Small delay between batches
+            if (i + batchSize < uids.length) {
+              await new Promise(r => setTimeout(r, 50));
+            }
+          }
+
+          // Update sync state
+          if (maxUid > folderRecord.lastUid) {
+            await folderRepo.updateLastUid(folderRecord.id, maxUid);
+          }
+
+          emit({
+            accountId: account.id, folder,
+            phase: 'complete',
+            current: total, total,
+            newCount: totalNew,
+          });
+
+        } finally {
+          lock.release();
+        }
+
+      } catch (error) {
+        emit({
+          accountId: account.id, folder,
+          phase: 'error',
+          current: 0, total: 0, newCount: 0,
+          error: String(error),
+        });
+        throw error;
+      }
+
+      return { newCount: totalNew, newEmailIds };
+    },
+
+    async fetchBody(account, emailId) {
+      // Check cache first
+      const cached = await emailRepo.getBody(emailId);
+      if (cached) return cached;
+
+      const email = await emailRepo.findById(emailId);
+      if (!email) throw new Error('Email not found');
+
+      const client = await getConnection(account);
+      const lock = await client.getMailboxLock('INBOX'); // TODO: get actual folder
+
+      try {
+        let text = '';
+        let html = '';
+
+        for await (const msg of client.fetch([email.uid], { uid: true, source: true })) {
+          if (msg.source) {
+            const parsed = await simpleParser(msg.source);
+            text = parsed.text || '';
+            html = (typeof parsed.html === 'string' ? parsed.html : '') || '';
+
+            // Save attachments
+            if (parsed.attachments && parsed.attachments.length > 0) {
+              for (const att of parsed.attachments) {
+                await attachmentRepo.save({
+                  emailId,
+                  filename: att.filename || 'unnamed',
+                  contentType: att.contentType || 'application/octet-stream',
+                  size: att.size || 0,
+                  cid: att.cid || undefined,
+                  content: att.content,
+                });
+              }
+            }
+          }
+        }
+
+        const body = { text, html };
+        await emailRepo.saveBody(emailId, body);
+        return body;
+
+      } finally {
+        lock.release();
+      }
+    },
+
+    async disconnect(accountId) {
+      if (accountId === 0) {
+        // Disconnect all
+        for (const [id, conn] of connections.entries()) {
+          try { await conn.client.logout(); } catch {}
+          connections.delete(id);
+        }
+        clearInterval(cleanupInterval);
+        return;
+      }
+      const conn = connections.get(accountId);
+      if (conn) {
+        try { await conn.client.logout(); } catch {}
+        connections.delete(accountId);
+      }
+    },
+
+    onProgress(cb) {
+      progressCallbacks.push(cb);
+      return () => {
+        const idx = progressCallbacks.indexOf(cb);
+        if (idx >= 0) progressCallbacks.splice(idx, 1);
+      };
+    },
+
+    async testConnection(host, port, username, password) {
+      // Test-only: connect and disconnect without any database operations
+      const client = new ImapFlow({
+        host,
+        port,
+        secure: port === 993,
+        auth: { user: username, pass: password },
+        logger: false,
+        greetingTimeout: 10000,
+        socketTimeout: 15000,
+      });
+
+      try {
+        await client.connect();
+        await client.logout();
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+
+    getDefaultFolders() {
+      // Return all folder variants to try - sync will skip non-existent ones
+      return [
+        ...STANDARD_FOLDERS.inbox,
+        ...STANDARD_FOLDERS.sent,
+      ];
+    },
+  };
+}
