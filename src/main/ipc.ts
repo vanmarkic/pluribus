@@ -253,6 +253,23 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   ipcMain.handle('llm:getEmailBudget', () => deps.classifier.getEmailBudget());
 
   // ==========================================
+  // LLM Provider
+  // ==========================================
+
+  ipcMain.handle('llm:validate', async (_, key) => {
+    const k = key ? assertString(key, 'key', 500) : '';
+    return useCases.validateLLMProvider(k);
+  });
+
+  ipcMain.handle('llm:listModels', () => {
+    return useCases.listLLMModels();
+  });
+
+  ipcMain.handle('llm:testConnection', () => {
+    return useCases.testLLMConnection();
+  });
+
+  // ==========================================
   // AI Sort (Review Queue & Stats)
   // ==========================================
 
@@ -387,10 +404,20 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
     if (k === 'llm') {
       if (!value || typeof value !== 'object') throw new Error('Invalid llm config');
       const v = value as Record<string, unknown>;
-      const validModels = ['claude-sonnet-4-20250514', 'claude-haiku-4-20250514'];
-      if (v.model !== undefined && !validModels.includes(v.model as string)) {
-        throw new Error('Invalid model');
+
+      // Validate provider
+      if (v.provider !== undefined) {
+        const validProviders = ['anthropic', 'ollama'];
+        if (!validProviders.includes(v.provider as string)) {
+          throw new Error('Invalid provider');
+        }
       }
+
+      // Validate model (just check it's a string, actual model comes from API)
+      if (v.model !== undefined) {
+        assertString(v.model, 'model', 100);
+      }
+
       if (v.dailyBudget !== undefined) assertPositiveInt(v.dailyBudget, 'dailyBudget');
       if (v.dailyEmailLimit !== undefined) assertPositiveInt(v.dailyEmailLimit, 'dailyEmailLimit');
       if (v.autoClassify !== undefined) assertBoolean(v.autoClassify, 'autoClassify');
@@ -401,11 +428,14 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
         }
       }
       if (v.reclassifyCooldownDays !== undefined) {
-        const validCooldowns = [1, 3, 7, 14, -1]; // -1 = never (manual only)
+        const validCooldowns = [1, 3, 7, 14, -1];
         const cd = v.reclassifyCooldownDays;
         if (typeof cd !== 'number' || !validCooldowns.includes(cd)) {
           throw new Error('reclassifyCooldownDays must be 1, 3, 7, 14, or -1 (never)');
         }
+      }
+      if (v.ollamaServerUrl !== undefined) {
+        assertString(v.ollamaServerUrl, 'ollamaServerUrl', 200);
       }
     }
     return config.set(k as AllowedConfigKey, value);
