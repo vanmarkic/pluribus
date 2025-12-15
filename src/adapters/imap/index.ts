@@ -10,6 +10,7 @@ import { simpleParser } from 'mailparser';
 import nodemailer from 'nodemailer';
 import type { MailSync, EmailRepo, AttachmentRepo, FolderRepo, SecureStorage, SentMessage } from '../../core/ports';
 import type { Account, Email, EmailBody, SyncProgress, SyncOptions } from '../../core/domain';
+import { DEFAULT_SYNC_DAYS, MAX_SYNC_EMAILS } from '../../core/domain';
 
 type ProgressCallback = (p: SyncProgress) => void;
 
@@ -135,6 +136,7 @@ export function createMailSync(
   secrets: SecureStorage
 ): MailSync {
   const connections = new Map<number, { client: ImapFlow; lastUsed: number }>();
+  const abortControllers = new Map<number, AbortController>();
   const progressCallbacks: ProgressCallback[] = [];
 
   // Periodic cleanup of stale connections
@@ -212,6 +214,10 @@ export function createMailSync(
       let totalNew = 0;
       const newEmailIds: number[] = [];
 
+      // Create abort controller for this sync
+      const abortController = new AbortController();
+      abortControllers.set(account.id, abortController);
+
       try {
         emit({ accountId: account.id, folder, phase: 'connecting', current: 0, total: 0, newCount: 0 });
 
@@ -243,17 +249,20 @@ export function createMailSync(
           const searchCriteria: any = {};
           if (folderRecord.lastUid > 0) {
             searchCriteria.uid = `${folderRecord.lastUid + 1}:*`;
-          } else if (since) {
-            // Initial sync with date filter - use SINCE for efficient server-side filtering
-            searchCriteria.since = since;
           } else {
-            searchCriteria.all = true;
+            // Poka-yoke: Initial sync ALWAYS uses date filter to prevent downloading years of email
+            const defaultSince = new Date(Date.now() - DEFAULT_SYNC_DAYS * 24 * 60 * 60 * 1000);
+            searchCriteria.since = since || defaultSince;
           }
 
           const searchResult = await client.search(searchCriteria, { uid: true });
           let uids = Array.isArray(searchResult) ? searchResult : [];
-          if (maxMessages && uids.length > maxMessages) {
-            uids = uids.slice(-maxMessages);
+
+          // Poka-yoke: Hard limit to prevent runaway syncs
+          const effectiveMax = maxMessages ? Math.min(maxMessages, MAX_SYNC_EMAILS) : MAX_SYNC_EMAILS;
+          if (uids.length > effectiveMax) {
+            console.warn(`Truncating ${folder} sync: ${uids.length} emails found, limiting to ${effectiveMax} most recent`);
+            uids = uids.slice(-effectiveMax);
           }
 
           const total = uids.length;
@@ -269,6 +278,12 @@ export function createMailSync(
 
           // Process in batches
           for (let i = 0; i < uids.length; i += batchSize) {
+            // Check if sync was cancelled
+            if (abortController.signal.aborted) {
+              emit({ accountId: account.id, folder, phase: 'cancelled', current: processed, total, newCount: totalNew });
+              return { newCount: totalNew, newEmailIds };
+            }
+
             const batch = uids.slice(i, i + batchSize);
             const emails: Omit<Email, 'id'>[] = [];
 
@@ -348,8 +363,17 @@ export function createMailSync(
       const email = await emailRepo.findById(emailId);
       if (!email) throw new Error('Email not found');
 
+      // Poka-yoke: Verify email belongs to this account
+      if (email.accountId !== account.id) {
+        throw new Error(`Account mismatch: email belongs to account ${email.accountId}, not ${account.id}`);
+      }
+
+      // Look up the folder path - UIDs are only unique within a folder
+      const folder = await folderRepo.findById(email.folderId);
+      if (!folder) throw new Error('Folder not found');
+
       const client = await getConnection(account);
-      const lock = await client.getMailboxLock('INBOX'); // TODO: get actual folder
+      const lock = await client.getMailboxLock(folder.path);
 
       try {
         let text = '';
@@ -399,6 +423,26 @@ export function createMailSync(
       const conn = connections.get(accountId);
       if (conn) {
         try { await conn.client.logout(); } catch {}
+        connections.delete(accountId);
+      }
+    },
+
+    async cancel(accountId) {
+      // Abort any in-progress sync
+      const controller = abortControllers.get(accountId);
+      if (controller) {
+        controller.abort();
+        abortControllers.delete(accountId);
+      }
+
+      // Close connection
+      const conn = connections.get(accountId);
+      if (conn) {
+        try {
+          await conn.client.logout();
+        } catch {
+          // Ignore logout errors during cancel
+        }
         connections.delete(accountId);
       }
     },
