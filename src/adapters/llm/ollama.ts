@@ -45,11 +45,21 @@ export function createOllamaProvider(serverUrl = DEFAULT_SERVER_URL): LLMProvide
           signal: AbortSignal.timeout(5000),
         });
         if (!response.ok) {
-          return { connected: false, error: `HTTP ${response.status}` };
+          return { connected: false, error: `Server returned ${response.status}` };
+        }
+        const data = await response.json();
+        if (!data.models || data.models.length === 0) {
+          return { connected: true, error: "No models installed. Run 'ollama pull llama3.2' to install one." };
         }
         return { connected: true };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        if (message.includes('ECONNREFUSED') || message.includes('fetch failed')) {
+          return { connected: false, error: "Ollama is not running. Start it with 'ollama serve'" };
+        }
+        if (message.includes('timeout') || message.includes('aborted')) {
+          return { connected: false, error: "Connection timed out. Is Ollama running?" };
+        }
         return { connected: false, error: message };
       }
     },

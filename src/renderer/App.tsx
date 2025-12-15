@@ -5,7 +5,7 @@
  * Clean design matching reference.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { EmailList } from './components/EmailList';
 import { DraftsList } from './components/DraftsList';
@@ -426,6 +426,9 @@ function ClassificationSettings() {
   const [initialModel, setInitialModel] = useState<string | null>(null);
   const [llmConfigChanged, setLlmConfigChanged] = useState(false);
 
+  // Cache models per provider to avoid refetching on every settings load
+  const modelCache = useRef<Record<string, { id: string; displayName: string }[]>>({});
+
   // Load config on mount
   useEffect(() => {
     const loadConfig = async () => {
@@ -476,9 +479,18 @@ function ClassificationSettings() {
         }
       }
 
+      // Check cache first
+      const cacheKey = config.provider;
+      if (modelCache.current[cacheKey]?.length > 0) {
+        setModels(modelCache.current[cacheKey]);
+        return;
+      }
+
       setLoadingModels(true);
       try {
         const modelList = await window.mailApi.llm.listModels();
+        // Store in cache
+        modelCache.current[cacheKey] = modelList;
         setModels(modelList);
 
         // Auto-select first model if current model is empty or not in list
@@ -530,8 +542,10 @@ function ClassificationSettings() {
         await window.mailApi.credentials.setApiKey('anthropic', apiKeyInput);
         setHasApiKey(true);
         setApiKeyInput('');
-        // Reload models after key is saved
+        // Clear cache and reload models after key is saved
+        delete modelCache.current['anthropic'];
         const modelList = await window.mailApi.llm.listModels();
+        modelCache.current['anthropic'] = modelList;
         setModels(modelList);
 
         // Auto-select first model if current model is empty or not in list
@@ -558,7 +572,10 @@ function ClassificationSettings() {
       const status = await window.mailApi.llm.testConnection();
       setOllamaStatus(status);
       if (status.connected) {
+        // Clear cache and reload models
+        delete modelCache.current['ollama'];
         const modelList = await window.mailApi.llm.listModels();
+        modelCache.current['ollama'] = modelList;
         setModels(modelList);
 
         // Auto-select first model if current model is empty or not in list
