@@ -71,6 +71,9 @@ declare global {
         classifyAndApply: (emailId: number) => Promise<any>;
         getBudget: () => Promise<{ used: number; limit: number; allowed: boolean }>;
         getEmailBudget: () => Promise<{ used: number; limit: number; allowed: boolean }>;
+        validate: (key?: string) => Promise<{ valid: boolean; error?: string }>;
+        listModels: () => Promise<{ id: string; displayName: string; createdAt?: string }[]>;
+        testConnection: () => Promise<{ connected: boolean; error?: string }>;
       };
       config: {
         get: (key: string) => Promise<any>;
