@@ -333,8 +333,9 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
     return useCases.getPendingReviewQueue(validated);
   });
 
-  ipcMain.handle('aiSort:getStats', () => {
-    return useCases.getClassificationStats();
+  ipcMain.handle('aiSort:getStats', (_, accountId) => {
+    const id = assertOptionalPositiveInt(accountId, 'accountId');
+    return useCases.getClassificationStats(id);
   });
 
   ipcMain.handle('aiSort:getPendingCount', () => {
@@ -382,18 +383,20 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
     return useCases.retryClassification(assertPositiveInt(emailId, 'emailId'));
   });
 
-  ipcMain.handle('aiSort:getConfusedPatterns', (_, limit) => {
+  ipcMain.handle('aiSort:getConfusedPatterns', (_, limit, accountId) => {
     const l = assertOptionalPositiveInt(limit, 'limit') ?? 5;
-    return useCases.getConfusedPatterns(l);
+    const id = assertOptionalPositiveInt(accountId, 'accountId');
+    return useCases.getConfusedPatterns(l, id);
   });
 
   ipcMain.handle('aiSort:clearConfusedPatterns', () => {
     return useCases.clearConfusedPatterns();
   });
 
-  ipcMain.handle('aiSort:getRecentActivity', (_, limit) => {
+  ipcMain.handle('aiSort:getRecentActivity', (_, limit, accountId) => {
     const l = assertOptionalPositiveInt(limit, 'limit') ?? 10;
-    return useCases.getRecentActivity(l);
+    const id = assertOptionalPositiveInt(accountId, 'accountId');
+    return useCases.getRecentActivity(l, id);
   });
 
   ipcMain.handle('aiSort:bulkAccept', (_, emailIds) => {

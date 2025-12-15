@@ -2060,7 +2060,7 @@ describe('getConfusedPatterns', () => {
 
     const result = await getConfusedPatterns({ classificationState })(5);
 
-    expect(classificationState.listConfusedPatterns).toHaveBeenCalledWith(5);
+    expect(classificationState.listConfusedPatterns).toHaveBeenCalledWith(5, undefined);
     expect(result).toHaveLength(1);
     expect(result[0].dismissalCount).toBe(12);
   });

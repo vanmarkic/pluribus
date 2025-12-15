@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useCallback } from 'react';
-import { useEmailStore, useUIStore } from '../stores';
+import { useEmailStore, useUIStore, useAccountStore } from '../stores';
 
 type ShortcutHandler = () => void;
 
@@ -36,8 +36,9 @@ export function useKeyboardShortcuts(handlers: {
   onSearch?: ShortcutHandler;
   onRefresh?: ShortcutHandler;
 }) {
-  const { emails, selectedId, selectEmail, toggleStar, archive, markRead } = useEmailStore();
+  const { emails, selectedId, selectEmail, toggleStar, archive, markRead, setFilter } = useEmailStore();
   const { setView } = useUIStore();
+  const { selectedAccountId } = useAccountStore();
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     // Ignore if typing in input/textarea
@@ -161,9 +162,12 @@ export function useKeyboardShortcuts(handlers: {
     if (e.key === 'g' && !ctrl) {
       e.preventDefault();
       setView('inbox');
+      if (selectedAccountId) {
+        setFilter({ folderPath: 'INBOX', tagId: undefined, unreadOnly: false, starredOnly: false }, selectedAccountId);
+      }
       return;
     }
-  }, [emails, selectedId, selectEmail, toggleStar, archive, markRead, setView, handlers]);
+  }, [emails, selectedId, selectEmail, toggleStar, archive, markRead, setView, setFilter, selectedAccountId, handlers]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);

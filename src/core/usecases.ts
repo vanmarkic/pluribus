@@ -510,8 +510,8 @@ export const getFailedClassifications = (deps: Pick<Deps, 'classificationState' 
   };
 
 export const getClassificationStats = (deps: Pick<Deps, 'classificationState' | 'config' | 'classifier'>) =>
-  async (): Promise<ClassificationStats> => {
-    const stats = await deps.classificationState.getStats();
+  async (accountId?: number): Promise<ClassificationStats> => {
+    const stats = await deps.classificationState.getStats(accountId);
     const budget = deps.classifier.getEmailBudget();
 
     return {
@@ -622,16 +622,16 @@ export const retryClassification = (deps: Pick<Deps, 'emails' | 'tags' | 'classi
   };
 
 export const getConfusedPatterns = (deps: Pick<Deps, 'classificationState'>) =>
-  (limit = 5): Promise<ConfusedPattern[]> =>
-    deps.classificationState.listConfusedPatterns(limit);
+  (limit = 5, accountId?: number): Promise<ConfusedPattern[]> =>
+    deps.classificationState.listConfusedPatterns(limit, accountId);
 
 export const clearConfusedPatterns = (deps: Pick<Deps, 'classificationState'>) =>
   (): Promise<void> =>
     deps.classificationState.clearConfusedPatterns();
 
 export const getRecentActivity = (deps: Pick<Deps, 'classificationState'>) =>
-  (limit = 10): Promise<ClassificationFeedback[]> =>
-    deps.classificationState.listRecentFeedback(limit);
+  (limit = 10, accountId?: number): Promise<ClassificationFeedback[]> =>
+    deps.classificationState.listRecentFeedback(limit, accountId);
 
 export const bulkApplyTag = (deps: Pick<Deps, 'classificationState' | 'tags'>) =>
   async (emailIds: number[], tagSlug: string): Promise<{ applied: number; failed: number }> => {

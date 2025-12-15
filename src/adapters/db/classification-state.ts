@@ -227,7 +227,18 @@ export function createClassificationStateRepo(getDb: () => Database.Database): C
       );
     },
 
-    async listRecentFeedback(limit = 10) {
+    async listRecentFeedback(limit = 10, accountId?: number) {
+      if (accountId) {
+        const rows = getDb().prepare(`
+          SELECT cf.* FROM classification_feedback cf
+          JOIN emails e ON cf.email_id = e.id
+          WHERE e.account_id = ?
+          ORDER BY cf.created_at DESC
+          LIMIT ?
+        `).all(accountId, limit);
+        return rows.map(mapFeedback);
+      }
+
       const rows = getDb().prepare(`
         SELECT * FROM classification_feedback
         ORDER BY created_at DESC
@@ -237,32 +248,57 @@ export function createClassificationStateRepo(getDb: () => Database.Database): C
       return rows.map(mapFeedback);
     },
 
-    async getStats() {
+    async getStats(accountId?: number) {
       const db = getDb();
 
-      const todayRow = db.prepare(`
-        SELECT COUNT(*) as count FROM classification_state
-        WHERE date(classified_at) = date('now')
-      `).get() as { count: number };
+      let todayRow: { count: number };
+      let pendingRow: { count: number };
+      let priorityRows: { priority: string; count: number }[];
 
-      const pendingRow = db.prepare(`
-        SELECT COUNT(*) as count FROM classification_state
-        WHERE status = 'pending_review'
-      `).get() as { count: number };
+      if (accountId) {
+        todayRow = db.prepare(`
+          SELECT COUNT(*) as count FROM classification_state cs
+          JOIN emails e ON cs.email_id = e.id
+          WHERE date(cs.classified_at) = date('now') AND e.account_id = ?
+        `).get(accountId) as { count: number };
 
-      const accuracy = await this.getAccuracy30Day();
+        pendingRow = db.prepare(`
+          SELECT COUNT(*) as count FROM classification_state cs
+          JOIN emails e ON cs.email_id = e.id
+          WHERE cs.status = 'pending_review' AND e.account_id = ?
+        `).get(accountId) as { count: number };
 
+        priorityRows = db.prepare(`
+          SELECT cs.priority, COUNT(*) as count FROM classification_state cs
+          JOIN emails e ON cs.email_id = e.id
+          WHERE cs.priority IS NOT NULL AND e.account_id = ?
+          GROUP BY cs.priority
+        `).all(accountId) as { priority: string; count: number }[];
+      } else {
+        todayRow = db.prepare(`
+          SELECT COUNT(*) as count FROM classification_state
+          WHERE date(classified_at) = date('now')
+        `).get() as { count: number };
+
+        pendingRow = db.prepare(`
+          SELECT COUNT(*) as count FROM classification_state
+          WHERE status = 'pending_review'
+        `).get() as { count: number };
+
+        priorityRows = db.prepare(`
+          SELECT priority, COUNT(*) as count FROM classification_state
+          WHERE priority IS NOT NULL
+          GROUP BY priority
+        `).all() as { priority: string; count: number }[];
+      }
+
+      const accuracy = await this.getAccuracy30Day(accountId);
+
+      // Budget is global (not per-account)
       const budgetRow = db.prepare(`
         SELECT COALESCE(SUM(tokens), 0) as used FROM llm_usage
         WHERE date = date('now')
       `).get() as { used: number };
-
-      // Priority breakdown
-      const priorityRows = db.prepare(`
-        SELECT priority, COUNT(*) as count FROM classification_state
-        WHERE priority IS NOT NULL
-        GROUP BY priority
-      `).all() as { priority: string; count: number }[];
 
       const priorityBreakdown = { high: 0, normal: 0, low: 0 };
       for (const row of priorityRows) {
@@ -281,7 +317,17 @@ export function createClassificationStateRepo(getDb: () => Database.Database): C
       };
     },
 
-    async getAccuracy30Day() {
+    async getAccuracy30Day(accountId?: number) {
+      if (accountId) {
+        const row = getDb().prepare(`
+          SELECT AVG(cf.accuracy_score) as avg
+          FROM classification_feedback cf
+          JOIN emails e ON cf.email_id = e.id
+          WHERE cf.created_at > datetime('now', '-30 days') AND e.account_id = ?
+        `).get(accountId) as { avg: number | null };
+        return row.avg ?? 0;
+      }
+
       const row = getDb().prepare(`
         SELECT AVG(accuracy_score) as avg
         FROM classification_feedback

@@ -8,9 +8,10 @@ import { IconSpinnerBall, IconBarChart, IconClock3, IconArrowUp } from 'obra-ico
 type AIDashboardProps = {
   onClassifyUnprocessed: () => void;
   onClearCache: () => void;
+  accountId?: number;
 };
 
-export function AIDashboard({ onClassifyUnprocessed, onClearCache }: AIDashboardProps) {
+export function AIDashboard({ onClassifyUnprocessed, onClearCache, accountId }: AIDashboardProps) {
   const [stats, setStats] = useState<AIStats | null>(null);
   const [patterns, setPatterns] = useState<ConfusedPattern[]>([]);
   const [activity, setActivity] = useState<ClassificationFeedback[]>([]);
@@ -20,9 +21,9 @@ export function AIDashboard({ onClassifyUnprocessed, onClearCache }: AIDashboard
   const loadData = async () => {
     try {
       const [statsData, patternsData, activityData] = await Promise.all([
-        window.mailApi.aiSort.getStats(),
-        window.mailApi.aiSort.getConfusedPatterns(5),
-        window.mailApi.aiSort.getRecentActivity(5),
+        window.mailApi.aiSort.getStats(accountId),
+        window.mailApi.aiSort.getConfusedPatterns(5, accountId),
+        window.mailApi.aiSort.getRecentActivity(5, accountId),
       ]);
       setStats(statsData);
       setPatterns(patternsData);
@@ -36,7 +37,7 @@ export function AIDashboard({ onClassifyUnprocessed, onClearCache }: AIDashboard
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [accountId]);
 
   const handleClassify = async () => {
     setClassifying(true);

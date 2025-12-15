@@ -77,15 +77,15 @@ const api = {
       ipcRenderer.invoke('aiSort:getByPriority', priority, opts),
     getFailed: (opts?: { limit?: number; offset?: number }) =>
       ipcRenderer.invoke('aiSort:getFailed', opts),
-    getStats: () => ipcRenderer.invoke('aiSort:getStats'),
+    getStats: (accountId?: number) => ipcRenderer.invoke('aiSort:getStats', accountId),
     getPendingCount: () => ipcRenderer.invoke('aiSort:getPendingCount'),
     accept: (emailId: number, appliedTags: string[]) =>
       ipcRenderer.invoke('aiSort:accept', emailId, appliedTags),
     dismiss: (emailId: number) => ipcRenderer.invoke('aiSort:dismiss', emailId),
     retry: (emailId: number) => ipcRenderer.invoke('aiSort:retry', emailId),
-    getConfusedPatterns: (limit?: number) => ipcRenderer.invoke('aiSort:getConfusedPatterns', limit),
+    getConfusedPatterns: (limit?: number, accountId?: number) => ipcRenderer.invoke('aiSort:getConfusedPatterns', limit, accountId),
     clearConfusedPatterns: () => ipcRenderer.invoke('aiSort:clearConfusedPatterns'),
-    getRecentActivity: (limit?: number) => ipcRenderer.invoke('aiSort:getRecentActivity', limit),
+    getRecentActivity: (limit?: number, accountId?: number) => ipcRenderer.invoke('aiSort:getRecentActivity', limit, accountId),
     bulkAccept: (emailIds: number[]) => ipcRenderer.invoke('aiSort:bulkAccept', emailIds),
     bulkDismiss: (emailIds: number[]) => ipcRenderer.invoke('aiSort:bulkDismiss', emailIds),
     bulkApplyTag: (emailIds: number[], tagSlug: string) =>

@@ -153,6 +153,7 @@ export function AISortView() {
             <AIDashboard
               onClassifyUnprocessed={handleClassifyUnprocessed}
               onClearCache={handleClearCache}
+              accountId={selectedAccountId || undefined}
             />
           </div>
         ) : (

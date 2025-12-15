@@ -107,14 +107,14 @@ declare global {
         delete: (id: number) => Promise<void>;
       };
       aiSort: {
-        getStats: () => Promise<ClassificationStats>;
+        getStats: (accountId?: number) => Promise<ClassificationStats>;
         getPendingReview: (opts?: { sortBy?: string; limit?: number; accountId?: number }) => Promise<ReviewItem[]>;
         accept: (emailId: number, appliedTags: string[]) => Promise<void>;
         dismiss: (emailId: number) => Promise<void>;
         bulkAccept: (emailIds: number[]) => Promise<void>;
         bulkDismiss: (emailIds: number[]) => Promise<void>;
-        getConfusedPatterns: (limit?: number) => Promise<ConfusedPattern[]>;
-        getRecentActivity: (limit?: number) => Promise<ClassificationFeedback[]>;
+        getConfusedPatterns: (limit?: number, accountId?: number) => Promise<ConfusedPattern[]>;
+        getRecentActivity: (limit?: number, accountId?: number) => Promise<ClassificationFeedback[]>;
         classifyUnprocessed: () => Promise<number>;
         clearConfusedPatterns: () => Promise<void>;
       };

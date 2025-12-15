@@ -132,14 +132,14 @@ export type ClassificationStateRepo = {
 
   // Feedback logging
   logFeedback: (feedback: Omit<ClassificationFeedback, 'id' | 'createdAt'>) => Promise<void>;
-  listRecentFeedback: (limit?: number) => Promise<ClassificationFeedback[]>;
+  listRecentFeedback: (limit?: number, accountId?: number) => Promise<ClassificationFeedback[]>;
 
   // Stats & metrics
-  getStats: () => Promise<ClassificationStats>;
-  getAccuracy30Day: () => Promise<number>;
+  getStats: (accountId?: number) => Promise<ClassificationStats>;
+  getAccuracy30Day: (accountId?: number) => Promise<number>;
 
   // Confused patterns
-  listConfusedPatterns: (limit?: number) => Promise<ConfusedPattern[]>;
+  listConfusedPatterns: (limit?: number, accountId?: number) => Promise<ConfusedPattern[]>;
   updateConfusedPattern: (patternType: 'sender_domain' | 'subject_pattern', patternValue: string, confidence: number) => Promise<void>;
   clearConfusedPatterns: () => Promise<void>;
 };
