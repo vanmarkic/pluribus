@@ -397,7 +397,7 @@ type SyncStore = {
   setProgress: (progress: SyncProgress | null) => void;
 };
 
-export const useSyncStore = create<SyncStore>((set) => ({
+export const useSyncStore = create<SyncStore>((set, get) => ({
   syncing: false,
   syncingAccountId: null,
   progress: null,
@@ -434,7 +434,11 @@ export const useSyncStore = create<SyncStore>((set) => ({
     try {
       await window.mailApi.sync.cancel(accountId);
     } finally {
-      set({ syncing: false, syncingAccountId: null, progress: null });
+      // Only clear state if we're still syncing this account
+      // (prevents race condition if another sync started during cancel)
+      if (get().syncingAccountId === accountId) {
+        set({ syncing: false, syncingAccountId: null, progress: null });
+      }
     }
   },
 
