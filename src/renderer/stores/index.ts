@@ -66,6 +66,7 @@ declare global {
       sync: {
         start: (accountId: number, opts?: any) => Promise<number>;
         startAll: (opts?: any) => Promise<number>;
+        cancel: (accountId: number) => Promise<void>;
       };
       llm: {
         classify: (emailId: number) => Promise<any>;
@@ -385,24 +386,43 @@ export const useTagStore = create<TagStore>((set) => ({
 
 type SyncStore = {
   syncing: boolean;
+  syncingAccountId: number | null;
   progress: SyncProgress | null;
   lastSync: Date | null;
+  lastError: string | null;
 
   startSync: (accountId: number) => Promise<void>;
   startSyncAll: () => Promise<void>;
+  cancelSync: (accountId: number) => Promise<void>;
   setProgress: (progress: SyncProgress | null) => void;
 };
 
 export const useSyncStore = create<SyncStore>((set) => ({
   syncing: false,
+  syncingAccountId: null,
   progress: null,
   lastSync: null,
+  lastError: null,
 
   // Sync specified account - caller provides accountId (no cross-store coupling)
   startSync: async (accountId: number) => {
-    set({ syncing: true });
+    set({ syncing: true, syncingAccountId: accountId, lastError: null });
     try {
       await window.mailApi.sync.start(accountId);
+      set({ lastSync: new Date() });
+      // Note: Caller should reload emails after sync completes
+    } catch (err) {
+      set({ lastError: String(err) });
+    } finally {
+      set({ syncing: false, syncingAccountId: null, progress: null });
+    }
+  },
+
+  // Sync all accounts
+  startSyncAll: async () => {
+    set({ syncing: true, syncingAccountId: null, lastError: null });
+    try {
+      await window.mailApi.sync.startAll();
       set({ lastSync: new Date() });
       // Note: Caller should reload emails after sync completes
     } finally {
@@ -410,15 +430,11 @@ export const useSyncStore = create<SyncStore>((set) => ({
     }
   },
 
-  // Sync all accounts
-  startSyncAll: async () => {
-    set({ syncing: true });
+  cancelSync: async (accountId: number) => {
     try {
-      await window.mailApi.sync.startAll();
-      set({ lastSync: new Date() });
-      // Note: Caller should reload emails after sync completes
+      await window.mailApi.sync.cancel(accountId);
     } finally {
-      set({ syncing: false, progress: null });
+      set({ syncing: false, syncingAccountId: null, progress: null });
     }
   },
 
