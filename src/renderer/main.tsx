@@ -8,6 +8,10 @@ import App from './App';
 import { ThemeProvider } from './hooks/useTheme';
 import './styles/app.css';
 
+// Inject mock API for browser testing (when not in Electron)
+import { injectMockApiIfNeeded } from './mockApi';
+injectMockApiIfNeeded();
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ThemeProvider>
