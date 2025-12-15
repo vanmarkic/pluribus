@@ -50,6 +50,7 @@ const api = {
   sync: {
     start: (accountId: number, opts = {}) => ipcRenderer.invoke('sync:start', accountId, opts),
     startAll: (opts = {}) => ipcRenderer.invoke('sync:startAll', opts),
+    cancel: (accountId: number) => ipcRenderer.invoke('sync:cancel', accountId),
   },
 
   llm: {

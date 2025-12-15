@@ -251,6 +251,10 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
     return useCases.syncAllWithAutoClassify(validated);
   });
 
+  ipcMain.handle('sync:cancel', async (_, accountId) => {
+    return useCases.cancelSync(assertPositiveInt(accountId, 'accountId'));
+  });
+
   // Forward sync progress to renderer
   deps.sync.onProgress((progress) => {
     window.webContents.send('sync:progress', progress);
