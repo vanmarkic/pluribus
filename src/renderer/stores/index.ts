@@ -5,7 +5,11 @@
  */
 
 import { create } from 'zustand';
-import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, SyncProgress } from '../../core/domain';
+import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, SyncProgress, Draft, DraftInput, ClassificationStats, ClassificationFeedback, ConfusedPattern, ClassificationState } from '../../core/domain';
+
+// Type for review queue items - matches backend PendingReviewItem
+// ClassificationState fields at top level, email nested
+type ReviewItem = ClassificationState & { email: Email };
 
 // ============================================
 // Types for window.mailApi
@@ -40,6 +44,11 @@ declare global {
         testImap: (email: string, host: string, port: number) => Promise<{ ok: boolean; error?: string }>;
         testSmtp: (email: string, host: string, port: number) => Promise<{ ok: boolean; error?: string }>;
         create: (account: any, password: string) => Promise<Account>;
+        add: (account: any, password: string, options?: { skipSync?: boolean }) => Promise<{
+          account: Account;
+          syncResult: { newCount: number; newEmailIds: number[] };
+          maxMessagesPerFolder: number;
+        }>;
         update: (id: number, updates: any, newPassword?: string) => Promise<Account>;
         delete: (id: number) => Promise<void>;
       };
@@ -61,6 +70,7 @@ declare global {
         classify: (emailId: number) => Promise<any>;
         classifyAndApply: (emailId: number) => Promise<any>;
         getBudget: () => Promise<{ used: number; limit: number; allowed: boolean }>;
+        getEmailBudget: () => Promise<{ used: number; limit: number; allowed: boolean }>;
       };
       config: {
         get: (key: string) => Promise<any>;
@@ -71,6 +81,32 @@ declare global {
         setConfig: (updates: any) => Promise<void>;
         clearSession: () => Promise<void>;
         isBiometricAvailable: () => Promise<boolean>;
+      };
+      images: {
+        getSetting: () => Promise<'block' | 'allow'>;
+        setSetting: (setting: 'block' | 'allow') => Promise<void>;
+        hasLoaded: (emailId: number) => Promise<boolean>;
+        load: (emailId: number, urls: string[]) => Promise<{ url: string; localPath: string }[]>;
+        clearCache: (emailId: number) => Promise<void>;
+        clearAllCache: () => Promise<void>;
+      };
+      drafts: {
+        list: (opts?: { accountId?: number }) => Promise<Draft[]>;
+        get: (id: number) => Promise<Draft | null>;
+        save: (draft: DraftInput) => Promise<Draft>;
+        delete: (id: number) => Promise<void>;
+      };
+      aiSort: {
+        getStats: () => Promise<ClassificationStats>;
+        getPendingReview: (opts?: { sortBy?: string; limit?: number }) => Promise<ReviewItem[]>;
+        accept: (emailId: number, appliedTags: string[]) => Promise<void>;
+        dismiss: (emailId: number) => Promise<void>;
+        bulkAccept: (emailIds: number[]) => Promise<void>;
+        bulkDismiss: (emailIds: number[]) => Promise<void>;
+        getConfusedPatterns: (limit?: number) => Promise<ConfusedPattern[]>;
+        getRecentActivity: (limit?: number) => Promise<ClassificationFeedback[]>;
+        classifyUnprocessed: () => Promise<number>;
+        clearConfusedPatterns: () => Promise<void>;
       };
       on: (channel: string, callback: (...args: any[]) => void) => void;
       off: (channel: string, callback: (...args: any[]) => void) => void;
@@ -359,28 +395,30 @@ export const useAccountStore = create<AccountStore>((set) => ({
 // UI Store
 // ============================================
 
-type View = 'inbox' | 'sent' | 'starred' | 'archive' | 'trash' | 'settings' | 'ai-sort';
+type View = 'inbox' | 'sent' | 'starred' | 'archive' | 'trash' | 'drafts' | 'settings' | 'ai-sort';
 type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward' | null;
 
 type UIStore = {
   view: View;
   sidebarCollapsed: boolean;
-  
+
   // Modal states
   showAccountWizard: boolean;
   editAccountId: number | null;
   composeMode: ComposeMode;
   composeEmailId: number | null;
-  
+  composeDraftId: number | null;
+
   setView: (view: View) => void;
   toggleSidebar: () => void;
-  
+
   // Account wizard
   openAccountWizard: (editId?: number) => void;
   closeAccountWizard: () => void;
-  
+
   // Compose
   openCompose: (mode: ComposeMode, emailId?: number) => void;
+  openComposeDraft: (draftId: number) => void;
   closeCompose: () => void;
 };
 
@@ -391,13 +429,15 @@ export const useUIStore = create<UIStore>((set) => ({
   editAccountId: null,
   composeMode: null,
   composeEmailId: null,
+  composeDraftId: null,
 
   setView: (view) => set({ view }),
   toggleSidebar: () => set(state => ({ sidebarCollapsed: !state.sidebarCollapsed })),
-  
+
   openAccountWizard: (editId) => set({ showAccountWizard: true, editAccountId: editId ?? null }),
   closeAccountWizard: () => set({ showAccountWizard: false, editAccountId: null }),
-  
-  openCompose: (mode, emailId) => set({ composeMode: mode, composeEmailId: emailId ?? null }),
-  closeCompose: () => set({ composeMode: null, composeEmailId: null }),
+
+  openCompose: (mode, emailId) => set({ composeMode: mode, composeEmailId: emailId ?? null, composeDraftId: null }),
+  openComposeDraft: (draftId) => set({ composeMode: 'new', composeEmailId: null, composeDraftId: draftId }),
+  closeCompose: () => set({ composeMode: null, composeEmailId: null, composeDraftId: null }),
 }));

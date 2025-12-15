@@ -5,10 +5,10 @@
  * Tags section with custom tags.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   IconInbox, IconFavorite, IconSend, IconArchiveBox, IconDelete,
-  IconSettings, IconSparkles, IconTag, IconPen
+  IconSettings, IconSparkles, IconTag, IconPen, IconDocument
 } from 'obra-icons-react';
 import { useUIStore, useTagStore, useEmailStore } from '../stores';
 
@@ -16,10 +16,38 @@ export function Sidebar() {
   const { view, setView, openCompose } = useUIStore();
   const { tags, loadTags } = useTagStore();
   const { emails, setFilter, filter } = useEmailStore();
+  const [draftCount, setDraftCount] = useState(0);
 
   useEffect(() => {
     loadTags();
+    loadDraftCount();
+
+    // Listen for draft changes from ComposeModal
+    const handleDraftsChanged = () => {
+      loadDraftCount();
+    };
+    window.addEventListener('drafts:changed', handleDraftsChanged);
+
+    return () => {
+      window.removeEventListener('drafts:changed', handleDraftsChanged);
+    };
   }, []);
+
+  // Refresh draft count when the drafts view becomes active
+  useEffect(() => {
+    if (view === 'drafts') {
+      loadDraftCount();
+    }
+  }, [view]);
+
+  const loadDraftCount = async () => {
+    try {
+      const drafts = await window.mailApi.drafts.list();
+      setDraftCount(drafts.length);
+    } catch (err) {
+      console.error('Failed to load draft count:', err);
+    }
+  };
 
   const unreadCount = emails.filter(e => !e.isRead).length;
   const starredCount = emails.filter(e => e.isStarred).length;
@@ -29,6 +57,7 @@ export function Sidebar() {
     { id: 'inbox' as const, icon: IconInbox, label: 'Inbox', count: unreadCount },
     { id: 'starred' as const, icon: IconFavorite, label: 'Starred', count: starredCount },
     { id: 'sent' as const, icon: IconSend, label: 'Sent' },
+    { id: 'drafts' as const, icon: IconDocument, label: 'Drafts', count: draftCount },
     { id: 'archive' as const, icon: IconArchiveBox, label: 'Archive' },
     { id: 'trash' as const, icon: IconDelete, label: 'Trash' },
   ];
@@ -43,6 +72,9 @@ export function Sidebar() {
     } else if (id === 'sent') {
       // Match any Sent folder variant
       setFilter({ ...baseFilter, folderPath: 'Sent' });
+    } else if (id === 'drafts') {
+      // Drafts view - handled by DraftsList component, no email filter needed
+      setFilter(baseFilter);
     } else if (id === 'starred') {
       setFilter({ ...baseFilter, starredOnly: true });
     } else if (id === 'archive') {

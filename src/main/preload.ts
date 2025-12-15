@@ -56,12 +56,42 @@ const api = {
     classify: (emailId: number) => ipcRenderer.invoke('llm:classify', emailId),
     classifyAndApply: (emailId: number) => ipcRenderer.invoke('llm:classifyAndApply', emailId),
     getBudget: () => ipcRenderer.invoke('llm:getBudget'),
+    getEmailBudget: () => ipcRenderer.invoke('llm:getEmailBudget'),
+  },
+
+  aiSort: {
+    getPendingReview: (opts?: { limit?: number; offset?: number; sortBy?: 'confidence' | 'date' | 'sender' }) =>
+      ipcRenderer.invoke('aiSort:getPendingReview', opts),
+    getByPriority: (priority: 'high' | 'normal' | 'low', opts?: { limit?: number; offset?: number }) =>
+      ipcRenderer.invoke('aiSort:getByPriority', priority, opts),
+    getFailed: (opts?: { limit?: number; offset?: number }) =>
+      ipcRenderer.invoke('aiSort:getFailed', opts),
+    getStats: () => ipcRenderer.invoke('aiSort:getStats'),
+    getPendingCount: () => ipcRenderer.invoke('aiSort:getPendingCount'),
+    accept: (emailId: number, appliedTags: string[]) =>
+      ipcRenderer.invoke('aiSort:accept', emailId, appliedTags),
+    dismiss: (emailId: number) => ipcRenderer.invoke('aiSort:dismiss', emailId),
+    retry: (emailId: number) => ipcRenderer.invoke('aiSort:retry', emailId),
+    getConfusedPatterns: (limit?: number) => ipcRenderer.invoke('aiSort:getConfusedPatterns', limit),
+    clearConfusedPatterns: () => ipcRenderer.invoke('aiSort:clearConfusedPatterns'),
+    getRecentActivity: (limit?: number) => ipcRenderer.invoke('aiSort:getRecentActivity', limit),
+    bulkAccept: (emailIds: number[]) => ipcRenderer.invoke('aiSort:bulkAccept', emailIds),
+    bulkDismiss: (emailIds: number[]) => ipcRenderer.invoke('aiSort:bulkDismiss', emailIds),
+    bulkApplyTag: (emailIds: number[], tagSlug: string) =>
+      ipcRenderer.invoke('aiSort:bulkApplyTag', emailIds, tagSlug),
+    classifyUnprocessed: () => ipcRenderer.invoke('aiSort:classifyUnprocessed'),
   },
 
   accounts: {
     list: () => ipcRenderer.invoke('accounts:list'),
     get: (id: number) => ipcRenderer.invoke('accounts:get', id),
     create: (account: any, password: string) => ipcRenderer.invoke('accounts:create', account, password),
+    add: (account: any, password: string, options?: { skipSync?: boolean }) =>
+      ipcRenderer.invoke('accounts:add', account, password, options) as Promise<{
+        account: any;
+        syncResult: { newCount: number; newEmailIds: number[] };
+        maxMessagesPerFolder: number;
+      }>,
     update: (id: number, updates: any, newPassword?: string) => ipcRenderer.invoke('accounts:update', id, updates, newPassword),
     delete: (id: number) => ipcRenderer.invoke('accounts:delete', id),
     testImap: (email: string, host: string, port: number) => ipcRenderer.invoke('accounts:testImap', email, host, port),
@@ -97,6 +127,23 @@ const api = {
     setConfig: (updates: any) => ipcRenderer.invoke('security:setConfig', updates),
     clearSession: () => ipcRenderer.invoke('security:clearSession'),
     isBiometricAvailable: () => ipcRenderer.invoke('security:isBiometricAvailable'),
+  },
+
+  images: {
+    getSetting: () => ipcRenderer.invoke('images:getSetting') as Promise<'block' | 'allow'>,
+    setSetting: (setting: 'block' | 'allow') => ipcRenderer.invoke('images:setSetting', setting),
+    hasLoaded: (emailId: number) => ipcRenderer.invoke('images:hasLoaded', emailId) as Promise<boolean>,
+    load: (emailId: number, urls: string[]) =>
+      ipcRenderer.invoke('images:load', emailId, urls) as Promise<{ url: string; localPath: string }[]>,
+    clearCache: (emailId: number) => ipcRenderer.invoke('images:clearCache', emailId),
+    clearAllCache: () => ipcRenderer.invoke('images:clearAllCache') as Promise<void>,
+  },
+
+  drafts: {
+    list: (opts?: { accountId?: number }) => ipcRenderer.invoke('drafts:list', opts),
+    get: (id: number) => ipcRenderer.invoke('drafts:get', id),
+    save: (draft: any) => ipcRenderer.invoke('drafts:save', draft),
+    delete: (id: number) => ipcRenderer.invoke('drafts:delete', id),
   },
 
   on: (channel: string, callback: Callback) => {

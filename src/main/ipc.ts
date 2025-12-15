@@ -10,6 +10,7 @@ import { app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Container } from './container';
+import type { DraftInput } from '../core/domain';
 
 // ==========================================
 // Input Validation Helpers
@@ -252,6 +253,111 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   ipcMain.handle('llm:getEmailBudget', () => deps.classifier.getEmailBudget());
 
   // ==========================================
+  // AI Sort (Review Queue & Stats)
+  // ==========================================
+
+  ipcMain.handle('aiSort:getPendingReview', (_, opts) => {
+    const validated: Record<string, unknown> = {};
+    if (opts && typeof opts === 'object') {
+      const o = opts as Record<string, unknown>;
+      if (o.limit !== undefined) validated.limit = assertPositiveInt(o.limit, 'limit');
+      if (o.offset !== undefined) validated.offset = assertNonNegativeInt(o.offset, 'offset');
+      if (o.sortBy !== undefined) {
+        const sortBy = assertString(o.sortBy, 'sortBy', 20);
+        if (!['confidence', 'date', 'sender'].includes(sortBy)) throw new Error('Invalid sortBy');
+        validated.sortBy = sortBy;
+      }
+    }
+    return useCases.getPendingReviewQueue(validated);
+  });
+
+  ipcMain.handle('aiSort:getStats', () => {
+    return useCases.getClassificationStats();
+  });
+
+  ipcMain.handle('aiSort:getPendingCount', () => {
+    return useCases.getPendingReviewCount();
+  });
+
+  ipcMain.handle('aiSort:getByPriority', (_, priority, opts) => {
+    const validPriorities = ['high', 'normal', 'low'];
+    const p = assertString(priority, 'priority', 10);
+    if (!validPriorities.includes(p)) throw new Error('Invalid priority');
+
+    const validated: Record<string, unknown> = {};
+    if (opts && typeof opts === 'object') {
+      const o = opts as Record<string, unknown>;
+      if (o.limit !== undefined) validated.limit = assertPositiveInt(o.limit, 'limit');
+      if (o.offset !== undefined) validated.offset = assertNonNegativeInt(o.offset, 'offset');
+    }
+    return useCases.getEmailsByPriority(p as 'high' | 'normal' | 'low', validated);
+  });
+
+  ipcMain.handle('aiSort:getFailed', (_, opts) => {
+    const validated: Record<string, unknown> = {};
+    if (opts && typeof opts === 'object') {
+      const o = opts as Record<string, unknown>;
+      if (o.limit !== undefined) validated.limit = assertPositiveInt(o.limit, 'limit');
+      if (o.offset !== undefined) validated.offset = assertNonNegativeInt(o.offset, 'offset');
+    }
+    return useCases.getFailedClassifications(validated);
+  });
+
+  ipcMain.handle('aiSort:accept', (_, emailId, appliedTags) => {
+    const id = assertPositiveInt(emailId, 'emailId');
+
+    if (!Array.isArray(appliedTags)) throw new Error('Invalid appliedTags: must be an array');
+    const validatedTags = appliedTags.map((tag, i) => assertString(tag, `appliedTags[${i}]`, 100));
+
+    return useCases.acceptClassification(id, validatedTags);
+  });
+
+  ipcMain.handle('aiSort:dismiss', (_, emailId) => {
+    return useCases.dismissClassification(assertPositiveInt(emailId, 'emailId'));
+  });
+
+  ipcMain.handle('aiSort:retry', (_, emailId) => {
+    return useCases.retryClassification(assertPositiveInt(emailId, 'emailId'));
+  });
+
+  ipcMain.handle('aiSort:getConfusedPatterns', (_, limit) => {
+    const l = assertOptionalPositiveInt(limit, 'limit') ?? 5;
+    return useCases.getConfusedPatterns(l);
+  });
+
+  ipcMain.handle('aiSort:clearConfusedPatterns', () => {
+    return useCases.clearConfusedPatterns();
+  });
+
+  ipcMain.handle('aiSort:getRecentActivity', (_, limit) => {
+    const l = assertOptionalPositiveInt(limit, 'limit') ?? 10;
+    return useCases.getRecentActivity(l);
+  });
+
+  ipcMain.handle('aiSort:bulkAccept', (_, emailIds) => {
+    if (!Array.isArray(emailIds)) throw new Error('emailIds must be an array');
+    const ids = emailIds.map((id, i) => assertPositiveInt(id, `emailIds[${i}]`));
+    return useCases.bulkAcceptClassifications(ids);
+  });
+
+  ipcMain.handle('aiSort:bulkDismiss', (_, emailIds) => {
+    if (!Array.isArray(emailIds)) throw new Error('emailIds must be an array');
+    const ids = emailIds.map((id, i) => assertPositiveInt(id, `emailIds[${i}]`));
+    return useCases.bulkDismissClassifications(ids);
+  });
+
+  ipcMain.handle('aiSort:bulkApplyTag', (_, emailIds, tagSlug) => {
+    if (!Array.isArray(emailIds)) throw new Error('emailIds must be an array');
+    const ids = emailIds.map((id, i) => assertPositiveInt(id, `emailIds[${i}]`));
+    const slug = assertString(tagSlug, 'tagSlug', 100);
+    return useCases.bulkApplyTag(ids, slug);
+  });
+
+  ipcMain.handle('aiSort:classifyUnprocessed', () => {
+    return useCases.classifyUnprocessed();
+  });
+
+  // ==========================================
   // Accounts
   // ==========================================
 
@@ -288,6 +394,19 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
       if (v.dailyBudget !== undefined) assertPositiveInt(v.dailyBudget, 'dailyBudget');
       if (v.dailyEmailLimit !== undefined) assertPositiveInt(v.dailyEmailLimit, 'dailyEmailLimit');
       if (v.autoClassify !== undefined) assertBoolean(v.autoClassify, 'autoClassify');
+      if (v.confidenceThreshold !== undefined) {
+        const ct = v.confidenceThreshold;
+        if (typeof ct !== 'number' || ct < 0 || ct > 1) {
+          throw new Error('confidenceThreshold must be between 0 and 1');
+        }
+      }
+      if (v.reclassifyCooldownDays !== undefined) {
+        const validCooldowns = [1, 3, 7, 14, -1]; // -1 = never (manual only)
+        const cd = v.reclassifyCooldownDays;
+        if (typeof cd !== 'number' || !validCooldowns.includes(cd)) {
+          throw new Error('reclassifyCooldownDays must be 1, 3, 7, 14, or -1 (never)');
+        }
+      }
     }
     return config.set(k as AllowedConfigKey, value);
   });
@@ -353,7 +472,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   ipcMain.handle('accounts:create', async (_, account, password) => {
     if (!account || typeof account !== 'object') throw new Error('Invalid account');
     const a = account as Record<string, unknown>;
-    
+
     const validated = {
       name: assertString(a.name, 'name', 100),
       email: assertString(a.email, 'email', 200),
@@ -363,9 +482,34 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
       smtpPort: assertPositiveInt(a.smtpPort, 'smtpPort'),
       username: assertString(a.username, 'username', 200),
     };
-    
+
     const pw = assertString(password, 'password', 500);
     return useCases.createAccount(validated, pw);
+  });
+
+  ipcMain.handle('accounts:add', async (_, account, password, options) => {
+    if (!account || typeof account !== 'object') throw new Error('Invalid account');
+    const a = account as Record<string, unknown>;
+
+    const validated = {
+      name: assertString(a.name, 'name', 100),
+      email: assertString(a.email, 'email', 200),
+      imapHost: assertString(a.imapHost, 'imapHost', 200),
+      imapPort: assertPositiveInt(a.imapPort, 'imapPort'),
+      smtpHost: assertString(a.smtpHost, 'smtpHost', 200),
+      smtpPort: assertPositiveInt(a.smtpPort, 'smtpPort'),
+      username: assertString(a.username, 'username', 200),
+    };
+
+    const pw = assertString(password, 'password', 500);
+
+    const opts: { skipSync?: boolean } = {};
+    if (options && typeof options === 'object') {
+      const o = options as Record<string, unknown>;
+      if (o.skipSync !== undefined) opts.skipSync = assertBoolean(o.skipSync, 'skipSync');
+    }
+
+    return useCases.addAccount(validated, pw, opts);
   });
 
   ipcMain.handle('accounts:update', async (_, id, updates, newPassword) => {
@@ -503,4 +647,94 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
 
   ipcMain.handle('security:clearSession', () => deps.secrets.clearSession());
   ipcMain.handle('security:isBiometricAvailable', () => deps.secrets.isBiometricAvailable());
+
+  // ==========================================
+  // Remote Images
+  // ==========================================
+
+  ipcMain.handle('images:getSetting', () => {
+    return useCases.getRemoteImagesSetting();
+  });
+
+  ipcMain.handle('images:setSetting', (_, setting) => {
+    const validSettings = ['block', 'allow'];
+    const s = assertString(setting, 'setting', 10);
+    if (!validSettings.includes(s)) throw new Error('Invalid setting');
+    return useCases.setRemoteImagesSetting(s as 'block' | 'allow');
+  });
+
+  ipcMain.handle('images:hasLoaded', (_, emailId) => {
+    return useCases.hasLoadedRemoteImages(assertPositiveInt(emailId, 'emailId'));
+  });
+
+  ipcMain.handle('images:load', async (_, emailId, urls) => {
+    const id = assertPositiveInt(emailId, 'emailId');
+    if (!Array.isArray(urls)) throw new Error('Invalid urls: must be an array');
+    const validatedUrls = urls.map((url, i) => assertString(url, `urls[${i}]`, 2000));
+    return useCases.loadRemoteImages(id, validatedUrls);
+  });
+
+  ipcMain.handle('images:clearCache', (_, emailId) => {
+    return useCases.clearImageCache(assertPositiveInt(emailId, 'emailId'));
+  });
+
+  ipcMain.handle('images:clearAllCache', () => {
+    return useCases.clearAllImageCache();
+  });
+
+  // ==========================================
+  // Drafts
+  // ==========================================
+
+  ipcMain.handle('drafts:list', (_, opts) => {
+    const validated: Record<string, unknown> = {};
+    if (opts && typeof opts === 'object') {
+      const o = opts as Record<string, unknown>;
+      if (o.accountId !== undefined) validated.accountId = assertPositiveInt(o.accountId, 'accountId');
+    }
+    return useCases.listDrafts(validated);
+  });
+
+  ipcMain.handle('drafts:get', (_, id) => {
+    return useCases.getDraft(assertPositiveInt(id, 'id'));
+  });
+
+  ipcMain.handle('drafts:save', (_, draft) => {
+    if (!draft || typeof draft !== 'object') throw new Error('Invalid draft');
+    const d = draft as Record<string, unknown>;
+
+    const validated: Record<string, unknown> = {
+      accountId: assertPositiveInt(d.accountId, 'accountId'),
+    };
+
+    if (d.id !== undefined) validated.id = assertPositiveInt(d.id, 'id');
+    if (Array.isArray(d.to)) validated.to = (d.to as string[]).map(addr => assertString(addr, 'to', 200));
+    if (Array.isArray(d.cc)) validated.cc = (d.cc as string[]).map(addr => assertString(addr, 'cc', 200));
+    if (Array.isArray(d.bcc)) validated.bcc = (d.bcc as string[]).map(addr => assertString(addr, 'bcc', 200));
+    if (d.subject !== undefined) validated.subject = assertString(d.subject, 'subject', 500);
+    if (d.text !== undefined) validated.text = assertString(d.text, 'text', 100000);
+    if (d.html !== undefined) validated.html = assertString(d.html, 'html', 500000);
+    if (d.inReplyTo !== undefined) validated.inReplyTo = assertString(d.inReplyTo, 'inReplyTo', 500);
+    if (Array.isArray(d.references)) validated.references = (d.references as string[]).map(r => assertString(r, 'reference', 500));
+    if (d.originalEmailId !== undefined) validated.originalEmailId = assertPositiveInt(d.originalEmailId, 'originalEmailId');
+
+    // Validate attachments
+    if (Array.isArray(d.attachments)) {
+      validated.attachments = (d.attachments as Record<string, unknown>[]).map((att, i) => {
+        if (!att || typeof att !== 'object') throw new Error(`Invalid attachment at index ${i}`);
+        return {
+          filename: assertString(att.filename, `attachment[${i}].filename`, 255),
+          contentType: att.contentType !== undefined ? assertString(att.contentType, `attachment[${i}].contentType`, 100) : undefined,
+          size: assertNonNegativeInt(att.size, `attachment[${i}].size`),
+          content: assertString(att.content, `attachment[${i}].content`, 50000000), // 50MB base64 limit
+        };
+      });
+    }
+
+    return useCases.saveDraft(validated as DraftInput);
+  });
+
+  ipcMain.handle('drafts:delete', (_, id) => {
+    return useCases.deleteDraft(assertPositiveInt(id, 'id'));
+  });
 }
