@@ -18,10 +18,11 @@ import { useKeyboardShortcuts, KeyboardShortcutsHelp } from './hooks/useKeyboard
 import { useTheme } from './hooks/useTheme';
 import { useUIStore, useSyncStore, useAccountStore, useTagStore, useEmailStore } from './stores';
 import { IconSun, IconMoon, IconComputerMonitor } from 'obra-icons-react';
+import type { SyncProgress } from '../core/domain';
 
 export function App() {
   const { view, showAccountWizard, editAccountId, composeMode, composeEmailId, composeDraftId, closeAccountWizard, closeCompose, openCompose, classificationTaskId, classificationProgress, updateClassificationProgress, clearClassificationTask } = useUIStore();
-  const { setProgress, startSync } = useSyncStore();
+  const { startSync } = useSyncStore();
   const { loadAccounts, selectedAccountId } = useAccountStore();
   const { loadTags } = useTagStore();
   const { selectedEmail, selectedBody, loadEmails } = useEmailStore();
@@ -78,17 +79,22 @@ export function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Subscribe to sync progress events
+  // Listen for sync progress
   useEffect(() => {
-    const handleProgress = (progress: unknown) => {
-      setProgress(progress as Parameters<typeof setProgress>[0]);
+    const handleProgress = (progress: SyncProgress) => {
+      useSyncStore.getState().setProgress(progress);
+
+      // Reload emails when sync completes or is cancelled
+      if (progress.phase === 'complete' || progress.phase === 'cancelled') {
+        const accountId = useAccountStore.getState().selectedAccountId;
+        if (accountId) {
+          useEmailStore.getState().loadEmails(accountId);
+        }
+      }
     };
 
     window.mailApi.on('sync:progress', handleProgress);
-
-    return () => {
-      window.mailApi.off('sync:progress', handleProgress);
-    };
+    return () => window.mailApi.off('sync:progress', handleProgress);
   }, []);
 
   // Poll classification progress

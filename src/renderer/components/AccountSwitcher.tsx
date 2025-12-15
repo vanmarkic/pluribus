@@ -8,6 +8,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { IconCheck } from 'obra-icons-react';
 import { useAccountStore } from '../stores';
+import { SyncButton } from './SyncButton';
 
 // Account color palette - deterministic based on email hash
 const ACCOUNT_COLORS = [
@@ -71,11 +72,14 @@ export function AccountSwitcher() {
   if (!selected || accounts.length <= 1) return null;
 
   return (
-    <div className="relative" ref={dropdownRef}>
-      {/* Trigger - plain text style */}
+    <div className="relative flex items-center gap-1" ref={dropdownRef}>
+      {/* Sync button */}
+      <SyncButton />
+
+      {/* Account selector trigger */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md
+        className="flex-1 flex items-center gap-2 px-2 py-1.5 rounded-md
                    hover:bg-[var(--color-bg-hover)] transition-colors"
       >
         <AccountAvatar email={selected.email} size="sm" />

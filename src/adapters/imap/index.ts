@@ -350,6 +350,9 @@ export function createMailSync(
           error: String(error),
         });
         throw error;
+      } finally {
+        // Clean up abort controller to prevent memory leak
+        abortControllers.delete(account.id);
       }
 
       return { newCount: totalNew, newEmailIds };

@@ -35,6 +35,7 @@ function createMockAttachmentRepo(): AttachmentRepo {
 
 function createMockFolderRepo(): FolderRepo {
   return {
+    findById: vi.fn().mockResolvedValue({ id: 1, accountId: 1, path: 'INBOX', name: 'INBOX', lastUid: 0 }),
     getOrCreate: vi.fn().mockResolvedValue({ id: 1, accountId: 1, path: 'INBOX', name: 'INBOX', lastUid: 0 }),
     updateLastUid: vi.fn(),
     clear: vi.fn(),

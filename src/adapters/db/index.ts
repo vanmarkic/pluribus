@@ -553,6 +553,11 @@ export function createAccountRepo(): AccountRepo {
 
 export function createFolderRepo(): FolderRepo {
   return {
+    async findById(id) {
+      const row = getDb().prepare('SELECT * FROM folders WHERE id = ?').get(id);
+      return row ? mapFolder(row) : null;
+    },
+
     async getOrCreate(accountId, path, name, uidValidity) {
       // Poka-yoke: Reject invalid account IDs before they cause FK violations
       if (!accountId || accountId <= 0) {

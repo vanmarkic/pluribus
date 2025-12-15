@@ -179,6 +179,7 @@ function createMockSync(overrides: Partial<MailSync> = {}): MailSync {
     sync: vi.fn().mockResolvedValue({ newCount: 0, newEmailIds: [] }),
     fetchBody: vi.fn().mockResolvedValue(testBody),
     disconnect: vi.fn().mockResolvedValue(undefined),
+    cancel: vi.fn().mockResolvedValue(undefined),
     onProgress: vi.fn().mockReturnValue(() => {}),
     testConnection: vi.fn().mockResolvedValue({ ok: true }),
     getDefaultFolders: vi.fn().mockImplementation(() => ['INBOX']),
