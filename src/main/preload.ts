@@ -141,11 +141,13 @@ const api = {
   },
 
   images: {
-    getSetting: () => ipcRenderer.invoke('images:getSetting') as Promise<'block' | 'allow'>,
-    setSetting: (setting: 'block' | 'allow') => ipcRenderer.invoke('images:setSetting', setting),
+    getSetting: () => ipcRenderer.invoke('images:getSetting') as Promise<'block' | 'allow' | 'auto'>,
+    setSetting: (setting: 'block' | 'allow' | 'auto') => ipcRenderer.invoke('images:setSetting', setting),
     hasLoaded: (emailId: number) => ipcRenderer.invoke('images:hasLoaded', emailId) as Promise<boolean>,
     load: (emailId: number, urls: string[]) =>
       ipcRenderer.invoke('images:load', emailId, urls) as Promise<{ url: string; localPath: string }[]>,
+    autoLoad: (emailId: number, urls: string[]) =>
+      ipcRenderer.invoke('images:autoLoad', emailId, urls) as Promise<{ url: string; localPath: string }[]>,
     clearCache: (emailId: number) => ipcRenderer.invoke('images:clearCache', emailId),
     clearAllCache: () => ipcRenderer.invoke('images:clearAllCache') as Promise<void>,
   },

@@ -93,10 +93,11 @@ declare global {
         isBiometricAvailable: () => Promise<boolean>;
       };
       images: {
-        getSetting: () => Promise<'block' | 'allow'>;
-        setSetting: (setting: 'block' | 'allow') => Promise<void>;
+        getSetting: () => Promise<'block' | 'allow' | 'auto'>;
+        setSetting: (setting: 'block' | 'allow' | 'auto') => Promise<void>;
         hasLoaded: (emailId: number) => Promise<boolean>;
         load: (emailId: number, urls: string[]) => Promise<{ url: string; localPath: string }[]>;
+        autoLoad: (emailId: number, urls: string[]) => Promise<{ url: string; localPath: string }[]>;
         clearCache: (emailId: number) => Promise<void>;
         clearAllCache: () => Promise<void>;
       };
