@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import type { BiometricMode, SecurityConfig } from '../../core/ports';
+import type { BiometricMode, SecurityConfig, RemoteImagesSetting } from '../../core/ports';
 
 const TIMEOUT_OPTIONS = [
   { label: '15 minutes', value: 15 * 60 * 1000 },
@@ -40,6 +40,7 @@ const MODE_OPTIONS: { label: string; value: BiometricMode; description: string }
 export function SecuritySettings() {
   const [config, setConfig] = useState<SecurityConfig | null>(null);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
+  const [remoteImages, setRemoteImages] = useState<RemoteImagesSetting>('block');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -47,12 +48,24 @@ export function SecuritySettings() {
   }, []);
 
   async function loadConfig() {
-    const [cfg, available] = await Promise.all([
+    const [cfg, available, imgSetting] = await Promise.all([
       window.mailApi.security.getConfig(),
       window.mailApi.security.isBiometricAvailable(),
+      window.mailApi.images.getSetting(),
     ]);
     setConfig(cfg);
     setBiometricAvailable(available);
+    setRemoteImages(imgSetting);
+  }
+
+  async function updateRemoteImages(setting: RemoteImagesSetting) {
+    setSaving(true);
+    try {
+      await window.mailApi.images.setSetting(setting);
+      setRemoteImages(setting);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function updateConfig(updates: Partial<SecurityConfig>) {
@@ -212,6 +225,69 @@ export function SecuritySettings() {
           disabled={!biometricAvailable || config.biometricMode === 'never'}
           className="h-5 w-5"
         />
+      </div>
+
+      {/* Privacy: Block Remote Images */}
+      <div
+        className="flex items-center justify-between py-3 border-t"
+        style={{ borderColor: 'var(--color-border)' }}
+      >
+        <div>
+          <div
+            className="text-sm font-medium"
+            style={{ color: 'var(--color-text-primary)' }}
+          >
+            Block remote images
+          </div>
+          <div
+            className="text-xs"
+            style={{ color: 'var(--color-text-tertiary)' }}
+          >
+            Prevents tracking pixels and external content loading
+          </div>
+        </div>
+        <input
+          type="checkbox"
+          checked={remoteImages === 'block'}
+          onChange={e => updateRemoteImages(e.target.checked ? 'block' : 'allow')}
+          className="h-5 w-5"
+        />
+      </div>
+
+      {/* Clear Image Cache */}
+      <div
+        className="py-3 border-t"
+        style={{ borderColor: 'var(--color-border)' }}
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <div
+              className="text-sm font-medium"
+              style={{ color: 'var(--color-text-primary)' }}
+            >
+              Clear image cache
+            </div>
+            <div
+              className="text-xs"
+              style={{ color: 'var(--color-text-tertiary)' }}
+            >
+              Delete all cached remote images
+            </div>
+          </div>
+          <button
+            onClick={async () => {
+              setSaving(true);
+              try {
+                await window.mailApi.images.clearAllCache();
+              } finally {
+                setSaving(false);
+              }
+            }}
+            className="btn btn-secondary text-sm"
+          >
+            Clear cache
+          </button>
+        </div>
       </div>
 
       {saving && (

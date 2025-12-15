@@ -35,6 +35,8 @@
   --color-unread: #3b82f6;
   --color-important: #ef4444;
   --color-success: #22c55e;
+  --color-warning: #eab308;
+  --color-danger: #ef4444;
 
   /* Tag Colors */
   --tag-work-bg: #dbeafe;
@@ -91,6 +93,11 @@
   --color-border-light: #27272a;
 
   --color-accent-light: #1e3a5f;
+
+  /* Status Colors (dark mode) */
+  --color-success: #22c55e;
+  --color-warning: #facc15;
+  --color-danger: #f87171;
 
   --tag-work-bg: #1e3a5f;
   --tag-work-text: #93c5fd;

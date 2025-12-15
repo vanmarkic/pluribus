@@ -8,17 +8,19 @@
 import { useEffect, useState } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { EmailList } from './components/EmailList';
+import { DraftsList } from './components/DraftsList';
 import { EmailViewer } from './components/EmailViewer';
 import { SecuritySettings } from './components/SecuritySettings';
 import { AccountWizard } from './components/AccountWizard';
 import { ComposeModal } from './components/ComposeModal';
+import { AISortView } from './components/ai-sort';
 import { useKeyboardShortcuts, KeyboardShortcutsHelp } from './hooks/useKeyboardShortcuts';
 import { useTheme } from './hooks/useTheme';
 import { useUIStore, useSyncStore, useAccountStore, useTagStore, useEmailStore } from './stores';
 import { IconSun, IconMoon, IconComputerMonitor } from 'obra-icons-react';
 
 export function App() {
-  const { view, showAccountWizard, editAccountId, composeMode, composeEmailId, closeAccountWizard, closeCompose, openCompose } = useUIStore();
+  const { view, showAccountWizard, editAccountId, composeMode, composeEmailId, composeDraftId, closeAccountWizard, closeCompose, openCompose } = useUIStore();
   const { setProgress, startSync } = useSyncStore();
   const { loadAccounts } = useAccountStore();
   const { loadTags } = useTagStore();
@@ -85,24 +87,55 @@ export function App() {
   const composeBody = composeEmailId ? selectedBody : undefined;
 
   return (
-    <div className="flex h-screen" style={{ background: 'var(--color-bg)' }}>
-      {/* Sidebar */}
-      <Sidebar />
+    <div className="flex flex-col h-screen" style={{ background: 'var(--color-bg)' }}>
+      {/* macOS Title Bar - Drag Region */}
+      <div
+        className="h-10 shrink-0 flex items-center"
+        style={{
+          WebkitAppRegion: 'drag',
+          background: 'var(--color-bg)',
+          borderBottom: '1px solid var(--color-border)',
+        } as React.CSSProperties}
+      >
+        {/* Space for traffic lights (left) */}
+        <div className="w-20" />
+        {/* Optional: App title or controls could go here */}
+      </div>
 
-      {/* Main Content */}
-      {view === 'settings' ? (
-        <div className="flex-1 overflow-y-auto" style={{ background: 'var(--color-bg-secondary)' }}>
-          <SettingsView />
-        </div>
-      ) : (
-        <>
-          {/* Email List */}
-          <EmailList />
+      <div className="flex flex-1 min-h-0">
+        {/* Sidebar */}
+        <Sidebar />
 
-          {/* Email Viewer */}
-          <EmailViewer />
-        </>
-      )}
+        {/* Main Content */}
+        {view === 'settings' ? (
+          <div className="flex-1 overflow-y-auto" style={{ background: 'var(--color-bg-secondary)' }}>
+            <SettingsView />
+          </div>
+        ) : view === 'drafts' ? (
+          <>
+            {/* Drafts List - clicking opens ComposeModal */}
+            <DraftsList />
+
+            {/* Empty state for viewer when in drafts */}
+            <div
+              className="flex-1 flex items-center justify-center"
+              style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text-tertiary)' }}
+            >
+              <p>Select a draft to edit</p>
+            </div>
+          </>
+        ) : view === 'ai-sort' ? (
+          <AISortView />
+        ) : (
+          <>
+            {/* Email List */}
+            <EmailList />
+
+            {/* Email Viewer */}
+            <EmailViewer />
+          </>
+        )}
+      </div>
 
       {/* Account Wizard Modal */}
       {showAccountWizard && (
@@ -122,6 +155,7 @@ export function App() {
           mode={composeMode}
           originalEmail={composeEmail ?? undefined}
           originalBody={composeBody ?? undefined}
+          draftId={composeDraftId ?? undefined}
           onClose={closeCompose}
           onSent={() => {
             closeCompose();
@@ -235,7 +269,7 @@ function SettingsView() {
           </div>
         </section>
 
-        {/* Security Section */}
+        {/* Security & Privacy Section */}
         <section
           className="rounded-lg border"
           style={{
@@ -251,7 +285,7 @@ function SettingsView() {
               className="font-medium"
               style={{ color: 'var(--color-text-primary)' }}
             >
-              Security
+              Security & Privacy
             </h2>
           </div>
           <SecuritySettings />
@@ -348,26 +382,46 @@ function AccountSettings() {
 /**
  * Classification Settings
  */
+const CONFIDENCE_OPTIONS = [
+  { label: 'Low (50%)', value: 0.5 },
+  { label: 'Medium (70%)', value: 0.7 },
+  { label: 'High (85%)', value: 0.85 },
+  { label: 'Very High (95%)', value: 0.95 },
+];
+
+const COOLDOWN_OPTIONS = [
+  { label: '1 day', value: 1 },
+  { label: '3 days', value: 3 },
+  { label: '1 week', value: 7 },
+  { label: '2 weeks', value: 14 },
+  { label: 'Never (manual only)', value: -1 },
+];
+
 function ClassificationSettings() {
   const [config, setConfig] = useState<{
     model: 'claude-sonnet-4-20250514' | 'claude-haiku-4-20250514';
     dailyBudget: number;
     dailyEmailLimit: number;
     autoClassify: boolean;
+    confidenceThreshold?: number;
+    reclassifyCooldownDays?: number;
   } | null>(null);
   const [hasApiKey, setHasApiKey] = useState<boolean>(false);
+  const [emailBudget, setEmailBudget] = useState<{ used: number; limit: number } | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Load config on mount
   useEffect(() => {
     const loadConfig = async () => {
       try {
-        const [llmConfig, apiKeyStatus] = await Promise.all([
+        const [llmConfig, apiKeyStatus, budget] = await Promise.all([
           window.mailApi.config.get('llm'),
-          window.mailApi.credentials.hasApiKey('anthropic')
+          window.mailApi.credentials.hasApiKey('anthropic'),
+          window.mailApi.llm.getEmailBudget()
         ]);
         setConfig(llmConfig as typeof config);
         setHasApiKey(apiKeyStatus);
+        setEmailBudget(budget);
       } catch (error) {
         console.error('Failed to load classification settings:', error);
       } finally {
@@ -473,25 +527,77 @@ function ClassificationSettings() {
         />
       </div>
 
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
+            Confidence threshold
+          </div>
+          <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+            Minimum confidence to auto-apply tags
+          </div>
+        </div>
+        <select
+          value={config.confidenceThreshold ?? 0.7}
+          onChange={(e) => updateConfig({ confidenceThreshold: parseFloat(e.target.value) })}
+          className="input w-40"
+        >
+          {CONFIDENCE_OPTIONS.map(opt => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
+            Reclassify cooldown
+          </div>
+          <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+            Wait time before reclassifying edited emails
+          </div>
+        </div>
+        <select
+          value={config.reclassifyCooldownDays ?? 7}
+          onChange={(e) => updateConfig({ reclassifyCooldownDays: parseInt(e.target.value) })}
+          className="input w-48"
+        >
+          {COOLDOWN_OPTIONS.map(opt => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      </div>
+
       <div
         className="pt-4 border-t"
         style={{ borderColor: 'var(--color-border)' }}
       >
-        <div className="text-sm mb-2" style={{ color: 'var(--color-text-tertiary)' }}>
-          API Key Status
-        </div>
-        <div className="flex items-center gap-2">
-          <div
-            className="w-2 h-2 rounded-full"
-            style={{ background: hasApiKey ? 'var(--color-success)' : 'var(--color-danger)' }}
-          />
-          <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-            {hasApiKey ? 'Configured' : 'Not configured'}
-          </span>
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+            API Key Status
+          </div>
+          <div className="flex items-center gap-2">
+            <div
+              className="w-2 h-2 rounded-full"
+              style={{ background: hasApiKey ? 'var(--color-success)' : 'var(--color-danger)' }}
+            />
+            <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              {hasApiKey ? 'Configured' : 'Not configured'}
+            </span>
+          </div>
         </div>
         {!hasApiKey && (
-          <div className="text-sm mt-2" style={{ color: 'var(--color-text-tertiary)' }}>
+          <div className="text-sm mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
             Set your Anthropic API key in the terminal to enable AI classification
+          </div>
+        )}
+        {emailBudget && (
+          <div className="flex items-center justify-between">
+            <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+              Daily usage
+            </div>
+            <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              {emailBudget.used} / {emailBudget.limit} emails classified today
+            </span>
           </div>
         )}
       </div>
