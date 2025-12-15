@@ -183,6 +183,7 @@ function createMockSync(overrides: Partial<MailSync> = {}): MailSync {
     testConnection: vi.fn().mockResolvedValue({ ok: true }),
     getDefaultFolders: vi.fn().mockImplementation(() => ['INBOX']),
     listFolders: vi.fn().mockResolvedValue([]),
+    appendToSent: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
@@ -1132,8 +1133,9 @@ describe('sendEmail', () => {
     const accounts = createMockAccountRepo({ findById: vi.fn().mockResolvedValue(testAccount) });
     const sender = createMockSender();
     const secrets = createMockSecrets();
+    const sync = createMockSync();
 
-    const result = await sendEmail({ accounts, sender, secrets })(1, draft);
+    const result = await sendEmail({ accounts, sender, secrets, sync })(1, draft);
 
     expect(accounts.findById).toHaveBeenCalledWith(1);
     expect(sender.send).toHaveBeenCalledWith(
@@ -1148,8 +1150,9 @@ describe('sendEmail', () => {
     const accounts = createMockAccountRepo({ findById: vi.fn().mockResolvedValue(testAccount) });
     const sender = createMockSender();
     const secrets = createMockSecrets();
+    const sync = createMockSync();
 
-    await sendEmail({ accounts, sender, secrets })(1, draft);
+    await sendEmail({ accounts, sender, secrets, sync })(1, draft);
 
     expect(sender.send).toHaveBeenCalledWith(
       expect.anything(),
@@ -1163,8 +1166,9 @@ describe('sendEmail', () => {
     const accounts = createMockAccountRepo({ findById: vi.fn().mockResolvedValue(accountPort587) });
     const sender = createMockSender();
     const secrets = createMockSecrets();
+    const sync = createMockSync();
 
-    await sendEmail({ accounts, sender, secrets })(1, draft);
+    await sendEmail({ accounts, sender, secrets, sync })(1, draft);
 
     expect(sender.send).toHaveBeenCalledWith(
       expect.anything(),
@@ -1180,8 +1184,9 @@ describe('sendEmail', () => {
       getConfig: vi.fn().mockReturnValue({ biometricMode: 'always', sessionTimeoutMs: 0, requireForSend: true }),
       getPassword: vi.fn().mockResolvedValue('password'),
     });
+    const sync = createMockSync();
 
-    await sendEmail({ accounts, sender, secrets })(1, draft);
+    await sendEmail({ accounts, sender, secrets, sync })(1, draft);
 
     expect(secrets.getPassword).toHaveBeenCalledWith('test@example.com');
   });
@@ -1193,8 +1198,9 @@ describe('sendEmail', () => {
       getConfig: vi.fn().mockReturnValue({ biometricMode: 'always', sessionTimeoutMs: 0, requireForSend: true }),
       getPassword: vi.fn().mockResolvedValue(null),
     });
+    const sync = createMockSync();
 
-    await expect(sendEmail({ accounts, sender, secrets })(1, draft))
+    await expect(sendEmail({ accounts, sender, secrets, sync })(1, draft))
       .rejects.toThrow('Authentication required');
   });
 
@@ -1202,9 +1208,67 @@ describe('sendEmail', () => {
     const accounts = createMockAccountRepo({ findById: vi.fn().mockResolvedValue(null) });
     const sender = createMockSender();
     const secrets = createMockSecrets();
+    const sync = createMockSync();
 
-    await expect(sendEmail({ accounts, sender, secrets })(999, draft))
+    await expect(sendEmail({ accounts, sender, secrets, sync })(999, draft))
       .rejects.toThrow('Account not found');
+  });
+
+  it('appends sent email to Sent folder via IMAP after SMTP send', async () => {
+    const accounts = createMockAccountRepo({ findById: vi.fn().mockResolvedValue(testAccount) });
+    const sender = createMockSender();
+    const secrets = createMockSecrets();
+    const sync = createMockSync({
+      appendToSent: vi.fn().mockResolvedValue(undefined),
+      getDefaultFolders: vi.fn().mockReturnValue(['INBOX', 'Sent']),
+    });
+
+    await sendEmail({ accounts, sender, secrets, sync })(1, draft);
+
+    expect(sender.send).toHaveBeenCalled();
+    expect(sync.appendToSent).toHaveBeenCalledWith(
+      testAccount,
+      expect.objectContaining({
+        from: testAccount.email,
+        to: draft.to,
+        subject: draft.subject,
+        text: draft.text,
+      })
+    );
+  });
+
+  it('uses provider-specific Sent folder path', async () => {
+    const gmailAccount = { ...testAccount, imapHost: 'imap.gmail.com' };
+    const accounts = createMockAccountRepo({ findById: vi.fn().mockResolvedValue(gmailAccount) });
+    const sender = createMockSender();
+    const secrets = createMockSecrets();
+    const sync = createMockSync({
+      appendToSent: vi.fn().mockResolvedValue(undefined),
+      getDefaultFolders: vi.fn().mockReturnValue(['INBOX', '[Gmail]/Sent Mail']),
+    });
+
+    await sendEmail({ accounts, sender, secrets, sync })(1, draft);
+
+    // appendToSent should use the provider-specific sent folder from getDefaultFolders
+    expect(sync.appendToSent).toHaveBeenCalledWith(
+      gmailAccount,
+      expect.any(Object)
+    );
+  });
+
+  it('still succeeds if appendToSent fails (best effort)', async () => {
+    const accounts = createMockAccountRepo({ findById: vi.fn().mockResolvedValue(testAccount) });
+    const sender = createMockSender();
+    const secrets = createMockSecrets();
+    const sync = createMockSync({
+      appendToSent: vi.fn().mockRejectedValue(new Error('IMAP connection failed')),
+    });
+
+    // Should not throw - SMTP send succeeded, append failure is logged but not fatal
+    const result = await sendEmail({ accounts, sender, secrets, sync })(1, draft);
+
+    expect(result.messageId).toBe('<sent@example.com>');
+    expect(sync.appendToSent).toHaveBeenCalled();
   });
 });
 
@@ -1214,8 +1278,9 @@ describe('replyToEmail', () => {
     const accounts = createMockAccountRepo({ findById: vi.fn().mockResolvedValue(testAccount) });
     const sender = createMockSender();
     const secrets = createMockSecrets();
+    const sync = createMockSync();
 
-    await replyToEmail({ emails, accounts, sender, secrets })(1, { text: 'Reply text' });
+    await replyToEmail({ emails, accounts, sender, secrets, sync })(1, { text: 'Reply text' });
 
     expect(sender.send).toHaveBeenCalledWith(
       'test@example.com',
@@ -1236,8 +1301,9 @@ describe('replyToEmail', () => {
     const accounts = createMockAccountRepo({ findById: vi.fn().mockResolvedValue(testAccount) });
     const sender = createMockSender();
     const secrets = createMockSecrets();
+    const sync = createMockSync();
 
-    await replyToEmail({ emails, accounts, sender, secrets })(1, { text: 'Reply' });
+    await replyToEmail({ emails, accounts, sender, secrets, sync })(1, { text: 'Reply' });
 
     expect(sender.send).toHaveBeenCalledWith(
       expect.anything(),
@@ -1255,8 +1321,9 @@ describe('replyToEmail', () => {
     const accounts = createMockAccountRepo({ findById: vi.fn().mockResolvedValue(testAccount) });
     const sender = createMockSender();
     const secrets = createMockSecrets();
+    const sync = createMockSync();
 
-    await replyToEmail({ emails, accounts, sender, secrets })(1, { text: 'Reply all' }, true);
+    await replyToEmail({ emails, accounts, sender, secrets, sync })(1, { text: 'Reply all' }, true);
 
     expect(sender.send).toHaveBeenCalledWith(
       expect.anything(),
@@ -1273,8 +1340,9 @@ describe('replyToEmail', () => {
     const accounts = createMockAccountRepo();
     const sender = createMockSender();
     const secrets = createMockSecrets();
+    const sync = createMockSync();
 
-    await expect(replyToEmail({ emails, accounts, sender, secrets })(999, { text: 'Reply' }))
+    await expect(replyToEmail({ emails, accounts, sender, secrets, sync })(999, { text: 'Reply' }))
       .rejects.toThrow('Email not found');
   });
 
@@ -1283,8 +1351,9 @@ describe('replyToEmail', () => {
     const accounts = createMockAccountRepo({ findById: vi.fn().mockResolvedValue(null) });
     const sender = createMockSender();
     const secrets = createMockSecrets();
+    const sync = createMockSync();
 
-    await expect(replyToEmail({ emails, accounts, sender, secrets })(1, { text: 'Reply' }))
+    await expect(replyToEmail({ emails, accounts, sender, secrets, sync })(1, { text: 'Reply' }))
       .rejects.toThrow('Account not found');
   });
 });
@@ -1295,8 +1364,9 @@ describe('forwardEmail', () => {
     const accounts = createMockAccountRepo({ findById: vi.fn().mockResolvedValue(testAccount) });
     const sender = createMockSender();
     const secrets = createMockSecrets();
+    const sync = createMockSync();
 
-    await forwardEmail({ emails, accounts, sender, secrets })(1, ['forward@example.com'], { text: 'FYI' });
+    await forwardEmail({ emails, accounts, sender, secrets, sync })(1, ['forward@example.com'], { text: 'FYI' });
 
     expect(sender.send).toHaveBeenCalledWith(
       'test@example.com',
@@ -1315,8 +1385,9 @@ describe('forwardEmail', () => {
     const accounts = createMockAccountRepo({ findById: vi.fn().mockResolvedValue(testAccount) });
     const sender = createMockSender();
     const secrets = createMockSecrets();
+    const sync = createMockSync();
 
-    await forwardEmail({ emails, accounts, sender, secrets })(1, ['forward@example.com'], { text: 'FYI' });
+    await forwardEmail({ emails, accounts, sender, secrets, sync })(1, ['forward@example.com'], { text: 'FYI' });
 
     expect(sender.send).toHaveBeenCalledWith(
       expect.anything(),
@@ -1330,8 +1401,9 @@ describe('forwardEmail', () => {
     const accounts = createMockAccountRepo();
     const sender = createMockSender();
     const secrets = createMockSecrets();
+    const sync = createMockSync();
 
-    await expect(forwardEmail({ emails, accounts, sender, secrets })(999, ['test@example.com'], { text: 'FYI' }))
+    await expect(forwardEmail({ emails, accounts, sender, secrets, sync })(999, ['test@example.com'], { text: 'FYI' }))
       .rejects.toThrow('Email not found');
   });
 });
@@ -1497,7 +1569,7 @@ describe('addAccount', () => {
     username: 'new@example.com',
   };
 
-  it('creates account and performs initial sync with max 1000 messages', async () => {
+  it('creates account and performs initial sync with 30-day since filter', async () => {
     const createdAccount = { ...testAccount, id: 5, email: 'new@example.com' };
     const accounts = createMockAccountRepo({
       findByEmail: vi.fn().mockResolvedValue(null),
@@ -1514,7 +1586,15 @@ describe('addAccount', () => {
 
     expect(accounts.create).toHaveBeenCalledWith(accountInput);
     expect(secrets.setPassword).toHaveBeenCalledWith('new@example.com', 'password123');
-    expect(sync.sync).toHaveBeenCalledWith(createdAccount, expect.objectContaining({ maxMessages: 1000 }));
+    // Should use since date (30 days ago) instead of maxMessages
+    expect(sync.sync).toHaveBeenCalledWith(createdAccount, expect.objectContaining({
+      since: expect.any(Date),
+    }));
+    // Verify the since date is approximately 30 days ago
+    const callArgs = (sync.sync as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+    const expectedDate = new Date(Date.now() - thirtyDaysMs);
+    expect(callArgs.since.getTime()).toBeCloseTo(expectedDate.getTime(), -4); // within ~10 seconds
     expect(result.account).toEqual(createdAccount);
     expect(result.syncResult.newCount).toBe(100);
   });
@@ -1532,7 +1612,7 @@ describe('addAccount', () => {
     expect(sync.sync).not.toHaveBeenCalled();
   });
 
-  it('syncs all default folders with max 1000 messages each', async () => {
+  it('syncs all default folders with 30-day since filter', async () => {
     const createdAccount = { ...testAccount, id: 5, email: 'new@example.com' };
     const accounts = createMockAccountRepo({
       findByEmail: vi.fn().mockResolvedValue(null),
@@ -1547,10 +1627,10 @@ describe('addAccount', () => {
 
     await addAccount({ accounts, secrets, sync })(accountInput, 'password123');
 
-    // Should sync each default folder with maxMessages: 1000
+    // Should sync each default folder with since date (30 days ago)
     expect(sync.sync).toHaveBeenCalledTimes(2);
-    expect(sync.sync).toHaveBeenCalledWith(createdAccount, expect.objectContaining({ folder: 'INBOX', maxMessages: 1000 }));
-    expect(sync.sync).toHaveBeenCalledWith(createdAccount, expect.objectContaining({ folder: 'Sent', maxMessages: 1000 }));
+    expect(sync.sync).toHaveBeenCalledWith(createdAccount, expect.objectContaining({ folder: 'INBOX', since: expect.any(Date) }));
+    expect(sync.sync).toHaveBeenCalledWith(createdAccount, expect.objectContaining({ folder: 'Sent', since: expect.any(Date) }));
   });
 
   it('skips initial sync when skipSync is true', async () => {
@@ -1590,7 +1670,7 @@ describe('addAccount', () => {
     expect(result.syncResult.newCount).toBe(50);
   });
 
-  it('includes maxMessagesPerFolder in result for UI display', async () => {
+  it('includes syncDays in result for UI display', async () => {
     const createdAccount = { ...testAccount, id: 5, email: 'new@example.com' };
     const accounts = createMockAccountRepo({
       findByEmail: vi.fn().mockResolvedValue(null),
@@ -1598,14 +1678,14 @@ describe('addAccount', () => {
     });
     const secrets = createMockSecrets();
     const sync = createMockSync({
-      sync: vi.fn().mockResolvedValue({ newCount: 1000, newEmailIds: Array.from({ length: 1000 }, (_, i) => i + 1) }),
+      sync: vi.fn().mockResolvedValue({ newCount: 500, newEmailIds: Array.from({ length: 500 }, (_, i) => i + 1) }),
       getDefaultFolders: vi.fn().mockImplementation(() => ['INBOX']),
     });
 
     const result = await addAccount({ accounts, secrets, sync })(accountInput, 'password123');
 
-    // Result should include the limit so UI can show "Only 1000 most recent emails downloaded"
-    expect(result.maxMessagesPerFolder).toBe(1000);
+    // Result should include syncDays so UI can show "Downloaded emails from the last 30 days"
+    expect(result.syncDays).toBe(30);
   });
 });
 

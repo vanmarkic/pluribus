@@ -7,7 +7,8 @@
 
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
-import type { MailSync, EmailRepo, AttachmentRepo, FolderRepo, SecureStorage } from '../../core/ports';
+import nodemailer from 'nodemailer';
+import type { MailSync, EmailRepo, AttachmentRepo, FolderRepo, SecureStorage, SentMessage } from '../../core/ports';
 import type { Account, Email, EmailBody, SyncProgress, SyncOptions } from '../../core/domain';
 
 type ProgressCallback = (p: SyncProgress) => void;
@@ -108,6 +109,10 @@ const PROVIDER_FOLDERS: Record<string, ProviderFolders> = {
   },
 };
 
+// Providers that automatically save sent mail to the Sent folder
+// For these, we skip IMAP APPEND to avoid duplicates
+const PROVIDERS_WITH_AUTO_SENT = new Set(['gmail', 'outlook']);
+
 // Map IMAP host to provider key
 function getProviderFromHost(imapHost: string): string {
   const host = imapHost.toLowerCase();
@@ -200,6 +205,7 @@ export function createMailSync(
         headersOnly = true,
         batchSize = 500,
         maxMessages,
+        since,
         folder = 'INBOX',
       } = options;
 
@@ -233,9 +239,16 @@ export function createMailSync(
           emit({ accountId: account.id, folder, phase: 'counting', current: 0, total: 0, newCount: 0 });
 
           // Search for new messages
-          const searchCriteria: any = folderRecord.lastUid > 0
-            ? { uid: `${folderRecord.lastUid + 1}:*` }
-            : { all: true };
+          // Build search criteria: combine UID range with optional SINCE date filter
+          const searchCriteria: any = {};
+          if (folderRecord.lastUid > 0) {
+            searchCriteria.uid = `${folderRecord.lastUid + 1}:*`;
+          } else if (since) {
+            // Initial sync with date filter - use SINCE for efficient server-side filtering
+            searchCriteria.since = since;
+          } else {
+            searchCriteria.all = true;
+          }
 
           const searchResult = await client.search(searchCriteria, { uid: true });
           let uids = Array.isArray(searchResult) ? searchResult : [];
@@ -431,6 +444,50 @@ export function createMailSync(
         path: m.path,
         specialUse: m.specialUse,
       }));
+    },
+
+    async appendToSent(account: Account, message: SentMessage) {
+      // Skip for providers that auto-save sent mail (Gmail, Outlook)
+      // to avoid duplicates in the Sent folder
+      const provider = getProviderFromHost(account.imapHost);
+      if (PROVIDERS_WITH_AUTO_SENT.has(provider)) {
+        return;
+      }
+
+      // Build RFC822 message using nodemailer's stream transport
+      const transporter = nodemailer.createTransport({
+        streamTransport: true,
+        buffer: true,
+        newline: 'unix',
+      });
+
+      const mailOptions = {
+        from: message.from,
+        to: message.to.join(', '),
+        cc: message.cc?.join(', '),
+        bcc: message.bcc?.join(', '),
+        subject: message.subject,
+        text: message.text,
+        html: message.html,
+        inReplyTo: message.inReplyTo,
+        references: message.references?.join(' '),
+        attachments: message.attachments?.map(a => ({
+          filename: a.filename,
+          content: Buffer.from(a.content, 'base64'),
+          contentType: a.contentType,
+        })),
+      };
+
+      const info = await transporter.sendMail(mailOptions);
+      const rawMessage = info.message as Buffer;
+
+      // Get the provider-specific Sent folder path
+      const folders = getProviderFolders(account.imapHost);
+      const sentFolder = folders.sent;
+
+      // Connect and append to Sent folder
+      const client = await getConnection(account);
+      await client.append(sentFolder, rawMessage, ['\\Seen']);
     },
   };
 }

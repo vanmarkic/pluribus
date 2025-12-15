@@ -100,6 +100,7 @@ export type MailSync = {
   testConnection: (host: string, port: number, username: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   getDefaultFolders: (imapHost: string) => string[];  // Returns folders to sync by default based on provider
   listFolders: (account: Account) => Promise<{ path: string; specialUse?: string }[]>;  // List all folders on server
+  appendToSent: (account: Account, message: SentMessage) => Promise<void>;  // Append sent email to Sent folder via IMAP
 };
 
 // ============================================
@@ -200,6 +201,11 @@ export type SendResult = {
   messageId: string;
   accepted: string[];
   rejected: string[];
+};
+
+// Message to append to Sent folder after SMTP send
+export type SentMessage = EmailDraft & {
+  from: string;  // Sender email address
 };
 
 export type MailSender = {

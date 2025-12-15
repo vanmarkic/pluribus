@@ -889,11 +889,11 @@ export type AddAccountOptions = {
 export type AddAccountResult = {
   account: Account;
   syncResult: SyncResult;
-  /** Max messages downloaded per folder - UI can display "Only 1000 most recent emails downloaded" */
-  maxMessagesPerFolder: number;
+  /** Number of days synced - UI can display "Downloaded emails from the last 30 days" */
+  syncDays: number;
 };
 
-const INITIAL_SYNC_MAX_MESSAGES = 1000;
+const INITIAL_SYNC_DAYS = 30;
 
 export const addAccount = (deps: Pick<Deps, 'accounts' | 'secrets' | 'sync'>) =>
   async (account: AccountInput, password: string, options: AddAccountOptions = {}): Promise<AddAccountResult> => {
@@ -914,18 +914,19 @@ export const addAccount = (deps: Pick<Deps, 'accounts' | 'secrets' | 'sync'>) =>
       return {
         account: createdAccount,
         syncResult: { newCount: 0, newEmailIds: [] },
-        maxMessagesPerFolder: INITIAL_SYNC_MAX_MESSAGES,
+        syncDays: INITIAL_SYNC_DAYS,
       };
     }
 
-    // Perform initial sync for provider-specific folders with max 1000 messages
+    // Perform initial sync for provider-specific folders with date-based filter
     const foldersToSync = deps.sync.getDefaultFolders(account.imapHost);
+    const since = new Date(Date.now() - INITIAL_SYNC_DAYS * 24 * 60 * 60 * 1000);
     let totalNewCount = 0;
     const allNewEmailIds: number[] = [];
 
     for (const folder of foldersToSync) {
       try {
-        const result = await deps.sync.sync(createdAccount, { folder, maxMessages: INITIAL_SYNC_MAX_MESSAGES });
+        const result = await deps.sync.sync(createdAccount, { folder, since });
         totalNewCount += result.newCount;
         allNewEmailIds.push(...result.newEmailIds);
       } catch (e) {
@@ -940,7 +941,7 @@ export const addAccount = (deps: Pick<Deps, 'accounts' | 'secrets' | 'sync'>) =>
     return {
       account: createdAccount,
       syncResult: { newCount: totalNewCount, newEmailIds: allNewEmailIds },
-      maxMessagesPerFolder: INITIAL_SYNC_MAX_MESSAGES,
+      syncDays: INITIAL_SYNC_DAYS,
     };
   };
 
@@ -964,11 +965,11 @@ export const testSmtpConnection = (deps: Pick<Deps, 'sender'>) =>
 // Send Use Cases
 // ============================================
 
-export const sendEmail = (deps: Pick<Deps, 'accounts' | 'sender' | 'secrets'>) =>
+export const sendEmail = (deps: Pick<Deps, 'accounts' | 'sender' | 'secrets' | 'sync'>) =>
   async (accountId: number, draft: EmailDraft): Promise<SendResult> => {
     const account = await deps.accounts.findById(accountId);
     if (!account) throw new Error('Account not found');
-    
+
     // Check if biometric required for send
     const securityConfig = deps.secrets.getConfig();
     if (securityConfig.requireForSend) {
@@ -976,28 +977,40 @@ export const sendEmail = (deps: Pick<Deps, 'accounts' | 'sender' | 'secrets'>) =
       const password = await deps.secrets.getPassword(account.email);
       if (!password) throw new Error('Authentication required');
     }
-    
+
     const smtpConfig: SmtpConfig = {
       host: account.smtpHost,
       port: account.smtpPort,
       secure: account.smtpPort === 465,
     };
-    
-    return deps.sender.send(account.email, smtpConfig, draft);
+
+    const result = await deps.sender.send(account.email, smtpConfig, draft);
+
+    // Append to Sent folder via IMAP (best effort - don't fail if this fails)
+    try {
+      await deps.sync.appendToSent(account, {
+        from: account.email,
+        ...draft,
+      });
+    } catch (err) {
+      console.warn('Failed to append to Sent folder:', err);
+    }
+
+    return result;
   };
 
-export const replyToEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'sender' | 'secrets'>) =>
+export const replyToEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'sender' | 'secrets' | 'sync'>) =>
   async (emailId: number, body: { text?: string; html?: string }, replyAll = false): Promise<SendResult> => {
     const email = await deps.emails.findById(emailId);
     if (!email) throw new Error('Email not found');
-    
+
     const account = await deps.accounts.findById(email.accountId);
     if (!account) throw new Error('Account not found');
-    
+
     // Build reply recipients
     const to = [email.from.address];
     const cc = replyAll ? email.to.filter(addr => addr !== account.email) : [];
-    
+
     const draft: EmailDraft = {
       to,
       cc: cc.length > 0 ? cc : undefined,
@@ -1007,22 +1020,22 @@ export const replyToEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'sender' |
       inReplyTo: email.messageId,
       references: [email.messageId],
     };
-    
+
     return sendEmail(deps)(email.accountId, draft);
   };
 
-export const forwardEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'sender' | 'secrets'>) =>
+export const forwardEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'sender' | 'secrets' | 'sync'>) =>
   async (emailId: number, to: string[], body: { text?: string; html?: string }): Promise<SendResult> => {
     const email = await deps.emails.findById(emailId);
     if (!email) throw new Error('Email not found');
-    
+
     const draft: EmailDraft = {
       to,
       subject: email.subject.startsWith('Fwd:') ? email.subject : `Fwd: ${email.subject}`,
       text: body.text,
       html: body.html,
     };
-    
+
     return sendEmail(deps)(email.accountId, draft);
   };
 
