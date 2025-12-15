@@ -24,7 +24,7 @@ const api = {
     list: (opts = {}) => ipcRenderer.invoke('emails:list', opts),
     get: (id: number) => ipcRenderer.invoke('emails:get', id),
     getBody: (id: number) => ipcRenderer.invoke('emails:getBody', id),
-    search: (query: string, limit?: number) => ipcRenderer.invoke('emails:search', query, limit),
+    search: (query: string, limit?: number, accountId?: number) => ipcRenderer.invoke('emails:search', query, limit, accountId),
     markRead: (id: number, isRead: boolean) => ipcRenderer.invoke('emails:markRead', id, isRead),
     star: (id: number, isStarred: boolean) => ipcRenderer.invoke('emails:star', id, isStarred),
     archive: (id: number) => ipcRenderer.invoke('emails:archive', id),
@@ -71,7 +71,7 @@ const api = {
   },
 
   aiSort: {
-    getPendingReview: (opts?: { limit?: number; offset?: number; sortBy?: 'confidence' | 'date' | 'sender' }) =>
+    getPendingReview: (opts?: { limit?: number; offset?: number; sortBy?: 'confidence' | 'date' | 'sender'; accountId?: number }) =>
       ipcRenderer.invoke('aiSort:getPendingReview', opts),
     getByPriority: (priority: 'high' | 'normal' | 'low', opts?: { limit?: number; offset?: number }) =>
       ipcRenderer.invoke('aiSort:getByPriority', priority, opts),
