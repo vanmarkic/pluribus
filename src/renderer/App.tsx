@@ -409,6 +409,8 @@ function ClassificationSettings() {
   const [hasApiKey, setHasApiKey] = useState<boolean>(false);
   const [emailBudget, setEmailBudget] = useState<{ used: number; limit: number } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [initialModel, setInitialModel] = useState<string | null>(null);
+  const [modelChanged, setModelChanged] = useState(false);
 
   // Load config on mount
   useEffect(() => {
@@ -422,6 +424,10 @@ function ClassificationSettings() {
         setConfig(llmConfig as typeof config);
         setHasApiKey(apiKeyStatus);
         setEmailBudget(budget);
+        // Capture initial model on first load
+        if (initialModel === null && llmConfig) {
+          setInitialModel((llmConfig as typeof config)?.model ?? null);
+        }
       } catch (error) {
         console.error('Failed to load classification settings:', error);
       } finally {
@@ -438,6 +444,10 @@ function ClassificationSettings() {
     try {
       await window.mailApi.config.set('llm', newConfig);
       setConfig(newConfig);
+      // Check if model changed from initial
+      if (updates.model && updates.model !== initialModel) {
+        setModelChanged(true);
+      }
     } catch (error) {
       console.error('Failed to save classification settings:', error);
     }
@@ -470,23 +480,37 @@ function ClassificationSettings() {
         />
       </div>
 
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
-            Model
+      <div>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
+              Model
+            </div>
+            <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+              Choose between speed (Haiku) or quality (Sonnet)
+            </div>
           </div>
-          <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
-            Choose between speed (Haiku) or quality (Sonnet)
-          </div>
+          <select
+            value={config.model}
+            onChange={(e) => updateConfig({ model: e.target.value as typeof config.model })}
+            className="input w-48"
+          >
+            <option value="claude-haiku-4-20250514">Claude Haiku 4</option>
+            <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+          </select>
         </div>
-        <select
-          value={config.model}
-          onChange={(e) => updateConfig({ model: e.target.value as typeof config.model })}
-          className="input w-48"
-        >
-          <option value="claude-haiku-4-20250514">Claude Haiku 4</option>
-          <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
-        </select>
+        {modelChanged && (
+          <div
+            className="mt-2 p-2 rounded text-sm"
+            style={{
+              background: '#fef3c7',
+              color: '#92400e',
+              border: '1px solid #fde68a'
+            }}
+          >
+            Restart the app for model change to take effect
+          </div>
+        )}
       </div>
 
       <div className="flex items-center justify-between">
