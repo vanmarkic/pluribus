@@ -50,3 +50,4 @@ tmp/
 temp/
 *.tmp
 tsconfig.main.tsbuildinfo
+.worktrees/
