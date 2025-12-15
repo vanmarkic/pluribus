@@ -107,6 +107,7 @@ export type MailSync = {
   sync: (account: Account, options?: SyncOptions) => Promise<SyncResult>;
   fetchBody: (account: Account, emailId: number) => Promise<EmailBody>;
   disconnect: (accountId: number) => Promise<void>;
+  cancel: (accountId: number) => Promise<void>;
   onProgress: (cb: (p: SyncProgress) => void) => () => void;
   testConnection: (host: string, port: number, username: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   getDefaultFolders: (imapHost: string) => string[];  // Returns folders to sync by default based on provider

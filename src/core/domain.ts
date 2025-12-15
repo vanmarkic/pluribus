@@ -1,9 +1,19 @@
 /**
  * Core Domain
- * 
+ *
  * Pure business types and logic. Zero dependencies.
  * This is the heart of the application.
  */
+
+// ============================================
+// Constants
+// ============================================
+
+/** Default number of days to sync on initial mailbox sync */
+export const DEFAULT_SYNC_DAYS = 30;
+
+/** Maximum emails to sync in a single operation */
+export const MAX_SYNC_EMAILS = 2000;
 
 // ============================================
 // Email
@@ -109,7 +119,7 @@ export type Classification = {
 // Sync
 // ============================================
 
-export type SyncPhase = 'connecting' | 'counting' | 'fetching' | 'storing' | 'complete' | 'error';
+export type SyncPhase = 'connecting' | 'counting' | 'fetching' | 'storing' | 'complete' | 'error' | 'cancelled';
 
 export type SyncProgress = {
   accountId: number;
