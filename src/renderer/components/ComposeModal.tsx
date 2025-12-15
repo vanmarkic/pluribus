@@ -33,7 +33,7 @@ type Props = {
 };
 
 export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClose, onSent }: Props) {
-  const { accounts } = useAccountStore();
+  const { accounts, getSelectedAccount } = useAccountStore();
   const [to, setTo] = useState('');
   const [cc, setCc] = useState('');
   const [bcc, setBcc] = useState('');
@@ -156,7 +156,7 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
     // Don't save during form initialization or if user hasn't edited
     if (!isInitialized || !hasUserEdited) return;
 
-    const account = accounts.find(a => a.isActive) || accounts[0];
+    const account = getSelectedAccount() || accounts[0];
     if (!account) return;
 
     // Don't create new empty drafts, but DO save updates to existing drafts (user may have cleared fields)
@@ -265,8 +265,8 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
       return;
     }
 
-    // Get the first active account (or just the first account)
-    const account = accounts.find(a => a.isActive) || accounts[0];
+    // Get the selected account (or first account as fallback)
+    const account = getSelectedAccount() || accounts[0];
     if (!account) {
       setError('No email account configured. Please add an account in Settings.');
       return;
