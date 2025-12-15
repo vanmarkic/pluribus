@@ -101,7 +101,7 @@ const api = {
       ipcRenderer.invoke('accounts:add', account, password, options) as Promise<{
         account: any;
         syncResult: { newCount: number; newEmailIds: number[] };
-        maxMessagesPerFolder: number;
+        syncDays: number;
       }>,
     update: (id: number, updates: any, newPassword?: string) => ipcRenderer.invoke('accounts:update', id, updates, newPassword),
     delete: (id: number) => ipcRenderer.invoke('accounts:delete', id),

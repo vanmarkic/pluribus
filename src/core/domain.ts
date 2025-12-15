@@ -140,6 +140,7 @@ export type SyncOptions = {
   headersOnly?: boolean;
   batchSize?: number;
   maxMessages?: number;
+  since?: Date;
   folder?: string;
   folders?: string[];
 };

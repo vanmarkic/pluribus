@@ -90,7 +90,7 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
-  const [syncResult, setSyncResult] = useState<{ newCount: number; maxMessagesPerFolder: number } | null>(null);
+  const [syncResult, setSyncResult] = useState<{ newCount: number; syncDays: number } | null>(null);
   const [llmCheck, setLlmCheck] = useState<'checking' | 'configured' | 'not-configured'>('checking');
   const [llmReason, setLlmReason] = useState<string>('');
 
@@ -189,7 +189,7 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
 
         setSyncResult({
           newCount: result.syncResult.newCount,
-          maxMessagesPerFolder: result.maxMessagesPerFolder,
+          syncDays: result.syncDays,
         });
         setStep('complete');
       }
@@ -512,7 +512,7 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
                   </div>
                 )}
                 <p className="text-xs text-zinc-400 mt-4">
-                  Downloading up to 1,000 most recent emails per folder
+                  Downloading emails from the last 30 days
                 </p>
               </div>
             </div>
@@ -529,7 +529,7 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
                       {syncResult.newCount.toLocaleString()} emails downloaded
                     </p>
                     <p className="text-xs text-zinc-400">
-                      Only the {syncResult.maxMessagesPerFolder.toLocaleString()} most recent emails per folder were downloaded
+                      Downloaded emails from the last {syncResult.syncDays} days
                     </p>
                   </div>
                 )}

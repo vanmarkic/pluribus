@@ -48,7 +48,7 @@ declare global {
         add: (account: any, password: string, options?: { skipSync?: boolean }) => Promise<{
           account: Account;
           syncResult: { newCount: number; newEmailIds: number[] };
-          maxMessagesPerFolder: number;
+          syncDays: number;
         }>;
         update: (id: number, updates: any, newPassword?: string) => Promise<Account>;
         delete: (id: number) => Promise<void>;
