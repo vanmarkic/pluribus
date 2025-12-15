@@ -15,7 +15,7 @@ import { createUseCases, type UseCases, type Deps } from '../core';
 // Adapters
 import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createTagRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo } from '../adapters/db';
 import { createMailSync } from '../adapters/imap';
-import { createClassifier } from '../adapters/llm';
+import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier } from '../adapters/llm';
 import { createSecureStorage } from '../adapters/keychain';
 import { createMailSender } from '../adapters/smtp';
 import { createImageCache } from '../adapters/image-cache';
@@ -27,12 +27,14 @@ import type { RemoteImagesSetting } from '../core/ports';
 
 type AppConfig = {
   llm: {
-    model: 'claude-sonnet-4-20250514' | 'claude-haiku-4-20250514';
+    provider: 'anthropic' | 'ollama';
+    model: string;
     dailyBudget: number;
     dailyEmailLimit: number;
     autoClassify: boolean;
     confidenceThreshold: number;
     reclassifyCooldownDays: number;
+    ollamaServerUrl: string;
   };
   security: {
     remoteImages: RemoteImagesSetting;
@@ -42,12 +44,14 @@ type AppConfig = {
 const configStore = new Store<AppConfig>({
   defaults: {
     llm: {
+      provider: 'anthropic',
       model: 'claude-haiku-4-20250514',
       dailyBudget: 100000,
       dailyEmailLimit: 200,
       autoClassify: false,
       confidenceThreshold: 0.85,
       reclassifyCooldownDays: 7,
+      ollamaServerUrl: 'http://localhost:11434',
     },
     security: {
       remoteImages: 'block', // Privacy-first default
@@ -100,9 +104,36 @@ export function createContainer(): Container {
   // Create services (with dependencies)
   const sync = createMailSync(emails, attachments, folders, secrets);
   const sender = createMailSender(secrets);
-  
+
+  // Create LLM provider and classifier based on config
   const llmConfig = configStore.get('llm');
-  const classifier = createClassifier(llmConfig, tags, secrets);
+
+  let llmProvider;
+  let classifier;
+
+  if (llmConfig.provider === 'ollama') {
+    llmProvider = createOllamaProvider(llmConfig.ollamaServerUrl);
+    classifier = createOllamaClassifier(
+      {
+        model: llmConfig.model,
+        serverUrl: llmConfig.ollamaServerUrl,
+        dailyBudget: llmConfig.dailyBudget,
+        dailyEmailLimit: llmConfig.dailyEmailLimit,
+      },
+      tags
+    );
+  } else {
+    llmProvider = createAnthropicProvider(secrets);
+    classifier = createClassifier(
+      {
+        model: llmConfig.model as 'claude-sonnet-4-20250514' | 'claude-haiku-4-20250514',
+        dailyBudget: llmConfig.dailyBudget,
+        dailyEmailLimit: llmConfig.dailyEmailLimit,
+      },
+      tags,
+      secrets
+    );
+  }
 
   // Config adapter (implements ConfigStore port)
   const config = {
@@ -131,6 +162,7 @@ export function createContainer(): Container {
     sender,
     config,
     imageCache,
+    llmProvider,
   };
   
   // Create use cases

@@ -10,13 +10,22 @@ import type { Email, EmailBody, Classification, Tag } from '../../core/domain';
 
 const DEFAULT_SERVER_URL = 'http://localhost:11434';
 
+type OllamaTagsResponse = {
+  models?: Array<{ name: string; modified_at?: string }>;
+};
+
+type OllamaChatResponse = {
+  message?: { content?: string };
+};
+
 export function createOllamaProvider(serverUrl = DEFAULT_SERVER_URL): LLMProvider {
   return {
     type: 'ollama',
 
     async validateKey() {
       // Ollama doesn't need API key, just test connection
-      return this.testConnection!();
+      const result = await this.testConnection!();
+      return { valid: result.connected, error: result.error };
     },
 
     async listModels() {
@@ -25,9 +34,9 @@ export function createOllamaProvider(serverUrl = DEFAULT_SERVER_URL): LLMProvide
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
-        const data = await response.json();
+        const data = await response.json() as OllamaTagsResponse;
 
-        return (data.models || []).map((m: { name: string; modified_at?: string }) => ({
+        return (data.models || []).map((m) => ({
           id: m.name,
           displayName: m.name,
           createdAt: m.modified_at,
@@ -47,7 +56,7 @@ export function createOllamaProvider(serverUrl = DEFAULT_SERVER_URL): LLMProvide
         if (!response.ok) {
           return { connected: false, error: `Server returned ${response.status}` };
         }
-        const data = await response.json();
+        const data = await response.json() as OllamaTagsResponse;
         if (!data.models || data.models.length === 0) {
           return { connected: true, error: "No models installed. Run 'ollama pull llama3.2' to install one." };
         }
@@ -58,7 +67,7 @@ export function createOllamaProvider(serverUrl = DEFAULT_SERVER_URL): LLMProvide
           return { connected: false, error: "Ollama is not running. Start it with 'ollama serve'" };
         }
         if (message.includes('timeout') || message.includes('aborted')) {
-          return { connected: false, error: "Ollama server not responding. Check if it's running." };
+          return { connected: false, error: "Connection timed out. Is Ollama running?" };
         }
         return { connected: false, error: message };
       }
@@ -144,7 +153,7 @@ export function createOllamaClassifier(
         throw new Error(`Ollama API error: ${response.status}`);
       }
 
-      const data = await response.json();
+      const data = await response.json() as OllamaChatResponse;
       todayEmailCount++;
 
       const content = data.message?.content || '';

@@ -293,6 +293,26 @@ export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'tags' | 'classifi
   };
 
 // ============================================
+// LLM Provider Use Cases
+// ============================================
+
+export const validateLLMProvider = (deps: Pick<Deps, 'llmProvider'>) =>
+  (key: string): Promise<{ valid: boolean; error?: string }> =>
+    deps.llmProvider.validateKey(key);
+
+export const listLLMModels = (deps: Pick<Deps, 'llmProvider'>) =>
+  (): Promise<import('./ports').LLMModel[]> =>
+    deps.llmProvider.listModels();
+
+export const testLLMConnection = (deps: Pick<Deps, 'llmProvider'>) =>
+  async (): Promise<{ connected: boolean; error?: string }> => {
+    if (deps.llmProvider.testConnection) {
+      return deps.llmProvider.testConnection();
+    }
+    return { connected: true };
+  };
+
+// ============================================
 // AI Sort Use Cases
 // ============================================
 
@@ -972,6 +992,11 @@ export function createUseCases(deps: Deps) {
     classifyEmail: classifyEmail(deps),
     classifyAndApply: classifyAndApply(deps),
     classifyNewEmails: classifyNewEmails(deps),
+
+    // LLM Provider
+    validateLLMProvider: validateLLMProvider(deps),
+    listLLMModels: listLLMModels(deps),
+    testLLMConnection: testLLMConnection(deps),
 
     // AI Sort
     getPendingReviewQueue: getPendingReviewQueue(deps),

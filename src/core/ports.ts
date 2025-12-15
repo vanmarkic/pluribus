@@ -211,12 +211,34 @@ export type MailSender = {
 // ============================================
 
 export type LLMConfig = {
-  model: 'claude-sonnet-4-20250514' | 'claude-haiku-4-20250514';
+  provider: LLMProviderType;
+  model: string;
   dailyBudget: number;
   dailyEmailLimit: number;
   autoClassify: boolean;
   confidenceThreshold: number;
   reclassifyCooldownDays: number;
+  // Ollama-specific
+  ollamaServerUrl?: string;
+};
+
+// ============================================
+// LLM Provider (for model listing & validation)
+// ============================================
+
+export type LLMModel = {
+  id: string;
+  displayName: string;
+  createdAt?: string;
+};
+
+export type LLMProviderType = 'anthropic' | 'ollama';
+
+export type LLMProvider = {
+  type: LLMProviderType;
+  validateKey: (key: string) => Promise<{ valid: boolean; error?: string }>;
+  listModels: () => Promise<LLMModel[]>;
+  testConnection?: () => Promise<{ connected: boolean; error?: string }>;
 };
 
 export type RemoteImagesSetting = 'block' | 'allow';
@@ -293,4 +315,5 @@ export type Deps = {
   sender: MailSender;
   config: ConfigStore;
   imageCache: ImageCache;
+  llmProvider: LLMProvider;
 };
