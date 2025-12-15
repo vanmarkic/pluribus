@@ -2,21 +2,26 @@ import { useState, useEffect, useCallback } from 'react';
 import { AIDashboard } from './AIDashboard';
 import { ReviewQueue } from './ReviewQueue';
 import { TagManager } from './TagManager';
+import { useAccountStore } from '../../stores';
 import type { ReviewItem } from './types';
 
 export function AISortView() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'review'>('dashboard');
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
   const [editingItemId, setEditingItemId] = useState<number | null>(null);
+  const { selectedAccountId } = useAccountStore();
 
   const loadReviewItems = useCallback(async () => {
     try {
-      const items = await window.mailApi.aiSort.getPendingReview({ limit: 100 });
+      const items = await window.mailApi.aiSort.getPendingReview({
+        limit: 100,
+        accountId: selectedAccountId || undefined,
+      });
       setReviewItems(items);
     } catch (err) {
       console.error('Failed to load review items:', err);
     }
-  }, []);
+  }, [selectedAccountId]);
 
   useEffect(() => {
     loadReviewItems();

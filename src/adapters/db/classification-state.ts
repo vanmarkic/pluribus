@@ -92,8 +92,8 @@ export function createClassificationStateRepo(getDb: () => Database.Database): C
       );
     },
 
-    async listPendingReview(options = {}) {
-      const { limit = 100, offset = 0, sortBy = 'confidence' } = options;
+    async listPendingReview(options: { limit?: number; offset?: number; sortBy?: 'confidence' | 'date' | 'sender'; accountId?: number } = {}) {
+      const { limit = 100, offset = 0, sortBy = 'confidence', accountId } = options;
       let orderBy: string;
       switch (sortBy) {
         case 'confidence': orderBy = 'cs.confidence ASC'; break;
@@ -102,52 +102,90 @@ export function createClassificationStateRepo(getDb: () => Database.Database): C
         default: orderBy = 'e.date DESC'; break;
       }
 
-      const rows = getDb().prepare(`
+      // Include both pending_review (low confidence) and classified (high confidence, auto-tagged)
+      // This lets users review ALL classified emails, not just low-confidence ones
+      let sql = `
         SELECT cs.*, e.date as email_date
         FROM classification_state cs
         JOIN emails e ON cs.email_id = e.id
-        WHERE cs.status = 'pending_review'
-        ORDER BY ${orderBy}
-        LIMIT ? OFFSET ?
-      `).all(limit, offset);
+        WHERE cs.status IN ('pending_review', 'classified')
+      `;
+      const params: any[] = [];
 
+      if (accountId) {
+        sql += ' AND e.account_id = ?';
+        params.push(accountId);
+      }
+
+      sql += ` ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+      params.push(limit, offset);
+
+      const rows = getDb().prepare(sql).all(...params);
       return rows.map(mapState);
     },
 
-    async listByPriority(priority, options = {}) {
-      const { limit = 100, offset = 0 } = options;
+    async listByPriority(priority: string, options: { limit?: number; offset?: number; accountId?: number } = {}) {
+      const { limit = 100, offset = 0, accountId } = options;
 
-      const rows = getDb().prepare(`
+      let sql = `
         SELECT cs.*
         FROM classification_state cs
         JOIN emails e ON cs.email_id = e.id
         WHERE cs.priority = ? AND cs.status IN ('classified', 'accepted')
-        ORDER BY e.date DESC
-        LIMIT ? OFFSET ?
-      `).all(priority, limit, offset);
+      `;
+      const params: any[] = [priority];
 
+      if (accountId) {
+        sql += ' AND e.account_id = ?';
+        params.push(accountId);
+      }
+
+      sql += ' ORDER BY e.date DESC LIMIT ? OFFSET ?';
+      params.push(limit, offset);
+
+      const rows = getDb().prepare(sql).all(...params);
       return rows.map(mapState);
     },
 
-    async listFailed(options = {}) {
-      const { limit = 100, offset = 0 } = options;
+    async listFailed(options: { limit?: number; offset?: number; accountId?: number } = {}) {
+      const { limit = 100, offset = 0, accountId } = options;
 
-      const rows = getDb().prepare(`
+      let sql = `
         SELECT cs.*
         FROM classification_state cs
         JOIN emails e ON cs.email_id = e.id
         WHERE cs.status = 'error'
-        ORDER BY cs.classified_at DESC
-        LIMIT ? OFFSET ?
-      `).all(limit, offset);
+      `;
+      const params: any[] = [];
 
+      if (accountId) {
+        sql += ' AND e.account_id = ?';
+        params.push(accountId);
+      }
+
+      sql += ' ORDER BY cs.classified_at DESC LIMIT ? OFFSET ?';
+      params.push(limit, offset);
+
+      const rows = getDb().prepare(sql).all(...params);
       return rows.map(mapState);
     },
 
-    async countByStatus() {
-      const rows = getDb().prepare(`
-        SELECT status, COUNT(*) as count FROM classification_state GROUP BY status
-      `).all() as { status: ClassificationStatus; count: number }[];
+    async countByStatus(accountId?: number) {
+      let sql = `
+        SELECT cs.status, COUNT(*) as count
+        FROM classification_state cs
+      `;
+      const params: any[] = [];
+
+      if (accountId) {
+        sql += ' JOIN emails e ON cs.email_id = e.id WHERE e.account_id = ?';
+        params.push(accountId);
+        sql += ' GROUP BY cs.status';
+      } else {
+        sql += ' GROUP BY cs.status';
+      }
+
+      const rows = getDb().prepare(sql).all(...params) as { status: ClassificationStatus; count: number }[];
 
       const counts: Record<ClassificationStatus, number> = {
         unprocessed: 0,

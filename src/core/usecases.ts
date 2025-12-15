@@ -45,8 +45,8 @@ export const getEmailBody = (deps: Pick<Deps, 'emails' | 'accounts' | 'sync'>) =
   };
 
 export const searchEmails = (deps: Pick<Deps, 'emails'>) =>
-  (query: string, limit = 100): Promise<Email[]> =>
-    deps.emails.search(query, limit);
+  (query: string, limit = 100, accountId?: number): Promise<Email[]> =>
+    deps.emails.search(query, limit, accountId);
 
 export const markRead = (deps: Pick<Deps, 'emails'>) =>
   (id: number, isRead: boolean): Promise<void> =>
@@ -117,21 +117,22 @@ export const syncAllMailboxes = (deps: Pick<Deps, 'accounts' | 'sync'>) =>
     let total = 0;
     const allNewEmailIds: number[] = [];
 
-    // Get default folders from the sync adapter (adapter knows provider-specific names)
-    const foldersToSync = options.folders || deps.sync.getDefaultFolders();
-
     for (const account of accounts) {
+      // Get provider-specific folders for this account
+      const foldersToSync = options.folders || deps.sync.getDefaultFolders(account.imapHost);
+      console.log(`Syncing ${account.email} (${account.imapHost}), folders:`, foldersToSync);
+
       for (const folder of foldersToSync) {
         try {
+          console.log(`  Syncing folder: ${folder}`);
           const result = await deps.sync.sync(account, { ...options, folder });
+          console.log(`  Synced ${folder}: ${result.newCount} new emails`);
           total += result.newCount;
           allNewEmailIds.push(...result.newEmailIds);
         } catch (e) {
           // Folder might not exist on this provider, continue to next
           const errorMsg = e instanceof Error ? e.message : String(e);
-          if (!errorMsg.includes('NONEXISTENT') && !errorMsg.includes('does not exist')) {
-            console.error(`Failed to sync ${account.email}/${folder}:`, e);
-          }
+          console.error(`  Failed to sync ${folder}: ${errorMsg}`);
         }
       }
       await deps.accounts.updateLastSync(account.id);
@@ -213,6 +214,29 @@ export const classifyAndApply = (deps: Pick<Deps, 'emails' | 'tags' | 'classifie
   async (emailId: number, confidenceThreshold = 0.85): Promise<Classification> => {
     const result = await classifyEmail(deps)(emailId);
 
+    // If classifier suggested a new tag, create it and add to suggestedTags
+    let suggestedTags = [...result.suggestedTags];
+    if (result.newTag) {
+      // Check if tag doesn't already exist (in case LLM suggested duplicate)
+      const existingTags = await deps.tags.findAll();
+      const exists = existingTags.some(t => t.slug === result.newTag!.slug);
+
+      if (!exists) {
+        await deps.tags.create({
+          name: result.newTag.name,
+          slug: result.newTag.slug,
+          color: '#6b7280', // Default gray
+          isSystem: false,
+          sortOrder: 0,
+        });
+      }
+
+      // Add to suggested tags if not already there
+      if (!suggestedTags.includes(result.newTag.slug)) {
+        suggestedTags.push(result.newTag.slug);
+      }
+    }
+
     // Determine status based on confidence threshold
     const status = result.confidence >= confidenceThreshold ? 'classified' : 'pending_review';
 
@@ -222,7 +246,7 @@ export const classifyAndApply = (deps: Pick<Deps, 'emails' | 'tags' | 'classifie
       status,
       confidence: result.confidence,
       priority: result.priority,
-      suggestedTags: result.suggestedTags,
+      suggestedTags: suggestedTags,
       reasoning: result.reasoning,
       classifiedAt: new Date(),
       dismissedAt: null,  // Clear dismissed timestamp on re-classification
@@ -233,7 +257,7 @@ export const classifyAndApply = (deps: Pick<Deps, 'emails' | 'tags' | 'classifie
     if (result.confidence >= confidenceThreshold) {
       const allTags = await deps.tags.findAll();
 
-      for (const tagSlug of result.suggestedTags) {
+      for (const tagSlug of suggestedTags) {
         const tag = allTags.find(t => t.slug === tagSlug);
         if (tag) {
           await deps.tags.apply(emailId, tag.id, 'llm', result.confidence);
@@ -241,7 +265,7 @@ export const classifyAndApply = (deps: Pick<Deps, 'emails' | 'tags' | 'classifie
       }
     }
 
-    return result;
+    return { ...result, suggestedTags };
   };
 
 export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'tags' | 'classifier' | 'classificationState'>) =>
@@ -310,6 +334,86 @@ export const testLLMConnection = (deps: Pick<Deps, 'llmProvider'>) =>
       return deps.llmProvider.testConnection();
     }
     return { connected: true };
+  };
+
+export const isLLMConfigured = (deps: Pick<Deps, 'llmProvider' | 'config' | 'secrets'>) =>
+  async (): Promise<{ configured: boolean; reason?: string }> => {
+    const config = deps.config.getLLMConfig();
+
+    if (config.provider === 'anthropic') {
+      // Anthropic: needs API key that validates
+      const key = await deps.secrets.getApiKey('anthropic');
+      if (!key) {
+        return { configured: false, reason: 'No API key configured' };
+      }
+      const result = await deps.llmProvider.validateKey(key);
+      return result.valid
+        ? { configured: true }
+        : { configured: false, reason: result.error || 'Invalid API key' };
+    }
+
+    // Ollama: needs server reachable + at least one model
+    if (!deps.llmProvider.testConnection) {
+      return { configured: false, reason: 'Provider does not support connection test' };
+    }
+    const conn = await deps.llmProvider.testConnection();
+    if (!conn.connected) {
+      return { configured: false, reason: conn.error || 'Ollama server not reachable' };
+    }
+    const models = await deps.llmProvider.listModels();
+    if (models.length === 0) {
+      return { configured: false, reason: 'No models installed in Ollama' };
+    }
+    return { configured: true };
+  };
+
+export const startBackgroundClassification = (deps: Pick<Deps, 'backgroundTasks' | 'emails' | 'tags' | 'classifier' | 'classificationState' | 'config'>) =>
+  (emailIds: number[]): { taskId: string; count: number } => {
+    const taskId = crypto.randomUUID();
+    const threshold = deps.config.getLLMConfig().confidenceThreshold;
+
+    deps.backgroundTasks.start(taskId, emailIds.length, async (onProgress) => {
+      for (const emailId of emailIds) {
+        // Check budget before each classification
+        const budget = deps.classifier.getEmailBudget();
+        if (!budget.allowed) {
+          // Budget exhausted - mark remaining as skipped and stop
+          console.log(`Daily budget exhausted after classifying ${emailId}, stopping background classification`);
+          onProgress(); // Still count as processed for progress tracking
+          continue; // Skip remaining emails
+        }
+
+        try {
+          await classifyAndApply(deps)(emailId, threshold);
+        } catch (error) {
+          // Log error but continue with remaining emails
+          console.error(`Background classification failed for email ${emailId}:`, error);
+          await deps.classificationState.setState({
+            emailId,
+            status: 'error',
+            confidence: null,
+            priority: null,
+            suggestedTags: [],
+            reasoning: null,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            classifiedAt: new Date(),
+          });
+        }
+        onProgress();
+      }
+    });
+
+    return { taskId, count: emailIds.length };
+  };
+
+export const getBackgroundTaskStatus = (deps: Pick<Deps, 'backgroundTasks'>) =>
+  (taskId: string): import('./ports').TaskState | null => {
+    return deps.backgroundTasks.getStatus(taskId);
+  };
+
+export const clearBackgroundTask = (deps: Pick<Deps, 'backgroundTasks'>) =>
+  (taskId: string): void => {
+    deps.backgroundTasks.clear(taskId);
   };
 
 // ============================================
@@ -780,8 +884,8 @@ export const addAccount = (deps: Pick<Deps, 'accounts' | 'secrets' | 'sync'>) =>
       };
     }
 
-    // Perform initial sync for all default folders with max 1000 messages
-    const foldersToSync = deps.sync.getDefaultFolders();
+    // Perform initial sync for provider-specific folders with max 1000 messages
+    const foldersToSync = deps.sync.getDefaultFolders(account.imapHost);
     let totalNewCount = 0;
     const allNewEmailIds: number[] = [];
 
@@ -997,6 +1101,12 @@ export function createUseCases(deps: Deps) {
     validateLLMProvider: validateLLMProvider(deps),
     listLLMModels: listLLMModels(deps),
     testLLMConnection: testLLMConnection(deps),
+    isLLMConfigured: isLLMConfigured(deps),
+
+    // Background Tasks
+    startBackgroundClassification: startBackgroundClassification(deps),
+    getBackgroundTaskStatus: getBackgroundTaskStatus(deps),
+    clearBackgroundTask: clearBackgroundTask(deps),
 
     // AI Sort
     getPendingReviewQueue: getPendingReviewQueue(deps),

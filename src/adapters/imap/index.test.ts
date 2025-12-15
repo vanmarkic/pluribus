@@ -106,7 +106,7 @@ describe('createMailSync', () => {
   });
 
   describe('getDefaultFolders', () => {
-    it('returns array of folder names to sync', () => {
+    it('returns provider-specific folders for Gmail', () => {
       const sync = createMailSync(
         createMockEmailRepo(),
         createMockAttachmentRepo(),
@@ -114,11 +114,48 @@ describe('createMailSync', () => {
         createMockSecrets()
       );
 
-      const folders = sync.getDefaultFolders();
+      const folders = sync.getDefaultFolders('imap.gmail.com');
 
-      expect(Array.isArray(folders)).toBe(true);
-      expect(folders.length).toBeGreaterThan(0);
-      expect(folders).toContain('INBOX');
+      expect(folders).toEqual(['INBOX', '[Gmail]/Sent Mail']);
+    });
+
+    it('returns provider-specific folders for Outlook', () => {
+      const sync = createMailSync(
+        createMockEmailRepo(),
+        createMockAttachmentRepo(),
+        createMockFolderRepo(),
+        createMockSecrets()
+      );
+
+      const folders = sync.getDefaultFolders('outlook.office365.com');
+
+      expect(folders).toEqual(['INBOX', 'Sent']);
+    });
+
+    it('returns provider-specific folders for Infomaniak', () => {
+      const sync = createMailSync(
+        createMockEmailRepo(),
+        createMockAttachmentRepo(),
+        createMockFolderRepo(),
+        createMockSecrets()
+      );
+
+      const folders = sync.getDefaultFolders('mail.infomaniak.com');
+
+      expect(folders).toEqual(['INBOX', 'Sent']);
+    });
+
+    it('returns default folders for unknown providers', () => {
+      const sync = createMailSync(
+        createMockEmailRepo(),
+        createMockAttachmentRepo(),
+        createMockFolderRepo(),
+        createMockSecrets()
+      );
+
+      const folders = sync.getDefaultFolders('mail.example.com');
+
+      expect(folders).toEqual(['INBOX', 'Sent']);
     });
   });
 });

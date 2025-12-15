@@ -177,7 +177,8 @@ function createMockSync(overrides: Partial<MailSync> = {}): MailSync {
     disconnect: vi.fn().mockResolvedValue(undefined),
     onProgress: vi.fn().mockReturnValue(() => {}),
     testConnection: vi.fn().mockResolvedValue({ ok: true }),
-    getDefaultFolders: vi.fn().mockReturnValue(['INBOX']),
+    getDefaultFolders: vi.fn().mockImplementation(() => ['INBOX']),
+    listFolders: vi.fn().mockResolvedValue([]),
     ...overrides,
   };
 }
@@ -346,7 +347,7 @@ describe('searchEmails', () => {
     const emails = createMockEmailRepo({ search: vi.fn().mockResolvedValue([testEmail]) });
     const result = await searchEmails({ emails })('test query', 50);
 
-    expect(emails.search).toHaveBeenCalledWith('test query', 50);
+    expect(emails.search).toHaveBeenCalledWith('test query', 50, undefined);
     expect(result).toEqual([testEmail]);
   });
 
@@ -354,7 +355,15 @@ describe('searchEmails', () => {
     const emails = createMockEmailRepo({ search: vi.fn().mockResolvedValue([]) });
     await searchEmails({ emails })('query');
 
-    expect(emails.search).toHaveBeenCalledWith('query', 100);
+    expect(emails.search).toHaveBeenCalledWith('query', 100, undefined);
+  });
+
+  it('passes accountId when provided', async () => {
+    const emails = createMockEmailRepo({ search: vi.fn().mockResolvedValue([testEmail]) });
+    const result = await searchEmails({ emails })('test query', 50, 1);
+
+    expect(emails.search).toHaveBeenCalledWith('test query', 50, 1);
+    expect(result).toEqual([testEmail]);
   });
 });
 
@@ -558,7 +567,7 @@ describe('syncAllMailboxes', () => {
     const accounts = createMockAccountRepo({ findAll: vi.fn().mockResolvedValue([testAccount, testAccount2]) });
     const sync = createMockSync({
       sync: vi.fn().mockResolvedValue({ newCount: 2, newEmailIds: [1, 2] }),
-      getDefaultFolders: vi.fn().mockReturnValue(['INBOX', 'Sent']),
+      getDefaultFolders: vi.fn().mockImplementation(() => ['INBOX', 'Sent']),
     });
 
     const result = await syncAllMailboxes({ accounts, sync })({});
@@ -593,7 +602,7 @@ describe('syncAllMailboxes', () => {
       sync: vi.fn()
         .mockResolvedValueOnce({ newCount: 1, newEmailIds: [1] })
         .mockRejectedValueOnce(new Error('Mailbox does not exist')),
-      getDefaultFolders: vi.fn().mockReturnValue(['INBOX', 'Sent']),
+      getDefaultFolders: vi.fn().mockImplementation(() => ['INBOX', 'Sent']),
     });
 
     const result = await syncAllMailboxes({ accounts, sync })({});
@@ -661,7 +670,7 @@ describe('syncAllWithAutoClassify', () => {
     const accounts = createMockAccountRepo({ findAll: vi.fn().mockResolvedValue([testAccount]) });
     const sync = createMockSync({
       sync: vi.fn().mockResolvedValue({ newCount: 1, newEmailIds: [1] }),
-      getDefaultFolders: vi.fn().mockReturnValue(['INBOX']),
+      getDefaultFolders: vi.fn().mockImplementation(() => ['INBOX']),
     });
     const emails = createMockEmailRepo({
       findById: vi.fn().mockResolvedValue(testEmail),
@@ -1475,7 +1484,7 @@ describe('addAccount', () => {
     const secrets = createMockSecrets();
     const sync = createMockSync({
       sync: vi.fn().mockResolvedValue({ newCount: 100, newEmailIds: Array.from({ length: 100 }, (_, i) => i + 1) }),
-      getDefaultFolders: vi.fn().mockReturnValue(['INBOX']),
+      getDefaultFolders: vi.fn().mockImplementation(() => ['INBOX']),
     });
 
     const result = await addAccount({ accounts, secrets, sync })(accountInput, 'password123');
@@ -1510,7 +1519,7 @@ describe('addAccount', () => {
     const secrets = createMockSecrets();
     const sync = createMockSync({
       sync: vi.fn().mockResolvedValue({ newCount: 50, newEmailIds: [1, 2, 3] }),
-      getDefaultFolders: vi.fn().mockReturnValue(['INBOX', 'Sent']),
+      getDefaultFolders: vi.fn().mockImplementation(() => ['INBOX', 'Sent']),
     });
 
     await addAccount({ accounts, secrets, sync })(accountInput, 'password123');
@@ -1549,7 +1558,7 @@ describe('addAccount', () => {
     const secrets = createMockSecrets();
     const sync = createMockSync({
       sync: vi.fn().mockResolvedValue({ newCount: 50, newEmailIds: [1, 2, 3] }),
-      getDefaultFolders: vi.fn().mockReturnValue(['INBOX']),
+      getDefaultFolders: vi.fn().mockImplementation(() => ['INBOX']),
     });
 
     const result = await addAccount({ accounts, secrets, sync })(accountInput, 'password123');
@@ -1567,7 +1576,7 @@ describe('addAccount', () => {
     const secrets = createMockSecrets();
     const sync = createMockSync({
       sync: vi.fn().mockResolvedValue({ newCount: 1000, newEmailIds: Array.from({ length: 1000 }, (_, i) => i + 1) }),
-      getDefaultFolders: vi.fn().mockReturnValue(['INBOX']),
+      getDefaultFolders: vi.fn().mockImplementation(() => ['INBOX']),
     });
 
     const result = await addAccount({ accounts, secrets, sync })(accountInput, 'password123');

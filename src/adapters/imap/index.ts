@@ -61,14 +61,67 @@ function mapImapToEmail(
   };
 }
 
-// Standard IMAP folder names (vary by provider)
-export const STANDARD_FOLDERS = {
-  inbox: ['INBOX'],
-  sent: ['Sent', 'Sent Items', 'Sent Mail', '[Gmail]/Sent Mail'],
-  drafts: ['Drafts', '[Gmail]/Drafts'],
-  trash: ['Trash', 'Deleted Items', '[Gmail]/Trash'],
-  archive: ['Archive', 'All Mail', '[Gmail]/All Mail'],
-} as const;
+// ============================================
+// Provider-specific folder configurations
+// ============================================
+
+type ProviderFolders = {
+  inbox: string;
+  sent: string;
+  drafts: string;
+  trash: string;
+  archive?: string;
+};
+
+// Provider folder mappings - exact paths per provider
+// Sources:
+// - Gmail: https://imapsync.lamiral.info/FAQ.d/FAQ.Gmail.txt
+// - Outlook: https://support.microsoft.com/en-us/office/change-where-sent-email-messages-are-saved
+// - Infomaniak: https://www.infomaniak.com/en/support/faq/2107/modify-the-imap-special-folders-of-an-email-address
+const PROVIDER_FOLDERS: Record<string, ProviderFolders> = {
+  gmail: {
+    inbox: 'INBOX',
+    sent: '[Gmail]/Sent Mail',
+    drafts: '[Gmail]/Drafts',
+    trash: '[Gmail]/Trash',
+    archive: '[Gmail]/All Mail',
+  },
+  outlook: {
+    inbox: 'INBOX',
+    sent: 'Sent',
+    drafts: 'Drafts',
+    trash: 'Deleted',
+  },
+  infomaniak: {
+    inbox: 'INBOX',
+    sent: 'Sent',
+    drafts: 'Drafts',
+    trash: 'Trash',
+    archive: 'Archives',
+  },
+  // Default for unknown providers
+  default: {
+    inbox: 'INBOX',
+    sent: 'Sent',
+    drafts: 'Drafts',
+    trash: 'Trash',
+  },
+};
+
+// Map IMAP host to provider key
+function getProviderFromHost(imapHost: string): string {
+  const host = imapHost.toLowerCase();
+  if (host.includes('gmail') || host.includes('googlemail')) return 'gmail';
+  if (host.includes('outlook') || host.includes('office365') || host.includes('hotmail') || host.includes('live.com')) return 'outlook';
+  if (host.includes('infomaniak')) return 'infomaniak';
+  return 'default';
+}
+
+// Get folder config for a provider
+export function getProviderFolders(imapHost: string): ProviderFolders {
+  const provider = getProviderFromHost(imapHost);
+  return PROVIDER_FOLDERS[provider] || PROVIDER_FOLDERS.default;
+}
 
 export function createMailSync(
   emailRepo: EmailRepo,
@@ -366,12 +419,18 @@ export function createMailSync(
       }
     },
 
-    getDefaultFolders() {
-      // Return all folder variants to try - sync will skip non-existent ones
-      return [
-        ...STANDARD_FOLDERS.inbox,
-        ...STANDARD_FOLDERS.sent,
-      ];
+    getDefaultFolders(imapHost: string) {
+      const folders = getProviderFolders(imapHost);
+      return [folders.inbox, folders.sent];
+    },
+
+    async listFolders(account: Account) {
+      const client = await getConnection(account);
+      const mailboxes = await client.list();
+      return mailboxes.map(m => ({
+        path: m.path,
+        specialUse: m.specialUse,
+      }));
     },
   };
 }

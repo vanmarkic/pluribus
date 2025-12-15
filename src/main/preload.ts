@@ -60,6 +60,14 @@ const api = {
     validate: (key?: string) => ipcRenderer.invoke('llm:validate', key) as Promise<{ valid: boolean; error?: string }>,
     listModels: () => ipcRenderer.invoke('llm:listModels') as Promise<{ id: string; displayName: string; createdAt?: string }[]>,
     testConnection: () => ipcRenderer.invoke('llm:testConnection') as Promise<{ connected: boolean; error?: string }>,
+    startOllama: () => ipcRenderer.invoke('llm:startOllama') as Promise<{ started: boolean; error?: string }>,
+    stopOllama: () => ipcRenderer.invoke('llm:stopOllama') as Promise<void>,
+    isConfigured: () => ipcRenderer.invoke('llm:isConfigured') as Promise<{ configured: boolean; reason?: string }>,
+    startBackgroundClassification: (emailIds: number[]) =>
+      ipcRenderer.invoke('llm:startBackgroundClassification', emailIds) as Promise<{ taskId: string; count: number }>,
+    getTaskStatus: (taskId: string) =>
+      ipcRenderer.invoke('llm:getTaskStatus', taskId) as Promise<{ status: 'running' | 'completed' | 'failed'; processed: number; total: number; error?: string } | null>,
+    clearTask: (taskId: string) => ipcRenderer.invoke('llm:clearTask', taskId) as Promise<void>,
   },
 
   aiSort: {

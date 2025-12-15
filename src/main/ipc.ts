@@ -59,6 +59,7 @@ function assertListOptions(opts: unknown): Record<string, unknown> {
   const validated: Record<string, unknown> = {};
   const o = opts as Record<string, unknown>;
 
+  if (o.accountId !== undefined) validated.accountId = assertPositiveInt(o.accountId, 'accountId');
   if (o.tagId !== undefined) validated.tagId = assertPositiveInt(o.tagId, 'tagId');
   if (o.folderId !== undefined) validated.folderId = assertPositiveInt(o.folderId, 'folderId');
   if (o.folderPath !== undefined) validated.folderPath = assertString(o.folderPath, 'folderPath', 200);
@@ -90,10 +91,11 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
     return useCases.getEmailBody(assertPositiveInt(id, 'id'));
   });
 
-  ipcMain.handle('emails:search', (_, query, limit) => {
+  ipcMain.handle('emails:search', (_, query, limit, accountId) => {
     const q = assertString(query, 'query', 500);
     const l = assertOptionalPositiveInt(limit, 'limit') ?? 100;
-    return useCases.searchEmails(q, l);
+    const aId = assertOptionalPositiveInt(accountId, 'accountId');
+    return useCases.searchEmails(q, l, aId);
   });
 
   ipcMain.handle('emails:markRead', (_, id, isRead) => {
@@ -252,15 +254,6 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
 
   ipcMain.handle('llm:getEmailBudget', () => deps.classifier.getEmailBudget());
 
-  ipcMain.handle('llm:listModels', () => {
-    // TODO: When LLMProvider is implemented, call deps.llmProvider.listModels()
-    // For now, return hardcoded Anthropic models
-    return Promise.resolve([
-      { id: 'claude-haiku-4-20250514', displayName: 'Claude Haiku 4' },
-      { id: 'claude-sonnet-4-20250514', displayName: 'Claude Sonnet 4' },
-    ]);
-  });
-
   // ==========================================
   // LLM Provider
   // ==========================================
@@ -278,6 +271,48 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
     return useCases.testLLMConnection();
   });
 
+  ipcMain.handle('llm:startOllama', async () => {
+    const { startOllama } = await import('../adapters/llm/ollama');
+    const llmConfig = container.config.get('llm');
+    return startOllama(llmConfig.ollamaServerUrl);
+  });
+
+  ipcMain.handle('llm:stopOllama', async () => {
+    const { stopOllama } = await import('../adapters/llm/ollama');
+    return stopOllama();
+  });
+
+  ipcMain.handle('llm:isConfigured', async () => {
+    return useCases.isLLMConfigured();
+  });
+
+  ipcMain.handle('llm:startBackgroundClassification', async (_, emailIds: number[]) => {
+    if (!Array.isArray(emailIds)) {
+      throw new Error('emailIds must be an array');
+    }
+    const validIds = emailIds.map((id, i) => {
+      if (typeof id !== 'number' || !Number.isInteger(id) || id < 1) {
+        throw new Error(`Invalid emailIds[${i}]: must be a positive integer`);
+      }
+      return id;
+    });
+    return useCases.startBackgroundClassification(validIds);
+  });
+
+  ipcMain.handle('llm:getTaskStatus', async (_, taskId: string) => {
+    if (typeof taskId !== 'string') {
+      throw new Error('taskId must be a string');
+    }
+    return useCases.getBackgroundTaskStatus(taskId);
+  });
+
+  ipcMain.handle('llm:clearTask', async (_, taskId: string) => {
+    if (typeof taskId !== 'string') {
+      throw new Error('taskId must be a string');
+    }
+    useCases.clearBackgroundTask(taskId);
+  });
+
   // ==========================================
   // AI Sort (Review Queue & Stats)
   // ==========================================
@@ -288,6 +323,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
       const o = opts as Record<string, unknown>;
       if (o.limit !== undefined) validated.limit = assertPositiveInt(o.limit, 'limit');
       if (o.offset !== undefined) validated.offset = assertNonNegativeInt(o.offset, 'offset');
+      if (o.accountId !== undefined) validated.accountId = assertPositiveInt(o.accountId, 'accountId');
       if (o.sortBy !== undefined) {
         const sortBy = assertString(o.sortBy, 'sortBy', 20);
         if (!['confidence', 'date', 'sender'].includes(sortBy)) throw new Error('Invalid sortBy');
@@ -379,8 +415,15 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
     return useCases.bulkApplyTag(ids, slug);
   });
 
-  ipcMain.handle('aiSort:classifyUnprocessed', () => {
-    return useCases.classifyUnprocessed();
+  ipcMain.handle('aiSort:classifyUnprocessed', async () => {
+    const result = await useCases.classifyUnprocessed();
+    // Stop Ollama after classification batch completes to free resources
+    const llmConfig = container.config.get('llm');
+    if (llmConfig.provider === 'ollama') {
+      const { stopOllama } = await import('../adapters/llm/ollama');
+      await stopOllama();
+    }
+    return result;
   });
 
   // ==========================================

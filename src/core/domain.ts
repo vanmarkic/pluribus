@@ -91,11 +91,18 @@ export type Folder = {
 // LLM Classification
 // ============================================
 
+export type NewTagSuggestion = {
+  slug: string;
+  name: string;
+};
+
 export type Classification = {
   suggestedTags: string[];
   confidence: number;
   reasoning: string;
   priority: 'high' | 'normal' | 'low';
+  /** Optional new tag suggested by the classifier when no existing tag fits well */
+  newTag: NewTagSuggestion | null;
 };
 
 // ============================================
@@ -119,6 +126,7 @@ export type SyncProgress = {
 // ============================================
 
 export type ListEmailsOptions = {
+  accountId?: number;  // Filter by account for multi-account support
   tagId?: number;
   folderId?: number;
   folderPath?: string;  // Filter by folder path pattern (e.g., 'Sent' matches 'Sent', 'Sent Items', etc.)

@@ -14,7 +14,7 @@ import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, Folder, Li
 export type EmailRepo = {
   findById: (id: number) => Promise<Email | null>;
   list: (options: ListEmailsOptions) => Promise<Email[]>;
-  search: (query: string, limit?: number) => Promise<Email[]>;
+  search: (query: string, limit?: number, accountId?: number) => Promise<Email[]>;
   getBody: (id: number) => Promise<EmailBody | null>;
   saveBody: (id: number, body: EmailBody) => Promise<void>;
   insert: (email: Omit<Email, 'id'>) => Promise<Email>;
@@ -98,7 +98,8 @@ export type MailSync = {
   disconnect: (accountId: number) => Promise<void>;
   onProgress: (cb: (p: SyncProgress) => void) => () => void;
   testConnection: (host: string, port: number, username: string, password: string) => Promise<{ ok: boolean; error?: string }>;
-  getDefaultFolders: () => string[];  // Returns folders to sync by default (adapter knows provider-specific names)
+  getDefaultFolders: (imapHost: string) => string[];  // Returns folders to sync by default based on provider
+  listFolders: (account: Account) => Promise<{ path: string; specialUse?: string }[]>;  // List all folders on server
 };
 
 // ============================================
@@ -121,10 +122,10 @@ export type ClassificationStateRepo = {
   setState: (state: Omit<ClassificationState, 'reviewedAt' | 'dismissedAt' | 'errorMessage'> & { reviewedAt?: Date | null; dismissedAt?: Date | null; errorMessage?: string | null }) => Promise<void>;
 
   // Queries for AI Sort view
-  listPendingReview: (options?: { limit?: number; offset?: number; sortBy?: 'confidence' | 'date' | 'sender' }) => Promise<ClassificationState[]>;
-  listByPriority: (priority: 'high' | 'normal' | 'low', options?: { limit?: number; offset?: number }) => Promise<ClassificationState[]>;
-  listFailed: (options?: { limit?: number; offset?: number }) => Promise<ClassificationState[]>;
-  countByStatus: () => Promise<Record<ClassificationStatus, number>>;
+  listPendingReview: (options?: { limit?: number; offset?: number; sortBy?: 'confidence' | 'date' | 'sender'; accountId?: number }) => Promise<ClassificationState[]>;
+  listByPriority: (priority: 'high' | 'normal' | 'low', options?: { limit?: number; offset?: number; accountId?: number }) => Promise<ClassificationState[]>;
+  listFailed: (options?: { limit?: number; offset?: number; accountId?: number }) => Promise<ClassificationState[]>;
+  countByStatus: (accountId?: number) => Promise<Record<ClassificationStatus, number>>;
 
   // Re-classification (dismissed emails after cooldown)
   listReclassifiable: (cooldownDays: number) => Promise<number[]>;
@@ -298,6 +299,25 @@ export type DraftRepo = {
 };
 
 // ============================================
+// Background Task Manager
+// ============================================
+
+export type TaskStatus = 'running' | 'completed' | 'failed';
+
+export type TaskState = {
+  status: TaskStatus;
+  processed: number;
+  total: number;
+  error?: string;
+};
+
+export type BackgroundTaskManager = {
+  start: (id: string, total: number, fn: (onProgress: () => void) => Promise<void>) => void;
+  getStatus: (id: string) => TaskState | null;
+  clear: (id: string) => void;
+};
+
+// ============================================
 // All Dependencies (for DI)
 // ============================================
 
@@ -316,4 +336,5 @@ export type Deps = {
   config: ConfigStore;
   imageCache: ImageCache;
   llmProvider: LLMProvider;
+  backgroundTasks: BackgroundTaskManager;
 };

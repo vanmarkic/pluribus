@@ -19,6 +19,7 @@ import { createClassifier, createAnthropicProvider, createOllamaProvider, create
 import { createSecureStorage } from '../adapters/keychain';
 import { createMailSender } from '../adapters/smtp';
 import { createImageCache } from '../adapters/image-cache';
+import { createBackgroundTaskManager } from '../adapters/background';
 import type { RemoteImagesSetting } from '../core/ports';
 
 // ============================================
@@ -41,23 +42,32 @@ type AppConfig = {
   };
 };
 
+const LLM_DEFAULTS = {
+  provider: 'ollama' as const,
+  model: 'mistral:7b',
+  dailyBudget: 100000,
+  dailyEmailLimit: 200,
+  autoClassify: false,
+  confidenceThreshold: 0.85,
+  reclassifyCooldownDays: 7,
+  ollamaServerUrl: 'http://localhost:11434',
+};
+
 const configStore = new Store<AppConfig>({
   defaults: {
-    llm: {
-      provider: 'anthropic',
-      model: 'claude-haiku-4-20250514',
-      dailyBudget: 100000,
-      dailyEmailLimit: 200,
-      autoClassify: false,
-      confidenceThreshold: 0.85,
-      reclassifyCooldownDays: 7,
-      ollamaServerUrl: 'http://localhost:11434',
-    },
+    llm: LLM_DEFAULTS,
     security: {
       remoteImages: 'block', // Privacy-first default
     },
   },
 });
+
+// Migration: ensure new llm fields have defaults (electron-store doesn't deep-merge)
+const storedLlm = configStore.get('llm');
+const migratedLlm = { ...LLM_DEFAULTS, ...storedLlm };
+if (JSON.stringify(storedLlm) !== JSON.stringify(migratedLlm)) {
+  configStore.set('llm', migratedLlm);
+}
 
 // ============================================
 // Container Type
@@ -105,35 +115,109 @@ export function createContainer(): Container {
   const sync = createMailSync(emails, attachments, folders, secrets);
   const sender = createMailSender(secrets);
 
-  // Create LLM provider and classifier based on config
-  const llmConfig = configStore.get('llm');
+  // Create LLM providers (both, so we can switch dynamically)
+  const ollamaProvider = createOllamaProvider(configStore.get('llm').ollamaServerUrl);
+  const anthropicProvider = createAnthropicProvider(secrets);
 
-  let llmProvider;
-  let classifier;
+  // Create classifiers for both providers
+  const ollamaClassifier = createOllamaClassifier(
+    () => {
+      const cfg = configStore.get('llm');
+      return {
+        model: cfg.model,
+        serverUrl: cfg.ollamaServerUrl,
+        dailyBudget: cfg.dailyBudget,
+        dailyEmailLimit: cfg.dailyEmailLimit,
+      };
+    },
+    tags
+  );
 
-  if (llmConfig.provider === 'ollama') {
-    llmProvider = createOllamaProvider(llmConfig.ollamaServerUrl);
-    classifier = createOllamaClassifier(
-      {
-        model: llmConfig.model,
-        serverUrl: llmConfig.ollamaServerUrl,
-        dailyBudget: llmConfig.dailyBudget,
-        dailyEmailLimit: llmConfig.dailyEmailLimit,
-      },
-      tags
-    );
-  } else {
-    llmProvider = createAnthropicProvider(secrets);
-    classifier = createClassifier(
-      {
-        model: llmConfig.model as 'claude-sonnet-4-20250514' | 'claude-haiku-4-20250514',
-        dailyBudget: llmConfig.dailyBudget,
-        dailyEmailLimit: llmConfig.dailyEmailLimit,
-      },
-      tags,
-      secrets
-    );
-  }
+  // Dynamic classifier that delegates based on current provider setting
+  const classifier: import('../core/ports').Classifier = {
+    async classify(email, body, existingTags) {
+      const cfg = configStore.get('llm');
+      if (cfg.provider === 'ollama') {
+        return ollamaClassifier.classify(email, body, existingTags);
+      } else {
+        // Create fresh Anthropic classifier with current config
+        const anthClassifier = createClassifier(
+          {
+            model: cfg.model as 'claude-sonnet-4-20250514' | 'claude-haiku-4-20250514',
+            dailyBudget: cfg.dailyBudget,
+            dailyEmailLimit: cfg.dailyEmailLimit,
+          },
+          tags,
+          secrets
+        );
+        return anthClassifier.classify(email, body, existingTags);
+      }
+    },
+    getBudget() {
+      const cfg = configStore.get('llm');
+      if (cfg.provider === 'ollama') {
+        return ollamaClassifier.getBudget();
+      }
+      // Anthropic budget - create fresh instance
+      const anthClassifier = createClassifier(
+        {
+          model: cfg.model as 'claude-sonnet-4-20250514' | 'claude-haiku-4-20250514',
+          dailyBudget: cfg.dailyBudget,
+          dailyEmailLimit: cfg.dailyEmailLimit,
+        },
+        tags,
+        secrets
+      );
+      return anthClassifier.getBudget();
+    },
+    getEmailBudget() {
+      const cfg = configStore.get('llm');
+      if (cfg.provider === 'ollama') {
+        return ollamaClassifier.getEmailBudget();
+      }
+      const anthClassifier = createClassifier(
+        {
+          model: cfg.model as 'claude-sonnet-4-20250514' | 'claude-haiku-4-20250514',
+          dailyBudget: cfg.dailyBudget,
+          dailyEmailLimit: cfg.dailyEmailLimit,
+        },
+        tags,
+        secrets
+      );
+      return anthClassifier.getEmailBudget();
+    },
+  };
+
+  // Dynamic LLM provider that delegates based on current provider setting
+  const llmProvider: import('../core/ports').LLMProvider = {
+    get type() {
+      return configStore.get('llm').provider;
+    },
+    async validateKey(key?: string) {
+      const cfg = configStore.get('llm');
+      if (cfg.provider === 'ollama') {
+        return ollamaProvider.validateKey(key ?? '');
+      }
+      return anthropicProvider.validateKey(key ?? '');
+    },
+    async listModels() {
+      const cfg = configStore.get('llm');
+      if (cfg.provider === 'ollama') {
+        // Refresh Ollama provider with current URL
+        const freshProvider = createOllamaProvider(cfg.ollamaServerUrl);
+        return freshProvider.listModels();
+      }
+      return anthropicProvider.listModels();
+    },
+    async testConnection() {
+      const cfg = configStore.get('llm');
+      if (cfg.provider === 'ollama') {
+        const freshProvider = createOllamaProvider(cfg.ollamaServerUrl);
+        return freshProvider.testConnection!();
+      }
+      return anthropicProvider.testConnection?.() ?? { connected: true };
+    },
+  };
 
   // Config adapter (implements ConfigStore port)
   const config = {
@@ -146,6 +230,9 @@ export function createContainer(): Container {
 
   // Image cache adapter
   const imageCache = createImageCache(getDb);
+
+  // Background task manager
+  const backgroundTasks = createBackgroundTaskManager();
 
   // Assemble dependencies
   const deps: Deps = {
@@ -163,6 +250,7 @@ export function createContainer(): Container {
     config,
     imageCache,
     llmProvider,
+    backgroundTasks,
   };
   
   // Create use cases

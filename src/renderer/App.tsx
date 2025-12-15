@@ -20,7 +20,7 @@ import { useUIStore, useSyncStore, useAccountStore, useTagStore, useEmailStore }
 import { IconSun, IconMoon, IconComputerMonitor } from 'obra-icons-react';
 
 export function App() {
-  const { view, showAccountWizard, editAccountId, composeMode, composeEmailId, composeDraftId, closeAccountWizard, closeCompose, openCompose } = useUIStore();
+  const { view, showAccountWizard, editAccountId, composeMode, composeEmailId, composeDraftId, closeAccountWizard, closeCompose, openCompose, classificationTaskId, classificationProgress, updateClassificationProgress, clearClassificationTask } = useUIStore();
   const { setProgress, startSync } = useSyncStore();
   const { loadAccounts } = useAccountStore();
   const { loadTags } = useTagStore();
@@ -82,6 +82,30 @@ export function App() {
     };
   }, []);
 
+  // Poll classification progress
+  useEffect(() => {
+    if (!classificationTaskId) return;
+
+    const interval = setInterval(async () => {
+      const status = await window.mailApi.llm.getTaskStatus(classificationTaskId);
+      if (!status) {
+        clearClassificationTask();
+        return;
+      }
+
+      updateClassificationProgress(status.processed, status.total);
+
+      if (status.status === 'completed' || status.status === 'failed') {
+        await window.mailApi.llm.clearTask(classificationTaskId);
+        clearClassificationTask();
+        // Refresh emails to show new tags
+        useEmailStore.getState().loadEmails();
+      }
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [classificationTaskId]);
+
   // Get original email for compose if replying/forwarding
   const composeEmail = composeEmailId ? selectedEmail : undefined;
   const composeBody = composeEmailId ? selectedBody : undefined;
@@ -99,7 +123,26 @@ export function App() {
       >
         {/* Space for traffic lights (left) */}
         <div className="w-20" />
-        {/* Optional: App title or controls could go here */}
+
+        {/* Classification progress indicator */}
+        {classificationProgress && (
+          <div
+            className="flex items-center gap-2 text-sm px-3 py-1 rounded-full"
+            style={{
+              WebkitAppRegion: 'no-drag',
+              background: 'var(--color-bg-secondary)',
+              color: 'var(--color-text-secondary)',
+            } as React.CSSProperties}
+          >
+            <div
+              className="w-2 h-2 rounded-full animate-pulse"
+              style={{ background: 'var(--color-accent)' }}
+            />
+            <span>
+              Classifying {classificationProgress.processed}/{classificationProgress.total} emails
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="flex flex-1 min-h-0">
@@ -729,14 +772,42 @@ function ClassificationSettings() {
             </button>
           </div>
           {ollamaStatus && (
-            <div className="flex items-center gap-2 mt-2">
-              <div
-                className="w-2 h-2 rounded-full"
-                style={{ background: ollamaStatus.connected ? 'var(--color-success)' : 'var(--color-danger)' }}
-              />
-              <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                {ollamaStatus.connected ? 'Connected' : ollamaStatus.error || 'Not connected'}
-              </span>
+            <div className="mt-2">
+              <div className="flex items-center gap-2">
+                <div
+                  className="w-2 h-2 rounded-full"
+                  style={{ background: ollamaStatus.connected ? 'var(--color-success)' : 'var(--color-danger)' }}
+                />
+                <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  {ollamaStatus.connected ? 'Connected' : ollamaStatus.error || 'Not connected'}
+                </span>
+              </div>
+              {!ollamaStatus.connected && (
+                <button
+                  onClick={async () => {
+                    setTestingConnection(true);
+                    const result = await window.mailApi.llm.startOllama();
+                    if (result.started) {
+                      // Refresh connection status and models
+                      const status = await window.mailApi.llm.testConnection();
+                      setOllamaStatus(status);
+                      if (status.connected) {
+                        delete modelCache.current['ollama'];
+                        const modelList = await window.mailApi.llm.listModels();
+                        setModels(modelList);
+                      }
+                    } else {
+                      setOllamaStatus({ connected: false, error: result.error });
+                    }
+                    setTestingConnection(false);
+                  }}
+                  disabled={testingConnection}
+                  className="btn mt-2"
+                  style={{ background: '#2563eb', color: 'white', border: 'none' }}
+                >
+                  {testingConnection ? 'Starting...' : 'Start Ollama'}
+                </button>
+              )}
             </div>
           )}
         </div>

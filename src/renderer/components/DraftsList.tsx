@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from 'react';
 import { IconDocument, IconDelete } from 'obra-icons-react';
-import { useUIStore } from '../stores';
+import { useUIStore, useAccountStore } from '../stores';
 import type { Draft } from '../../core/domain';
 
 export function DraftsList() {
@@ -15,8 +15,9 @@ export function DraftsList() {
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const { openComposeDraft } = useUIStore();
+  const { selectedAccountId } = useAccountStore();
 
-  // Load drafts on mount and listen for changes
+  // Load drafts on mount, account change, and listen for changes
   useEffect(() => {
     loadDrafts();
 
@@ -29,12 +30,15 @@ export function DraftsList() {
     return () => {
       window.removeEventListener('drafts:changed', handleDraftsChanged);
     };
-  }, []);
+  }, [selectedAccountId]);
 
   const loadDrafts = async () => {
     try {
       setLoading(true);
-      const list = await window.mailApi.drafts.list();
+      // Filter drafts by selected account
+      const list = await window.mailApi.drafts.list(
+        selectedAccountId ? { accountId: selectedAccountId } : undefined
+      );
       setDrafts(list);
     } catch (error) {
       console.error('Failed to load drafts:', error);

@@ -53,12 +53,14 @@ Available tags:
 ${tagList}
 
 Rules:
-- Suggest 1-3 relevant tags
+- Suggest 1-3 relevant tags from the available list
 - Be conservative: only suggest confident matches
 - Consider sender domain and subject patterns
+- If no existing tag fits well, you may suggest ONE new tag (use lowercase slug format with hyphens, e.g. "project-updates")
+- Only create a new tag if it would be genuinely useful for categorizing future similar emails
 
 Respond with JSON only:
-{"tags":["slug"],"confidence":0.0-1.0,"reasoning":"brief","priority":"high"|"normal"|"low"}`;
+{"tags":["slug"],"confidence":0.0-1.0,"reasoning":"brief","priority":"high"|"normal"|"low","newTag":{"slug":"new-tag-slug","name":"New Tag Name"}|null}`;
 }
 
 function buildUserMessage(email: Email, body?: EmailBody, existingTags?: string[]): string {
@@ -138,6 +140,7 @@ export function createClassifier(
           confidence: parsed.confidence || 0,
           reasoning: parsed.reasoning || '',
           priority: parsed.priority || 'normal',
+          newTag: parsed.newTag || null,
         };
       } catch {
         console.error('Failed to parse LLM response:', content);
@@ -146,6 +149,7 @@ export function createClassifier(
           confidence: 0,
           reasoning: 'Parse error',
           priority: 'normal',
+          newTag: null,
         };
       }
       

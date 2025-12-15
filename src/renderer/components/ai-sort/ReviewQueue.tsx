@@ -166,9 +166,9 @@ export function ReviewQueue({ items, onAccept, onDismiss, onEdit, onRefresh }: R
       >
         <IconCheck className="h-12 w-12 mb-4" style={{ color: 'var(--color-success)' }} />
         <h3 className="text-lg font-medium" style={{ color: 'var(--color-text-primary)' }}>
-          All caught up!
+          No classified emails
         </h3>
-        <p className="max-w-md text-center mt-2">No emails pending review. Great job!</p>
+        <p className="max-w-md text-center mt-2">Run classification to see emails here.</p>
       </div>
     );
   }
@@ -205,7 +205,7 @@ export function ReviewQueue({ items, onAccept, onDismiss, onEdit, onRefresh }: R
             </button>
           </div>
           <span className="text-sm font-medium" style={{ color: 'var(--color-text-tertiary)' }}>
-            {items.length} pending review
+            {items.length} emails ({items.filter(i => i.status === 'pending_review').length} need review)
           </span>
         </div>
 
@@ -246,6 +246,7 @@ export function ReviewQueue({ items, onAccept, onDismiss, onEdit, onRefresh }: R
                       onCheckedChange={toggleSelectAll}
                     />
                   </th>
+                  <th className="px-6 py-3 w-20">Status</th>
                   <th
                     className="px-6 py-3 cursor-pointer hover:bg-[var(--color-bg-hover)]"
                     onClick={() => handleSort('confidence')}
@@ -275,18 +276,30 @@ export function ReviewQueue({ items, onAccept, onDismiss, onEdit, onRefresh }: R
                       />
                     </td>
                     <td className="px-6 py-4">
+                      <Badge
+                        variant={item.status === 'classified' ? 'default' : 'secondary'}
+                        className="text-xs font-normal"
+                        style={{
+                          background: item.status === 'classified' ? 'var(--color-success)' : 'var(--color-warning)',
+                          color: 'white',
+                        }}
+                      >
+                        {item.status === 'classified' ? 'Tagged' : 'Review'}
+                      </Badge>
+                    </td>
+                    <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
                         <div
                           className="w-2 h-2 rounded-full"
                           style={{
                             background:
-                              (item.confidence ?? 0) >= 85 ? 'var(--color-success)' :
-                              (item.confidence ?? 0) >= 50 ? 'var(--color-warning)' :
+                              (item.confidence ?? 0) >= 0.85 ? 'var(--color-success)' :
+                              (item.confidence ?? 0) >= 0.5 ? 'var(--color-warning)' :
                               'var(--color-danger)',
                           }}
                         />
                         <span className="font-medium" style={{ color: 'var(--color-text-secondary)' }}>
-                          {item.confidence ?? 0}%
+                          {Math.round((item.confidence ?? 0) * 100)}%
                         </span>
                       </div>
                     </td>
@@ -352,9 +365,21 @@ export function ReviewQueue({ items, onAccept, onDismiss, onEdit, onRefresh }: R
               {currentItem && (
                 <div className="max-w-2xl mx-auto">
                   <div className="mb-4">
-                    <h2 className="text-xl font-semibold mb-2" style={{ color: 'var(--color-text-primary)' }}>
-                      {currentItem.email.subject}
-                    </h2>
+                    <div className="flex items-center gap-2 mb-2">
+                      <h2 className="text-xl font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+                        {currentItem.email.subject}
+                      </h2>
+                      <Badge
+                        variant={currentItem.status === 'classified' ? 'default' : 'secondary'}
+                        className="text-xs font-normal"
+                        style={{
+                          background: currentItem.status === 'classified' ? 'var(--color-success)' : 'var(--color-warning)',
+                          color: 'white',
+                        }}
+                      >
+                        {currentItem.status === 'classified' ? 'Tagged' : 'Review'}
+                      </Badge>
+                    </div>
                     <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
                       From: {currentItem.email.from.name || currentItem.email.from.address}
                     </div>

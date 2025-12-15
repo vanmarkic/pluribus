@@ -9,17 +9,19 @@ type AIAnalysisPanelProps = {
 };
 
 export function AIAnalysisPanel({ classification, className }: AIAnalysisPanelProps) {
-  const confidence = classification.confidence ?? 0;
+  // Confidence is stored as 0.0-1.0, convert to 0-100 for display
+  const confidenceRaw = classification.confidence ?? 0;
+  const confidencePercent = Math.round(confidenceRaw * 100);
 
   const getConfidenceColor = (score: number) => {
-    if (score >= 85) return 'var(--color-success)';
-    if (score >= 50) return 'var(--color-warning)';
+    if (score >= 0.85) return 'var(--color-success)';
+    if (score >= 0.5) return 'var(--color-warning)';
     return 'var(--color-danger)';
   };
 
   const getConfidenceLabel = (score: number) => {
-    if (score >= 85) return 'High Confidence';
-    if (score >= 50) return 'Medium Confidence';
+    if (score >= 0.85) return 'High Confidence';
+    if (score >= 0.5) return 'Medium Confidence';
     return 'Low Confidence';
   };
 
@@ -48,7 +50,7 @@ export function AIAnalysisPanel({ classification, className }: AIAnalysisPanelPr
         <div className="space-y-2">
           <div className="flex justify-between text-xs" style={{ color: 'var(--color-text-secondary)' }}>
             <span>Confidence</span>
-            <span className="font-medium">{confidence}%</span>
+            <span className="font-medium">{confidencePercent}%</span>
           </div>
           <div
             className="h-2 w-full rounded-full overflow-hidden"
@@ -57,13 +59,13 @@ export function AIAnalysisPanel({ classification, className }: AIAnalysisPanelPr
             <div
               className="h-full transition-all duration-500 ease-out"
               style={{
-                width: `${confidence}%`,
-                background: getConfidenceColor(confidence),
+                width: `${confidencePercent}%`,
+                background: getConfidenceColor(confidenceRaw),
               }}
             />
           </div>
           <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-            {getConfidenceLabel(confidence)}
+            {getConfidenceLabel(confidenceRaw)}
           </p>
         </div>
 

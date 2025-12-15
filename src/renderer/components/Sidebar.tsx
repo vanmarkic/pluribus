@@ -10,12 +10,14 @@ import {
   IconInbox, IconFavorite, IconSend, IconArchiveBox, IconDelete,
   IconSettings, IconSparkles, IconTag, IconPen, IconDocument
 } from 'obra-icons-react';
-import { useUIStore, useTagStore, useEmailStore } from '../stores';
+import { useUIStore, useTagStore, useEmailStore, useAccountStore } from '../stores';
+import { AccountSwitcher } from './AccountSwitcher';
 
 export function Sidebar() {
   const { view, setView, openCompose } = useUIStore();
   const { tags, loadTags } = useTagStore();
   const { emails, setFilter, filter } = useEmailStore();
+  const { selectedAccountId } = useAccountStore();
   const [draftCount, setDraftCount] = useState(0);
 
   useEffect(() => {
@@ -31,18 +33,20 @@ export function Sidebar() {
     return () => {
       window.removeEventListener('drafts:changed', handleDraftsChanged);
     };
-  }, []);
+  }, [selectedAccountId]);
 
-  // Refresh draft count when the drafts view becomes active
+  // Refresh draft count when the drafts view becomes active or account changes
   useEffect(() => {
     if (view === 'drafts') {
       loadDraftCount();
     }
-  }, [view]);
+  }, [view, selectedAccountId]);
 
   const loadDraftCount = async () => {
     try {
-      const drafts = await window.mailApi.drafts.list();
+      const drafts = await window.mailApi.drafts.list(
+        selectedAccountId ? { accountId: selectedAccountId } : undefined
+      );
       setDraftCount(drafts.length);
     } catch (err) {
       console.error('Failed to load draft count:', err);
@@ -150,7 +154,7 @@ export function Sidebar() {
         )}
       </nav>
 
-      {/* Settings */}
+      {/* Settings & Account Switcher */}
       <div className="px-2 py-3 border-t" style={{ borderColor: 'var(--color-border)' }}>
         <button
           onClick={() => setView('settings')}
@@ -159,6 +163,7 @@ export function Sidebar() {
           <IconSettings className="w-4 h-4" />
           <span>Settings</span>
         </button>
+        <AccountSwitcher />
       </div>
     </aside>
   );

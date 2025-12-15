@@ -5,6 +5,7 @@
  */
 
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, SyncProgress, Draft, DraftInput, ClassificationStats, ClassificationFeedback, ConfusedPattern, ClassificationState } from '../../core/domain';
 
 // Type for review queue items - matches backend PendingReviewItem
@@ -22,7 +23,7 @@ declare global {
         list: (opts?: any) => Promise<Email[]>;
         get: (id: number) => Promise<Email | null>;
         getBody: (id: number) => Promise<EmailBody>;
-        search: (query: string, limit?: number) => Promise<Email[]>;
+        search: (query: string, limit?: number, accountId?: number) => Promise<Email[]>;
         markRead: (id: number, isRead: boolean) => Promise<void>;
         star: (id: number, isStarred: boolean) => Promise<void>;
         archive: (id: number) => Promise<void>;
@@ -74,6 +75,12 @@ declare global {
         validate: (key?: string) => Promise<{ valid: boolean; error?: string }>;
         listModels: () => Promise<{ id: string; displayName: string; createdAt?: string }[]>;
         testConnection: () => Promise<{ connected: boolean; error?: string }>;
+        startOllama: () => Promise<{ started: boolean; error?: string }>;
+        stopOllama: () => Promise<void>;
+        isConfigured: () => Promise<{ configured: boolean; reason?: string }>;
+        startBackgroundClassification: (emailIds: number[]) => Promise<{ taskId: string; count: number }>;
+        getTaskStatus: (taskId: string) => Promise<{ status: 'running' | 'completed' | 'failed'; processed: number; total: number; error?: string } | null>;
+        clearTask: (taskId: string) => Promise<void>;
       };
       config: {
         get: (key: string) => Promise<any>;
@@ -101,7 +108,7 @@ declare global {
       };
       aiSort: {
         getStats: () => Promise<ClassificationStats>;
-        getPendingReview: (opts?: { sortBy?: string; limit?: number }) => Promise<ReviewItem[]>;
+        getPendingReview: (opts?: { sortBy?: string; limit?: number; accountId?: number }) => Promise<ReviewItem[]>;
         accept: (emailId: number, appliedTags: string[]) => Promise<void>;
         dismiss: (emailId: number) => Promise<void>;
         bulkAccept: (emailIds: number[]) => Promise<void>;
@@ -123,6 +130,7 @@ declare global {
 
 type EmailStore = {
   emails: Email[];
+  emailTagsMap: Record<number, AppliedTag[]>;  // Map emailId -> tags
   selectedId: number | null;
   selectedEmail: Email | null;
   selectedBody: EmailBody | null;
@@ -153,10 +161,12 @@ type EmailStore = {
   clearFilter: () => void;
   downloadAttachment: (attachmentId: number, action?: 'open' | 'save') => Promise<void>;
   refreshSelectedTags: () => Promise<void>;
+  getEmailTags: (emailId: number) => AppliedTag[];
 };
 
 export const useEmailStore = create<EmailStore>((set, get) => ({
   emails: [],
+  emailTagsMap: {},
   selectedId: null,
   selectedEmail: null,
   selectedBody: null,
@@ -171,12 +181,21 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const { filter } = get();
+      const { selectedAccountId } = useAccountStore.getState();
+
+      // Don't load if no account selected
+      if (!selectedAccountId) {
+        set({ emails: [], emailTagsMap: {}, loading: false });
+        return;
+      }
+
       let emails: Email[];
-      
+
       if (filter.searchQuery) {
-        emails = await window.mailApi.emails.search(filter.searchQuery);
+        emails = await window.mailApi.emails.search(filter.searchQuery, 100, selectedAccountId);
       } else {
         emails = await window.mailApi.emails.list({
+          accountId: selectedAccountId,
           tagId: filter.tagId,
           folderPath: filter.folderPath,
           unreadOnly: filter.unreadOnly,
@@ -184,8 +203,17 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
           limit: 100,
         });
       }
-      
-      set({ emails, loading: false });
+
+      // Load tags for all emails in parallel
+      const tagsMap: Record<number, AppliedTag[]> = {};
+      await Promise.all(
+        emails.map(async (email) => {
+          const tags = await window.mailApi.tags.getForEmail(email.id);
+          tagsMap[email.id] = tags;
+        })
+      );
+
+      set({ emails, emailTagsMap: tagsMap, loading: false });
     } catch (err) {
       set({ error: String(err), loading: false });
     }
@@ -303,6 +331,15 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
 
     const tags = await window.mailApi.tags.getForEmail(selectedId);
     set({ selectedTags: tags });
+
+    // Also update the emailTagsMap
+    set(state => ({
+      emailTagsMap: { ...state.emailTagsMap, [selectedId]: tags },
+    }));
+  },
+
+  getEmailTags: (emailId: number) => {
+    return get().emailTagsMap[emailId] || [];
   },
 }));
 
@@ -346,8 +383,9 @@ type SyncStore = {
   syncing: boolean;
   progress: SyncProgress | null;
   lastSync: Date | null;
-  
+
   startSync: () => Promise<void>;
+  startSyncAll: () => Promise<void>;
   setProgress: (progress: SyncProgress | null) => void;
 };
 
@@ -356,12 +394,30 @@ export const useSyncStore = create<SyncStore>((set) => ({
   progress: null,
   lastSync: null,
 
+  // Sync currently selected account only
   startSync: async () => {
+    const { selectedAccountId } = useAccountStore.getState();
+    if (!selectedAccountId) return;
+
+    set({ syncing: true });
+    try {
+      await window.mailApi.sync.start(selectedAccountId);
+      set({ lastSync: new Date() });
+
+      // Reload emails after sync
+      useEmailStore.getState().loadEmails();
+    } finally {
+      set({ syncing: false, progress: null });
+    }
+  },
+
+  // Sync all accounts
+  startSyncAll: async () => {
     set({ syncing: true });
     try {
       await window.mailApi.sync.startAll();
       set({ lastSync: new Date() });
-      
+
       // Reload emails after sync
       useEmailStore.getState().loadEmails();
     } finally {
@@ -378,21 +434,51 @@ export const useSyncStore = create<SyncStore>((set) => ({
 
 type AccountStore = {
   accounts: Account[];
+  selectedAccountId: number | null;
   loading: boolean;
-  
+
   loadAccounts: () => Promise<void>;
+  selectAccount: (id: number) => void;
+  getSelectedAccount: () => Account | null;
 };
 
-export const useAccountStore = create<AccountStore>((set) => ({
-  accounts: [],
-  loading: false,
+export const useAccountStore = create<AccountStore>()(
+  persist(
+    (set, get) => ({
+      accounts: [],
+      selectedAccountId: null,
+      loading: false,
 
-  loadAccounts: async () => {
-    set({ loading: true });
-    const accounts = await window.mailApi.accounts.list();
-    set({ accounts, loading: false });
-  },
-}));
+      loadAccounts: async () => {
+        set({ loading: true });
+        const accounts = await window.mailApi.accounts.list();
+        set({ accounts, loading: false });
+
+        // Auto-select first account if none selected or selected account no longer exists
+        const { selectedAccountId } = get();
+        const accountExists = accounts.some(a => a.id === selectedAccountId);
+        if ((!selectedAccountId || !accountExists) && accounts.length > 0) {
+          set({ selectedAccountId: accounts[0].id });
+        }
+      },
+
+      selectAccount: (id) => {
+        set({ selectedAccountId: id });
+        // Reload emails when account changes
+        useEmailStore.getState().loadEmails();
+      },
+
+      getSelectedAccount: () => {
+        const { accounts, selectedAccountId } = get();
+        return accounts.find(a => a.id === selectedAccountId) || null;
+      },
+    }),
+    {
+      name: 'account-store',
+      partialize: (state) => ({ selectedAccountId: state.selectedAccountId }),
+    }
+  )
+);
 
 // ============================================
 // UI Store
@@ -412,6 +498,10 @@ type UIStore = {
   composeEmailId: number | null;
   composeDraftId: number | null;
 
+  // Classification progress
+  classificationTaskId: string | null;
+  classificationProgress: { processed: number; total: number } | null;
+
   setView: (view: View) => void;
   toggleSidebar: () => void;
 
@@ -423,6 +513,11 @@ type UIStore = {
   openCompose: (mode: ComposeMode, emailId?: number) => void;
   openComposeDraft: (draftId: number) => void;
   closeCompose: () => void;
+
+  // Classification
+  setClassificationTask: (taskId: string, total: number) => void;
+  updateClassificationProgress: (processed: number, total: number) => void;
+  clearClassificationTask: () => void;
 };
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -433,6 +528,8 @@ export const useUIStore = create<UIStore>((set) => ({
   composeMode: null,
   composeEmailId: null,
   composeDraftId: null,
+  classificationTaskId: null,
+  classificationProgress: null,
 
   setView: (view) => set({ view }),
   toggleSidebar: () => set(state => ({ sidebarCollapsed: !state.sidebarCollapsed })),
@@ -443,4 +540,8 @@ export const useUIStore = create<UIStore>((set) => ({
   openCompose: (mode, emailId) => set({ composeMode: mode, composeEmailId: emailId ?? null, composeDraftId: null }),
   openComposeDraft: (draftId) => set({ composeMode: 'new', composeEmailId: null, composeDraftId: draftId }),
   closeCompose: () => set({ composeMode: null, composeEmailId: null, composeDraftId: null }),
+
+  setClassificationTask: (taskId, total) => set({ classificationTaskId: taskId, classificationProgress: { processed: 0, total } }),
+  updateClassificationProgress: (processed, total) => set({ classificationProgress: { processed, total } }),
+  clearClassificationTask: () => set({ classificationTaskId: null, classificationProgress: null }),
 }));

@@ -7,6 +7,7 @@
 import { useState, useEffect } from 'react';
 import { IconClose, IconSpinnerBall, IconCircleCheckFill, IconCircleWarningFill, IconEmail, IconDownload } from 'obra-icons-react';
 import type { SyncProgress } from '../../core/domain';
+import { useUIStore } from '../stores';
 
 type Provider = 'gmail' | 'outlook' | 'icloud' | 'infomaniak' | 'fastmail' | 'other';
 
@@ -62,12 +63,36 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
       });
     }
   }, [editAccountId]);
+
+  // Check LLM configuration on mount (only for new accounts)
+  useEffect(() => {
+    if (editAccountId) {
+      // Skip check when editing existing account
+      setLlmCheck('configured');
+      return;
+    }
+
+    window.mailApi.llm.isConfigured().then((result) => {
+      if (result.configured) {
+        setLlmCheck('configured');
+      } else {
+        setLlmCheck('not-configured');
+        setLlmReason(result.reason || 'LLM provider not configured');
+      }
+    }).catch((err) => {
+      setLlmCheck('not-configured');
+      setLlmReason(String(err));
+    });
+  }, [editAccountId]);
+
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
   const [syncResult, setSyncResult] = useState<{ newCount: number; maxMessagesPerFolder: number } | null>(null);
+  const [llmCheck, setLlmCheck] = useState<'checking' | 'configured' | 'not-configured'>('checking');
+  const [llmReason, setLlmReason] = useState<string>('');
 
   const handleProviderSelect = (provider: Provider) => {
     setForm(prev => ({
@@ -150,6 +175,18 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
           username: form.email,
         }, form.password);
 
+        // Trigger background classification if we have new emails (fire-and-forget)
+        if (result.syncResult.newEmailIds.length > 0) {
+          window.mailApi.llm.startBackgroundClassification(result.syncResult.newEmailIds)
+            .then(({ taskId, count }) => {
+              useUIStore.getState().setClassificationTask(taskId, count);
+            })
+            .catch((err) => {
+              console.error('Failed to start background classification:', err);
+              // Don't block account creation - classification is optional
+            });
+        }
+
         setSyncResult({
           newCount: result.syncResult.newCount,
           maxMessagesPerFolder: result.maxMessagesPerFolder,
@@ -174,6 +211,69 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
     { id: 'fastmail', name: 'Fastmail', icon: '⚡' },
     { id: 'other', name: 'Other IMAP', icon: '⚙️' },
   ];
+
+  // Show loading while checking LLM config
+  if (llmCheck === 'checking') {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6">
+          <div className="flex items-center gap-3">
+            <IconSpinnerBall className="w-6 h-6 animate-spin text-blue-600" />
+            <span className="text-zinc-600">Checking AI configuration...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Block if LLM not configured
+  if (llmCheck === 'not-configured') {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200">
+            <h2 className="text-lg font-semibold">AI Provider Required</h2>
+            <button onClick={onClose} className="p-1 hover:bg-zinc-100 rounded">
+              <IconClose className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <IconCircleWarningFill className="w-6 h-6 text-amber-500 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-zinc-800 font-medium">
+                  Configure an AI provider before adding accounts
+                </p>
+                <p className="text-sm text-zinc-500 mt-1">
+                  This mail client uses AI to classify your emails. Please set up Ollama or Anthropic first.
+                </p>
+              </div>
+            </div>
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+              <p className="text-sm text-amber-800">{llmReason}</p>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={onClose}
+                className="flex-1 px-4 py-2 text-sm border border-zinc-200 rounded-lg hover:bg-zinc-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  onClose();
+                  useUIStore.getState().setView('settings');
+                }}
+                className="flex-1 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                Open AI Settings
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">

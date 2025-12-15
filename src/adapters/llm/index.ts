@@ -5,4 +5,4 @@
  */
 
 export { createClassifier, createAnthropicProvider, resetDailyUsage } from './anthropic';
-export { createOllamaProvider, createOllamaClassifier, resetOllamaDailyUsage } from './ollama';
+export { createOllamaProvider, createOllamaClassifier, resetOllamaDailyUsage, startOllama, stopOllama } from './ollama';

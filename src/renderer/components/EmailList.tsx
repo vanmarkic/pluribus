@@ -7,7 +7,7 @@
 
 import { useEffect } from 'react';
 import { IconFavorite } from 'obra-icons-react';
-import { useEmailStore, useTagStore, useUIStore } from '../stores';
+import { useEmailStore, useUIStore } from '../stores';
 import { formatSender, isRecent } from '../../core/domain';
 
 export function EmailList() {
@@ -18,9 +18,8 @@ export function EmailList() {
     loadEmails,
     selectEmail,
     toggleStar,
+    getEmailTags,
   } = useEmailStore();
-
-  const { tags } = useTagStore();
   const { view } = useUIStore();
 
   useEffect(() => {
@@ -84,8 +83,8 @@ export function EmailList() {
           </div>
         ) : (
           emails.map(email => {
-            // Get tags for this email (simplified - in real app would come from store)
-            const emailTags = tags.filter(t => !t.isSystem).slice(0, 2);
+            // Get actual tags for this email from the store
+            const emailTags = getEmailTags(email.id).filter(t => !t.isSystem);
 
             return (
               <div

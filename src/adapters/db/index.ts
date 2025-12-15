@@ -181,12 +181,16 @@ export function createEmailRepo(): EmailRepo {
     },
 
     async list(options: ListEmailsOptions = {}) {
-      const { tagId, folderId, folderPath, unreadOnly, starredOnly, limit = 100, offset = 0 } = options;
+      const { accountId, tagId, folderId, folderPath, unreadOnly, starredOnly, limit = 100, offset = 0 } = options;
 
       const conditions: string[] = [];
       const params: any[] = [];
       const joins: string[] = [];
 
+      if (accountId) {
+        conditions.push('e.account_id = ?');
+        params.push(accountId);
+      }
       if (tagId) {
         conditions.push('EXISTS (SELECT 1 FROM email_tags WHERE email_id = e.id AND tag_id = ?)');
         params.push(tagId);
@@ -216,7 +220,7 @@ export function createEmailRepo(): EmailRepo {
       return rows.map(mapEmail);
     },
 
-    async search(query, limit = 100) {
+    async search(query, limit = 100, accountId?: number) {
       // Sanitize FTS query to prevent DoS via complex patterns
       // Remove special FTS operators and limit wildcards
       const sanitized = query
@@ -233,12 +237,23 @@ export function createEmailRepo(): EmailRepo {
 
       const ftsQuery = terms.map(t => `"${t}"*`).join(' ');
 
-      const rows = getDb().prepare(`
+      // Build query with optional account filter
+      let sql = `
         SELECT e.* FROM emails e
         JOIN emails_fts fts ON e.id = fts.rowid
         WHERE emails_fts MATCH ?
-        ORDER BY rank LIMIT ?
-      `).all(ftsQuery, Math.min(limit, 500));
+      `;
+      const params: any[] = [ftsQuery];
+
+      if (accountId) {
+        sql += ' AND e.account_id = ?';
+        params.push(accountId);
+      }
+
+      sql += ' ORDER BY rank LIMIT ?';
+      params.push(Math.min(limit, 500));
+
+      const rows = getDb().prepare(sql).all(...params);
       return rows.map(mapEmail);
     },
 
@@ -501,7 +516,7 @@ export function createAccountRepo(): AccountRepo {
     },
 
     async updateLastSync(id) {
-      getDb().prepare('UPDATE accounts SET last_sync = datetime("now") WHERE id = ?').run(id);
+      getDb().prepare("UPDATE accounts SET last_sync = datetime('now') WHERE id = ?").run(id);
     },
   };
 }
