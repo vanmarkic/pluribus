@@ -13,11 +13,13 @@ import Store from 'electron-store';
 import { createUseCases, type UseCases, type Deps } from '../core';
 
 // Adapters
-import { initDb, closeDb, createEmailRepo, createAttachmentRepo, createTagRepo, createAccountRepo, createFolderRepo } from '../adapters/db';
+import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createTagRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo } from '../adapters/db';
 import { createMailSync } from '../adapters/imap';
 import { createClassifier } from '../adapters/llm';
 import { createSecureStorage } from '../adapters/keychain';
 import { createMailSender } from '../adapters/smtp';
+import { createImageCache } from '../adapters/image-cache';
+import type { RemoteImagesSetting } from '../core/ports';
 
 // ============================================
 // Config Store (non-sensitive settings only)
@@ -30,6 +32,10 @@ type AppConfig = {
     dailyEmailLimit: number;
     autoClassify: boolean;
     confidenceThreshold: number;
+    reclassifyCooldownDays: number;
+  };
+  security: {
+    remoteImages: RemoteImagesSetting;
   };
 };
 
@@ -41,6 +47,10 @@ const configStore = new Store<AppConfig>({
       dailyEmailLimit: 200,
       autoClassify: false,
       confidenceThreshold: 0.85,
+      reclassifyCooldownDays: 7,
+    },
+    security: {
+      remoteImages: 'block', // Privacy-first default
     },
   },
 });
@@ -84,6 +94,8 @@ export function createContainer(): Container {
   const tags = createTagRepo();
   const accounts = createAccountRepo();
   const folders = createFolderRepo();
+  const drafts = createDraftRepo();
+  const classificationState = createClassificationStateRepo(getDb);
 
   // Create services (with dependencies)
   const sync = createMailSync(emails, attachments, folders, secrets);
@@ -95,7 +107,14 @@ export function createContainer(): Container {
   // Config adapter (implements ConfigStore port)
   const config = {
     getLLMConfig: () => configStore.get('llm'),
+    getRemoteImagesSetting: () => configStore.get('security').remoteImages,
+    setRemoteImagesSetting: (setting: RemoteImagesSetting) => {
+      configStore.set('security', { ...configStore.get('security'), remoteImages: setting });
+    },
   };
+
+  // Image cache adapter
+  const imageCache = createImageCache(getDb);
 
   // Assemble dependencies
   const deps: Deps = {
@@ -104,11 +123,14 @@ export function createContainer(): Container {
     tags,
     accounts,
     folders,
+    drafts,
+    classificationState,
     sync,
     classifier,
     secrets,
     sender,
     config,
+    imageCache,
   };
   
   // Create use cases

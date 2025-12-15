@@ -6,8 +6,9 @@
  * This is partial application / currying for DI.
  */
 
-import type { Deps, AccountInput, SmtpConfig, EmailDraft, SendResult, SyncResult } from './ports';
-import type { Email, EmailBody, Tag, AppliedTag, Account, ListEmailsOptions, SyncOptions, Classification } from './domain';
+import type { Deps, AccountInput, SmtpConfig, EmailDraft, SendResult, SyncResult, CachedImage, RemoteImagesSetting, DraftRepo } from './ports';
+import type { Email, EmailBody, Tag, AppliedTag, Account, ListEmailsOptions, SyncOptions, Classification, ClassificationState, ClassificationStats, ClassificationFeedback, ConfusedPattern, Draft, DraftInput, ListDraftsOptions } from './domain';
+import { extractDomain, extractSubjectPattern } from './domain';
 
 // ============================================
 // Email Use Cases
@@ -64,9 +65,12 @@ export const archiveEmail = (deps: Pick<Deps, 'tags'>) =>
     if (inboxTag) await deps.tags.remove(emailId, inboxTag.id);
   };
 
-export const deleteEmail = (deps: Pick<Deps, 'emails'>) =>
-  (id: number): Promise<void> =>
-    deps.emails.delete(id);
+export const deleteEmail = (deps: Pick<Deps, 'emails' | 'imageCache'>) =>
+  async (id: number): Promise<void> => {
+    // Clear cached images before deleting email
+    await deps.imageCache.clearCache(id);
+    await deps.emails.delete(id);
+  };
 
 // ============================================
 // Tag Use Cases
@@ -136,7 +140,7 @@ export const syncAllMailboxes = (deps: Pick<Deps, 'accounts' | 'sync'>) =>
     return { newCount: total, newEmailIds: allNewEmailIds };
   };
 
-export const syncWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails' | 'tags' | 'classifier' | 'config'>) =>
+export const syncWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails' | 'tags' | 'classifier' | 'classificationState' | 'config'>) =>
   async (accountId: number, options: SyncOptions = {}): Promise<SyncResult & { classified?: number; skipped?: number }> => {
     // First, sync the mailbox
     const syncResult = await syncMailbox(deps)(accountId, options);
@@ -161,7 +165,7 @@ export const syncWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'ema
     }
   };
 
-export const syncAllWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails' | 'tags' | 'classifier' | 'config'>) =>
+export const syncAllWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails' | 'tags' | 'classifier' | 'classificationState' | 'config'>) =>
   async (options: SyncOptions = {}): Promise<SyncResult & { classified?: number; skipped?: number }> => {
     // First, sync all mailboxes
     const syncResult = await syncAllMailboxes(deps)(options);
@@ -205,10 +209,27 @@ export const classifyEmail = (deps: Pick<Deps, 'emails' | 'tags' | 'classifier'>
     );
   };
 
-export const classifyAndApply = (deps: Pick<Deps, 'emails' | 'tags' | 'classifier'>) =>
+export const classifyAndApply = (deps: Pick<Deps, 'emails' | 'tags' | 'classifier' | 'classificationState'>) =>
   async (emailId: number, confidenceThreshold = 0.85): Promise<Classification> => {
     const result = await classifyEmail(deps)(emailId);
 
+    // Determine status based on confidence threshold
+    const status = result.confidence >= confidenceThreshold ? 'classified' : 'pending_review';
+
+    // Save classification state (clear dismissed_at if re-classifying)
+    await deps.classificationState.setState({
+      emailId,
+      status,
+      confidence: result.confidence,
+      priority: result.priority,
+      suggestedTags: result.suggestedTags,
+      reasoning: result.reasoning,
+      classifiedAt: new Date(),
+      dismissedAt: null,  // Clear dismissed timestamp on re-classification
+      errorMessage: null, // Clear any previous error
+    });
+
+    // Only auto-apply tags if above threshold
     if (result.confidence >= confidenceThreshold) {
       const allTags = await deps.tags.findAll();
 
@@ -223,7 +244,7 @@ export const classifyAndApply = (deps: Pick<Deps, 'emails' | 'tags' | 'classifie
     return result;
   };
 
-export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'tags' | 'classifier'>) =>
+export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'tags' | 'classifier' | 'classificationState'>) =>
   async (emailIds: number[], confidenceThreshold = 0.85): Promise<{ classified: number; skipped: number }> => {
     const budget = deps.classifier.getEmailBudget();
     const remainingBudget = budget.limit - budget.used;
@@ -254,11 +275,400 @@ export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'tags' | 'classifi
         classified++;
       } catch (error) {
         console.error(`Failed to classify email ${email.id}:`, error);
-        // Continue with next email even if one fails
+        // Record error state so user can retry
+        await deps.classificationState.setState({
+          emailId: email.id,
+          status: 'error',
+          confidence: null,
+          priority: null,
+          suggestedTags: [],
+          reasoning: null,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          classifiedAt: new Date(),
+        });
       }
     }
 
     return { classified, skipped };
+  };
+
+// ============================================
+// AI Sort Use Cases
+// ============================================
+
+export type PendingReviewOptions = {
+  limit?: number;
+  offset?: number;
+  sortBy?: 'confidence' | 'date' | 'sender';
+};
+
+export type PendingReviewItem = ClassificationState & {
+  email: Email;
+};
+
+export const getPendingReviewQueue = (deps: Pick<Deps, 'classificationState' | 'emails'>) =>
+  async (options: PendingReviewOptions = {}): Promise<PendingReviewItem[]> => {
+    const states = await deps.classificationState.listPendingReview(options);
+
+    const items: PendingReviewItem[] = [];
+    for (const state of states) {
+      const email = await deps.emails.findById(state.emailId);
+      if (email) {
+        items.push({ ...state, email });
+      }
+    }
+
+    return items;
+  };
+
+export const getEmailsByPriority = (deps: Pick<Deps, 'classificationState' | 'emails'>) =>
+  async (priority: 'high' | 'normal' | 'low', options: { limit?: number; offset?: number } = {}): Promise<PendingReviewItem[]> => {
+    const states = await deps.classificationState.listByPriority(priority, options);
+
+    const items: PendingReviewItem[] = [];
+    for (const state of states) {
+      const email = await deps.emails.findById(state.emailId);
+      if (email) {
+        items.push({ ...state, email });
+      }
+    }
+
+    return items;
+  };
+
+export const getFailedClassifications = (deps: Pick<Deps, 'classificationState' | 'emails'>) =>
+  async (options: { limit?: number; offset?: number } = {}): Promise<PendingReviewItem[]> => {
+    const states = await deps.classificationState.listFailed(options);
+
+    const items: PendingReviewItem[] = [];
+    for (const state of states) {
+      const email = await deps.emails.findById(state.emailId);
+      if (email) {
+        items.push({ ...state, email });
+      }
+    }
+
+    return items;
+  };
+
+export const getClassificationStats = (deps: Pick<Deps, 'classificationState' | 'config' | 'classifier'>) =>
+  async (): Promise<ClassificationStats> => {
+    const stats = await deps.classificationState.getStats();
+    const budget = deps.classifier.getEmailBudget();
+
+    return {
+      ...stats,
+      budgetUsed: budget.used,
+      budgetLimit: budget.limit,
+    };
+  };
+
+export const acceptClassification = (deps: Pick<Deps, 'classificationState' | 'tags'>) =>
+  async (emailId: number, appliedTags: string[]): Promise<void> => {
+    const state = await deps.classificationState.getState(emailId);
+    if (!state) throw new Error('Classification state not found');
+
+    // Determine if tags were edited
+    const originalSet = new Set(state.suggestedTags);
+    const appliedSet = new Set(appliedTags);
+    const isExactMatch = originalSet.size === appliedSet.size &&
+      [...originalSet].every(tag => appliedSet.has(tag));
+
+    const action = isExactMatch ? 'accept' : 'accept_edit';
+    const accuracyScore = isExactMatch ? 1.0 : 0.98;
+
+    // Log feedback
+    await deps.classificationState.logFeedback({
+      emailId,
+      action,
+      originalTags: state.suggestedTags,
+      finalTags: appliedTags,
+      accuracyScore,
+    });
+
+    // Update state
+    await deps.classificationState.setState({
+      ...state,
+      status: 'accepted',
+      reviewedAt: new Date(),
+    });
+
+    // Apply tags to email, creating any missing tags
+    let allTags = await deps.tags.findAll();
+    for (const tagSlug of appliedTags) {
+      let tag = allTags.find(t => t.slug === tagSlug);
+      if (!tag) {
+        // Create the tag if it doesn't exist (user may have typed a new tag in TagManager)
+        const name = tagSlug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        tag = await deps.tags.create({ name, slug: tagSlug, color: '#6b7280', isSystem: false, sortOrder: 0 });
+        allTags = [...allTags, tag];
+      }
+      await deps.tags.apply(emailId, tag.id, 'llm', state.confidence ?? undefined);
+    }
+  };
+
+export const dismissClassification = (deps: Pick<Deps, 'classificationState' | 'emails'>) =>
+  async (emailId: number): Promise<void> => {
+    const state = await deps.classificationState.getState(emailId);
+    if (!state) throw new Error('Classification state not found');
+
+    const email = await deps.emails.findById(emailId);
+
+    // Log feedback
+    await deps.classificationState.logFeedback({
+      emailId,
+      action: 'dismiss',
+      originalTags: state.suggestedTags,
+      finalTags: null,
+      accuracyScore: 0.0,
+    });
+
+    // Update state
+    await deps.classificationState.setState({
+      ...state,
+      status: 'dismissed',
+      dismissedAt: new Date(),
+    });
+
+    // Update confused patterns
+    if (email) {
+      // Track sender domain pattern
+      const domain = extractDomain(email.from.address);
+      await deps.classificationState.updateConfusedPattern(
+        'sender_domain',
+        domain,
+        state.confidence ?? 0
+      );
+
+      // Track subject pattern if detected
+      const subjectPattern = extractSubjectPattern(email.subject);
+      if (subjectPattern) {
+        await deps.classificationState.updateConfusedPattern(
+          'subject_pattern',
+          subjectPattern,
+          state.confidence ?? 0
+        );
+      }
+    }
+  };
+
+export const retryClassification = (deps: Pick<Deps, 'emails' | 'tags' | 'classifier' | 'classificationState' | 'config'>) =>
+  async (emailId: number): Promise<Classification> => {
+    const state = await deps.classificationState.getState(emailId);
+    if (!state || state.status !== 'error') {
+      throw new Error('Email is not in error state');
+    }
+
+    const llmConfig = deps.config.getLLMConfig();
+    return classifyAndApply(deps)(emailId, llmConfig.confidenceThreshold);
+  };
+
+export const getConfusedPatterns = (deps: Pick<Deps, 'classificationState'>) =>
+  (limit = 5): Promise<ConfusedPattern[]> =>
+    deps.classificationState.listConfusedPatterns(limit);
+
+export const clearConfusedPatterns = (deps: Pick<Deps, 'classificationState'>) =>
+  (): Promise<void> =>
+    deps.classificationState.clearConfusedPatterns();
+
+export const getRecentActivity = (deps: Pick<Deps, 'classificationState'>) =>
+  (limit = 10): Promise<ClassificationFeedback[]> =>
+    deps.classificationState.listRecentFeedback(limit);
+
+export const bulkApplyTag = (deps: Pick<Deps, 'classificationState' | 'tags'>) =>
+  async (emailIds: number[], tagSlug: string): Promise<{ applied: number; failed: number }> => {
+    let applied = 0;
+    let failed = 0;
+
+    const allTags = await deps.tags.findAll();
+    const tag = allTags.find(t => t.slug === tagSlug);
+    if (!tag) {
+      return { applied: 0, failed: emailIds.length };
+    }
+
+    for (const emailId of emailIds) {
+      try {
+        const state = await deps.classificationState.getState(emailId);
+        if (!state || state.status !== 'pending_review') {
+          failed++;
+          continue;
+        }
+
+        // Log feedback as accept_edit (user chose different tag)
+        await deps.classificationState.logFeedback({
+          emailId,
+          action: 'accept_edit',
+          originalTags: state.suggestedTags,
+          finalTags: [tagSlug],
+          accuracyScore: 0.98,
+        });
+
+        // Update state
+        await deps.classificationState.setState({
+          ...state,
+          status: 'accepted',
+          reviewedAt: new Date(),
+        });
+
+        // Apply the chosen tag
+        await deps.tags.apply(emailId, tag.id, 'llm', state.confidence ?? undefined);
+
+        applied++;
+      } catch {
+        failed++;
+      }
+    }
+
+    return { applied, failed };
+  };
+
+export const bulkAcceptClassifications = (deps: Pick<Deps, 'classificationState' | 'tags'>) =>
+  async (emailIds: number[]): Promise<{ accepted: number; failed: number }> => {
+    let accepted = 0;
+    let failed = 0;
+
+    for (const emailId of emailIds) {
+      try {
+        const state = await deps.classificationState.getState(emailId);
+        if (!state || state.status !== 'pending_review') {
+          failed++;
+          continue;
+        }
+
+        // Log feedback as accept (no edits)
+        await deps.classificationState.logFeedback({
+          emailId,
+          action: 'accept',
+          originalTags: state.suggestedTags,
+          finalTags: state.suggestedTags,
+          accuracyScore: 1.0,
+        });
+
+        // Update state
+        await deps.classificationState.setState({
+          ...state,
+          status: 'accepted',
+          reviewedAt: new Date(),
+        });
+
+        // Apply tags
+        const allTags = await deps.tags.findAll();
+        for (const tagSlug of state.suggestedTags) {
+          const tag = allTags.find(t => t.slug === tagSlug);
+          if (tag) {
+            await deps.tags.apply(emailId, tag.id, 'llm', state.confidence ?? undefined);
+          }
+        }
+
+        accepted++;
+      } catch {
+        failed++;
+      }
+    }
+
+    return { accepted, failed };
+  };
+
+export const bulkDismissClassifications = (deps: Pick<Deps, 'classificationState' | 'emails'>) =>
+  async (emailIds: number[]): Promise<{ dismissed: number; failed: number }> => {
+    let dismissed = 0;
+    let failed = 0;
+
+    for (const emailId of emailIds) {
+      try {
+        const state = await deps.classificationState.getState(emailId);
+        if (!state || state.status !== 'pending_review') {
+          failed++;
+          continue;
+        }
+
+        const email = await deps.emails.findById(emailId);
+
+        // Log feedback
+        await deps.classificationState.logFeedback({
+          emailId,
+          action: 'dismiss',
+          originalTags: state.suggestedTags,
+          finalTags: null,
+          accuracyScore: 0.0,
+        });
+
+        // Update state
+        await deps.classificationState.setState({
+          ...state,
+          status: 'dismissed',
+          dismissedAt: new Date(),
+        });
+
+        // Update confused patterns
+        if (email) {
+          // Track sender domain pattern
+          const domain = extractDomain(email.from.address);
+          await deps.classificationState.updateConfusedPattern(
+            'sender_domain',
+            domain,
+            state.confidence ?? 0
+          );
+
+          // Track subject pattern if detected
+          const subjectPattern = extractSubjectPattern(email.subject);
+          if (subjectPattern) {
+            await deps.classificationState.updateConfusedPattern(
+              'subject_pattern',
+              subjectPattern,
+              state.confidence ?? 0
+            );
+          }
+        }
+
+        dismissed++;
+      } catch {
+        failed++;
+      }
+    }
+
+    return { dismissed, failed };
+  };
+
+export const getPendingReviewCount = (deps: Pick<Deps, 'classificationState'>) =>
+  async (): Promise<number> => {
+    const counts = await deps.classificationState.countByStatus();
+    return counts.pending_review;
+  };
+
+export const classifyUnprocessed = (deps: Pick<Deps, 'emails' | 'tags' | 'classifier' | 'classificationState' | 'config'>) =>
+  async (): Promise<{ classified: number; skipped: number }> => {
+    const llmConfig = deps.config.getLLMConfig();
+
+    // Get emails without classification state (truly unprocessed)
+    const allEmails = await deps.emails.list({ limit: 1000 });
+    const unprocessedIds: number[] = [];
+
+    for (const email of allEmails) {
+      const state = await deps.classificationState.getState(email.id);
+      if (!state) {
+        unprocessedIds.push(email.id);
+      }
+    }
+
+    // Get reclassifiable dismissed emails (past cooldown)
+    // -1 means "never" - don't auto-reclassify dismissed emails
+    let reclassifiableIds: number[] = [];
+    if (llmConfig.reclassifyCooldownDays >= 0) {
+      reclassifiableIds = await deps.classificationState.listReclassifiable(
+        llmConfig.reclassifyCooldownDays
+      );
+    }
+
+    // Combine and dedupe
+    const emailIds = [...new Set([...unprocessedIds, ...reclassifiableIds])];
+
+    if (emailIds.length === 0) {
+      return { classified: 0, skipped: 0 };
+    }
+
+    // Use existing classifyNewEmails logic
+    return classifyNewEmails(deps)(emailIds, llmConfig.confidenceThreshold);
   };
 
 // ============================================
@@ -303,15 +713,77 @@ export const deleteAccount = (deps: Pick<Deps, 'accounts' | 'secrets' | 'sync'>)
   async (id: number): Promise<void> => {
     const account = await deps.accounts.findById(id);
     if (!account) throw new Error('Account not found');
-    
+
     // Disconnect IMAP
     await deps.sync.disconnect(id);
-    
+
     // Delete password
     await deps.secrets.deletePassword(account.email);
-    
+
     // Soft-delete account
     await deps.accounts.delete(id);
+  };
+
+export type AddAccountOptions = {
+  skipSync?: boolean;
+};
+
+export type AddAccountResult = {
+  account: Account;
+  syncResult: SyncResult;
+  /** Max messages downloaded per folder - UI can display "Only 1000 most recent emails downloaded" */
+  maxMessagesPerFolder: number;
+};
+
+const INITIAL_SYNC_MAX_MESSAGES = 1000;
+
+export const addAccount = (deps: Pick<Deps, 'accounts' | 'secrets' | 'sync'>) =>
+  async (account: AccountInput, password: string, options: AddAccountOptions = {}): Promise<AddAccountResult> => {
+    const { skipSync = false } = options;
+
+    // Check if account already exists
+    const existing = await deps.accounts.findByEmail(account.email);
+    if (existing) throw new Error('Account already exists');
+
+    // Store password securely first
+    await deps.secrets.setPassword(account.email, password);
+
+    // Then create account record
+    const createdAccount = await deps.accounts.create(account);
+
+    // Skip sync if requested
+    if (skipSync) {
+      return {
+        account: createdAccount,
+        syncResult: { newCount: 0, newEmailIds: [] },
+        maxMessagesPerFolder: INITIAL_SYNC_MAX_MESSAGES,
+      };
+    }
+
+    // Perform initial sync for all default folders with max 1000 messages
+    const foldersToSync = deps.sync.getDefaultFolders();
+    let totalNewCount = 0;
+    const allNewEmailIds: number[] = [];
+
+    for (const folder of foldersToSync) {
+      try {
+        const result = await deps.sync.sync(createdAccount, { folder, maxMessages: INITIAL_SYNC_MAX_MESSAGES });
+        totalNewCount += result.newCount;
+        allNewEmailIds.push(...result.newEmailIds);
+      } catch (e) {
+        // Folder might not exist on this provider, continue to next
+        const errorMsg = e instanceof Error ? e.message : String(e);
+        if (!errorMsg.includes('NONEXISTENT') && !errorMsg.includes('does not exist')) {
+          console.error(`Failed to sync ${account.email}/${folder}:`, e);
+        }
+      }
+    }
+
+    return {
+      account: createdAccount,
+      syncResult: { newCount: totalNewCount, newEmailIds: allNewEmailIds },
+      maxMessagesPerFolder: INITIAL_SYNC_MAX_MESSAGES,
+    };
   };
 
 export const testImapConnection = (deps: Pick<Deps, 'sync' | 'secrets'>) =>
@@ -397,6 +869,77 @@ export const forwardEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'sender' |
   };
 
 // ============================================
+// Remote Images Use Cases
+// ============================================
+
+export const loadRemoteImages = (deps: Pick<Deps, 'emails' | 'imageCache'>) =>
+  async (emailId: number, urls: string[]): Promise<CachedImage[]> => {
+    const email = await deps.emails.findById(emailId);
+    if (!email) throw new Error('Email not found');
+
+    // Check if already loaded
+    const alreadyLoaded = await deps.imageCache.hasLoadedImages(emailId);
+    if (alreadyLoaded) {
+      return deps.imageCache.getCachedImages(emailId);
+    }
+
+    // Fetch and cache images
+    const cached = await deps.imageCache.cacheImages(emailId, urls);
+    await deps.imageCache.markImagesLoaded(emailId);
+
+    return cached;
+  };
+
+export const hasLoadedRemoteImages = (deps: Pick<Deps, 'imageCache'>) =>
+  (emailId: number): Promise<boolean> =>
+    deps.imageCache.hasLoadedImages(emailId);
+
+export const getRemoteImagesSetting = (deps: Pick<Deps, 'config'>) =>
+  (): RemoteImagesSetting =>
+    deps.config.getRemoteImagesSetting();
+
+export const setRemoteImagesSetting = (deps: Pick<Deps, 'config'>) =>
+  (setting: RemoteImagesSetting): void =>
+    deps.config.setRemoteImagesSetting(setting);
+
+export const clearImageCache = (deps: Pick<Deps, 'imageCache'>) =>
+  (emailId: number): Promise<void> =>
+    deps.imageCache.clearCache(emailId);
+
+export const clearAllImageCache = (deps: Pick<Deps, 'imageCache'>) =>
+  (): Promise<void> =>
+    deps.imageCache.clearAllCache();
+
+// ============================================
+// Draft Use Cases
+// ============================================
+
+export const saveDraft = (deps: Pick<Deps, 'drafts'>) =>
+  async (input: DraftInput): Promise<Draft> => {
+    // If id provided, check if draft exists to update
+    if (input.id) {
+      const existing = await deps.drafts.findById(input.id);
+      if (existing) {
+        return deps.drafts.update(input.id, input);
+      }
+    }
+    // Otherwise save as new
+    return deps.drafts.save(input);
+  };
+
+export const getDraft = (deps: Pick<Deps, 'drafts'>) =>
+  (id: number): Promise<Draft | null> =>
+    deps.drafts.findById(id);
+
+export const listDrafts = (deps: Pick<Deps, 'drafts'>) =>
+  (options: ListDraftsOptions = {}): Promise<Draft[]> =>
+    deps.drafts.list(options);
+
+export const deleteDraft = (deps: Pick<Deps, 'drafts'>) =>
+  (id: number): Promise<void> =>
+    deps.drafts.delete(id);
+
+// ============================================
 // Factory: Create all use cases with deps
 // ============================================
 
@@ -429,13 +972,31 @@ export function createUseCases(deps: Deps) {
     classifyEmail: classifyEmail(deps),
     classifyAndApply: classifyAndApply(deps),
     classifyNewEmails: classifyNewEmails(deps),
-    
+
+    // AI Sort
+    getPendingReviewQueue: getPendingReviewQueue(deps),
+    getEmailsByPriority: getEmailsByPriority(deps),
+    getFailedClassifications: getFailedClassifications(deps),
+    getClassificationStats: getClassificationStats(deps),
+    acceptClassification: acceptClassification(deps),
+    dismissClassification: dismissClassification(deps),
+    retryClassification: retryClassification(deps),
+    getConfusedPatterns: getConfusedPatterns(deps),
+    clearConfusedPatterns: clearConfusedPatterns(deps),
+    getRecentActivity: getRecentActivity(deps),
+    bulkAcceptClassifications: bulkAcceptClassifications(deps),
+    bulkDismissClassifications: bulkDismissClassifications(deps),
+    bulkApplyTag: bulkApplyTag(deps),
+    getPendingReviewCount: getPendingReviewCount(deps),
+    classifyUnprocessed: classifyUnprocessed(deps),
+
     // Accounts
     listAccounts: listAccounts(deps),
     getAccount: getAccount(deps),
     createAccount: createAccount(deps),
     updateAccount: updateAccount(deps),
     deleteAccount: deleteAccount(deps),
+    addAccount: addAccount(deps),
     testImapConnection: testImapConnection(deps),
     testSmtpConnection: testSmtpConnection(deps),
     
@@ -443,6 +1004,20 @@ export function createUseCases(deps: Deps) {
     sendEmail: sendEmail(deps),
     replyToEmail: replyToEmail(deps),
     forwardEmail: forwardEmail(deps),
+
+    // Remote Images
+    loadRemoteImages: loadRemoteImages(deps),
+    hasLoadedRemoteImages: hasLoadedRemoteImages(deps),
+    getRemoteImagesSetting: getRemoteImagesSetting(deps),
+    setRemoteImagesSetting: setRemoteImagesSetting(deps),
+    clearImageCache: clearImageCache(deps),
+    clearAllImageCache: clearAllImageCache(deps),
+
+    // Drafts
+    saveDraft: saveDraft(deps),
+    getDraft: getDraft(deps),
+    listDrafts: listDrafts(deps),
+    deleteDraft: deleteDraft(deps),
   };
 }
 

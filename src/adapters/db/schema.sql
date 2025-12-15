@@ -118,6 +118,39 @@ CREATE TABLE IF NOT EXISTS email_tags (
 
 CREATE INDEX IF NOT EXISTS idx_email_tags_tag ON email_tags(tag_id);
 
+-- Drafts (local email drafts)
+CREATE TABLE IF NOT EXISTS drafts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  to_addresses TEXT NOT NULL DEFAULT '[]',
+  cc_addresses TEXT NOT NULL DEFAULT '[]',
+  bcc_addresses TEXT NOT NULL DEFAULT '[]',
+  subject TEXT NOT NULL DEFAULT '',
+  body_text TEXT,
+  body_html TEXT,
+  in_reply_to TEXT,
+  references_list TEXT NOT NULL DEFAULT '[]',
+  original_email_id INTEGER REFERENCES emails(id) ON DELETE SET NULL,
+  saved_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_drafts_account ON drafts(account_id);
+CREATE INDEX IF NOT EXISTS idx_drafts_saved_at ON drafts(saved_at DESC);
+
+-- Draft Attachments
+CREATE TABLE IF NOT EXISTS draft_attachments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  draft_id INTEGER NOT NULL REFERENCES drafts(id) ON DELETE CASCADE,
+  filename TEXT NOT NULL,
+  content_type TEXT,
+  size INTEGER NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_draft_attachments_draft ON draft_attachments(draft_id);
+
 -- LLM Usage
 CREATE TABLE IF NOT EXISTS llm_usage (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -138,3 +171,47 @@ INSERT OR IGNORE INTO tags (slug, name, color, sort_order) VALUES
   ('work', 'Work', '#8b5cf6', 10),
   ('personal', 'Personal', '#ec4899', 11),
   ('finance', 'Finance', '#14b8a6', 12);
+
+-- Classification State (tracks each email's AI classification status)
+CREATE TABLE IF NOT EXISTS classification_state (
+  email_id INTEGER PRIMARY KEY REFERENCES emails(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'unprocessed',  -- unprocessed, classified, pending_review, accepted, dismissed, error
+  confidence REAL,
+  priority TEXT,  -- high, normal, low
+  suggested_tags TEXT,  -- JSON array of tag slugs
+  reasoning TEXT,
+  error_message TEXT,  -- Error message if classification failed
+  classified_at TEXT,
+  reviewed_at TEXT,
+  dismissed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_classification_status ON classification_state(status);
+CREATE INDEX IF NOT EXISTS idx_classification_confidence ON classification_state(confidence);
+
+-- Classification Feedback (logs user actions for accuracy tracking)
+CREATE TABLE IF NOT EXISTS classification_feedback (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email_id INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+  action TEXT NOT NULL,  -- accept, accept_edit, dismiss
+  original_tags TEXT,    -- JSON array: what AI suggested
+  final_tags TEXT,       -- JSON array: what user applied (null if dismissed)
+  accuracy_score REAL,   -- 1.0 for accept, 0.98 for accept_edit, 0.0 for dismiss
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_email ON classification_feedback(email_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_created ON classification_feedback(created_at);
+
+-- Confused Patterns (aggregates patterns where AI struggles)
+CREATE TABLE IF NOT EXISTS confused_patterns (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  pattern_type TEXT NOT NULL,  -- sender_domain, subject_pattern
+  pattern_value TEXT NOT NULL,
+  dismissal_count INTEGER NOT NULL DEFAULT 0,
+  avg_confidence REAL,
+  last_seen TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(pattern_type, pattern_value)
+);
+
+CREATE INDEX IF NOT EXISTS idx_confused_patterns_count ON confused_patterns(dismissal_count DESC);

@@ -5,7 +5,7 @@
  * This is dependency inversion without the ceremony.
  */
 
-import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, Folder, ListEmailsOptions, Classification, SyncProgress, SyncOptions } from './domain';
+import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, Folder, ListEmailsOptions, Classification, SyncProgress, SyncOptions, Draft, DraftInput, ListDraftsOptions, ClassificationState, ClassificationFeedback, ConfusedPattern, ClassificationStats, ClassificationStatus } from './domain';
 
 // ============================================
 // Email Repository
@@ -112,6 +112,38 @@ export type Classifier = {
 };
 
 // ============================================
+// Classification State Repository
+// ============================================
+
+export type ClassificationStateRepo = {
+  // State management
+  getState: (emailId: number) => Promise<ClassificationState | null>;
+  setState: (state: Omit<ClassificationState, 'reviewedAt' | 'dismissedAt' | 'errorMessage'> & { reviewedAt?: Date | null; dismissedAt?: Date | null; errorMessage?: string | null }) => Promise<void>;
+
+  // Queries for AI Sort view
+  listPendingReview: (options?: { limit?: number; offset?: number; sortBy?: 'confidence' | 'date' | 'sender' }) => Promise<ClassificationState[]>;
+  listByPriority: (priority: 'high' | 'normal' | 'low', options?: { limit?: number; offset?: number }) => Promise<ClassificationState[]>;
+  listFailed: (options?: { limit?: number; offset?: number }) => Promise<ClassificationState[]>;
+  countByStatus: () => Promise<Record<ClassificationStatus, number>>;
+
+  // Re-classification (dismissed emails after cooldown)
+  listReclassifiable: (cooldownDays: number) => Promise<number[]>;
+
+  // Feedback logging
+  logFeedback: (feedback: Omit<ClassificationFeedback, 'id' | 'createdAt'>) => Promise<void>;
+  listRecentFeedback: (limit?: number) => Promise<ClassificationFeedback[]>;
+
+  // Stats & metrics
+  getStats: () => Promise<ClassificationStats>;
+  getAccuracy30Day: () => Promise<number>;
+
+  // Confused patterns
+  listConfusedPatterns: (limit?: number) => Promise<ConfusedPattern[]>;
+  updateConfusedPattern: (patternType: 'sender_domain' | 'subject_pattern', patternValue: string, confidence: number) => Promise<void>;
+  clearConfusedPatterns: () => Promise<void>;
+};
+
+// ============================================
 // Secure Storage
 // ============================================
 
@@ -145,7 +177,7 @@ export type SmtpConfig = {
   secure: boolean;
 };
 
-export type DraftAttachment = {
+export type SendAttachment = {
   filename: string;
   content: string; // base64 encoded
   contentType?: string;
@@ -160,7 +192,7 @@ export type EmailDraft = {
   html?: string;
   inReplyTo?: string;
   references?: string[];
-  attachments?: DraftAttachment[];
+  attachments?: SendAttachment[];
 };
 
 export type SendResult = {
@@ -184,10 +216,63 @@ export type LLMConfig = {
   dailyEmailLimit: number;
   autoClassify: boolean;
   confidenceThreshold: number;
+  reclassifyCooldownDays: number;
 };
+
+export type RemoteImagesSetting = 'block' | 'allow';
 
 export type ConfigStore = {
   getLLMConfig: () => LLMConfig;
+  getRemoteImagesSetting: () => RemoteImagesSetting;
+  setRemoteImagesSetting: (setting: RemoteImagesSetting) => void;
+};
+
+// ============================================
+// Image Cache (for remote images)
+// ============================================
+
+/**
+ * Represents a cached remote image.
+ * - url: Original remote URL (https://...)
+ * - localPath: Local file:// URL for use in renderer
+ */
+export type CachedImage = {
+  url: string;
+  localPath: string;
+};
+
+/**
+ * Image cache for remote email images.
+ *
+ * Storage: {userData}/cache/images/{emailId}/{hash}.{ext}
+ * Security: Only fetches http/https URLs, validates content-type
+ * Cleanup: Call clearCache when email is deleted
+ */
+export type ImageCache = {
+  /** Download and cache images, returns local file:// paths */
+  cacheImages: (emailId: number, urls: string[]) => Promise<CachedImage[]>;
+  /** Get previously cached images for an email */
+  getCachedImages: (emailId: number) => Promise<CachedImage[]>;
+  /** Check if user has chosen to load images for this email */
+  hasLoadedImages: (emailId: number) => Promise<boolean>;
+  /** Mark that user chose to load images (persisted per-email) */
+  markImagesLoaded: (emailId: number) => Promise<void>;
+  /** Delete cached images for an email (call on email delete) */
+  clearCache: (emailId: number) => Promise<void>;
+  /** Delete all cached images and reset tracking */
+  clearAllCache: () => Promise<void>;
+};
+
+// ============================================
+// Draft Repository
+// ============================================
+
+export type DraftRepo = {
+  findById: (id: number) => Promise<Draft | null>;
+  list: (options: ListDraftsOptions) => Promise<Draft[]>;
+  save: (draft: DraftInput) => Promise<Draft>;
+  update: (id: number, draft: Partial<DraftInput>) => Promise<Draft>;
+  delete: (id: number) => Promise<void>;
 };
 
 // ============================================
@@ -200,9 +285,12 @@ export type Deps = {
   tags: TagRepo;
   accounts: AccountRepo;
   folders: FolderRepo;
+  drafts: DraftRepo;
   sync: MailSync;
   classifier: Classifier;
+  classificationState: ClassificationStateRepo;
   secrets: SecureStorage;
   sender: MailSender;
   config: ConfigStore;
+  imageCache: ImageCache;
 };

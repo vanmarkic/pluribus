@@ -137,6 +137,61 @@ export type SyncOptions = {
 };
 
 // ============================================
+// Drafts
+// ============================================
+
+export type DraftAttachment = {
+  id: number;
+  draftId: number;
+  filename: string;
+  contentType: string | null;
+  size: number;
+  content: string; // base64 encoded
+};
+
+export type DraftAttachmentInput = {
+  filename: string;
+  contentType?: string;
+  size: number;
+  content: string; // base64 encoded
+};
+
+export type Draft = {
+  id: number;
+  accountId: number;
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  text: string | null;
+  html: string | null;
+  savedAt: Date;
+  inReplyTo: string | null;
+  references: string[];
+  originalEmailId: number | null;
+  attachments: DraftAttachment[];
+};
+
+export type DraftInput = {
+  id?: number;
+  accountId: number;
+  to?: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject?: string;
+  text?: string;
+  html?: string;
+  inReplyTo?: string;
+  references?: string[];
+  originalEmailId?: number;
+  attachments?: DraftAttachmentInput[];
+};
+
+export type ListDraftsOptions = {
+  accountId?: number;
+};
+
+// ============================================
 // Business Logic (pure functions)
 // ============================================
 
@@ -148,6 +203,26 @@ export function extractDomain(email: string): string {
   return email.split('@')[1] || 'unknown';
 }
 
+export function extractSubjectPattern(subject: string): string | null {
+  // Detect common patterns that confuse AI
+  const patterns = [
+    { regex: /^(RE:\s*){2,}/i, pattern: 'RE: RE: RE:*' },  // Multiple replies
+    { regex: /^(FW:\s*){2,}/i, pattern: 'FW: FW: FW:*' },  // Multiple forwards
+    { regex: /^\[.+?\]\s*/i, pattern: '[list]*' },         // Mailing list prefixes
+    { regex: /^(Weekly|Daily|Monthly)\s/i, pattern: 'periodic digest' },
+    { regex: /^Digest:/i, pattern: 'digest:*' },
+    { regex: /^Newsletter/i, pattern: 'newsletter*' },
+  ];
+
+  for (const { regex, pattern } of patterns) {
+    if (regex.test(subject)) {
+      return pattern;
+    }
+  }
+
+  return null;
+}
+
 export function formatSender(from: { address: string; name: string | null }): string {
   return from.name || from.address;
 }
@@ -155,3 +230,56 @@ export function formatSender(from: { address: string; name: string | null }): st
 export function isRecent(date: Date, hoursAgo = 24): boolean {
   return Date.now() - date.getTime() < hoursAgo * 60 * 60 * 1000;
 }
+
+// ============================================
+// Classification State (AI Sort)
+// ============================================
+
+export type ClassificationStatus = 'unprocessed' | 'classified' | 'pending_review' | 'accepted' | 'dismissed' | 'error';
+
+export type ClassificationState = {
+  emailId: number;
+  status: ClassificationStatus;
+  confidence: number | null;
+  priority: 'high' | 'normal' | 'low' | null;
+  suggestedTags: string[];
+  reasoning: string | null;
+  errorMessage: string | null;
+  classifiedAt: Date | null;
+  reviewedAt: Date | null;
+  dismissedAt: Date | null;
+};
+
+export type FeedbackAction = 'accept' | 'accept_edit' | 'dismiss';
+
+export type ClassificationFeedback = {
+  id: number;
+  emailId: number;
+  action: FeedbackAction;
+  originalTags: string[];
+  finalTags: string[] | null;
+  accuracyScore: number;
+  createdAt: Date;
+};
+
+export type ConfusedPattern = {
+  id: number;
+  patternType: 'sender_domain' | 'subject_pattern';
+  patternValue: string;
+  dismissalCount: number;
+  avgConfidence: number | null;
+  lastSeen: Date;
+};
+
+export type ClassificationStats = {
+  classifiedToday: number;
+  pendingReview: number;
+  accuracy30Day: number;
+  budgetUsed: number;
+  budgetLimit: number;
+  priorityBreakdown: {
+    high: number;
+    normal: number;
+    low: number;
+  };
+};
