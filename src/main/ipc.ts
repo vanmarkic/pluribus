@@ -775,10 +775,10 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   });
 
   ipcMain.handle('images:setSetting', (_, setting) => {
-    const validSettings = ['block', 'allow'];
+    const validSettings = ['block', 'allow', 'auto'];
     const s = assertString(setting, 'setting', 10);
     if (!validSettings.includes(s)) throw new Error('Invalid setting');
-    return useCases.setRemoteImagesSetting(s as 'block' | 'allow');
+    return useCases.setRemoteImagesSetting(s as 'block' | 'allow' | 'auto');
   });
 
   ipcMain.handle('images:hasLoaded', (_, emailId) => {
@@ -798,6 +798,13 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
 
   ipcMain.handle('images:clearAllCache', () => {
     return useCases.clearAllImageCache();
+  });
+
+  ipcMain.handle('images:autoLoad', async (_, emailId, urls) => {
+    const id = assertPositiveInt(emailId, 'emailId');
+    if (!Array.isArray(urls)) throw new Error('Invalid urls: must be an array');
+    const validatedUrls = urls.map((url, i) => assertString(url, `urls[${i}]`, 2000));
+    return useCases.autoLoadImagesForEmail(id, validatedUrls);
   });
 
   // ==========================================
