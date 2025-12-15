@@ -116,6 +116,7 @@ const testTags: Tag[] = [
 ];
 
 const defaultLLMConfig: LLMConfig = {
+  provider: 'anthropic',
   model: 'claude-haiku-4-20250514',
   dailyBudget: 1.0,
   dailyEmailLimit: 50,
@@ -398,6 +399,7 @@ describe('deleteEmail', () => {
       hasLoadedImages: vi.fn(),
       markImagesLoaded: vi.fn(),
       clearCache: vi.fn().mockResolvedValue(undefined),
+      clearAllCache: vi.fn().mockResolvedValue(undefined),
     };
 
     await deleteEmail({ emails, imageCache })(1);
@@ -413,6 +415,7 @@ describe('deleteEmail', () => {
       hasLoadedImages: vi.fn(),
       markImagesLoaded: vi.fn(),
       clearCache: vi.fn().mockResolvedValue(undefined),
+      clearAllCache: vi.fn().mockResolvedValue(undefined),
     };
 
     await deleteEmail({ emails, imageCache })(1);
@@ -1323,6 +1326,7 @@ describe('loadRemoteImages', () => {
       hasLoadedImages: vi.fn().mockResolvedValue(false),
       markImagesLoaded: vi.fn().mockResolvedValue(undefined),
       clearCache: vi.fn().mockResolvedValue(undefined),
+      clearAllCache: vi.fn().mockResolvedValue(undefined),
     };
     const emails = createMockEmailRepo({ findById: vi.fn().mockResolvedValue(testEmail) });
 
@@ -1343,6 +1347,7 @@ describe('loadRemoteImages', () => {
       hasLoadedImages: vi.fn().mockResolvedValue(true),
       markImagesLoaded: vi.fn(),
       clearCache: vi.fn().mockResolvedValue(undefined),
+      clearAllCache: vi.fn().mockResolvedValue(undefined),
     };
     const emails = createMockEmailRepo({ findById: vi.fn().mockResolvedValue(testEmail) });
 
@@ -1361,6 +1366,7 @@ describe('loadRemoteImages', () => {
       hasLoadedImages: vi.fn(),
       markImagesLoaded: vi.fn(),
       clearCache: vi.fn().mockResolvedValue(undefined),
+      clearAllCache: vi.fn().mockResolvedValue(undefined),
     };
     const emails = createMockEmailRepo({ findById: vi.fn().mockResolvedValue(null) });
 
@@ -1377,6 +1383,7 @@ describe('hasLoadedRemoteImages', () => {
       hasLoadedImages: vi.fn().mockResolvedValue(true),
       markImagesLoaded: vi.fn(),
       clearCache: vi.fn().mockResolvedValue(undefined),
+      clearAllCache: vi.fn().mockResolvedValue(undefined),
     };
 
     const result = await hasLoadedRemoteImages({ imageCache })(1);
@@ -1392,6 +1399,7 @@ describe('hasLoadedRemoteImages', () => {
       hasLoadedImages: vi.fn().mockResolvedValue(false),
       markImagesLoaded: vi.fn(),
       clearCache: vi.fn().mockResolvedValue(undefined),
+      clearAllCache: vi.fn().mockResolvedValue(undefined),
     };
 
     const result = await hasLoadedRemoteImages({ imageCache })(1);
@@ -1437,6 +1445,7 @@ describe('clearImageCache', () => {
       hasLoadedImages: vi.fn(),
       markImagesLoaded: vi.fn(),
       clearCache: vi.fn().mockResolvedValue(undefined),
+      clearAllCache: vi.fn().mockResolvedValue(undefined),
     };
 
     await clearImageCache({ imageCache })(1);

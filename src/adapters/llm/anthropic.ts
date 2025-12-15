@@ -176,19 +176,37 @@ export function createClassifier(
   };
 }
 
+// Known Anthropic models (SDK v0.27 doesn't have models.list API)
+const ANTHROPIC_MODELS: LLMModel[] = [
+  { id: 'claude-opus-4-20250514', displayName: 'Claude Opus 4' },
+  { id: 'claude-sonnet-4-20250514', displayName: 'Claude Sonnet 4' },
+  { id: 'claude-haiku-4-20250514', displayName: 'Claude Haiku 4' },
+  { id: 'claude-3-5-sonnet-20241022', displayName: 'Claude 3.5 Sonnet' },
+  { id: 'claude-3-5-haiku-20241022', displayName: 'Claude 3.5 Haiku' },
+];
+
 export function createAnthropicProvider(secrets: SecureStorage): LLMProvider {
   return {
     type: 'anthropic',
 
     async validateKey(key: string) {
       try {
+        // Validate by making a minimal API call
         const client = new Anthropic({ apiKey: key });
-        await client.models.list({ limit: 1 });
+        await client.messages.create({
+          model: 'claude-haiku-4-20250514',
+          max_tokens: 1,
+          messages: [{ role: 'user', content: 'hi' }],
+        });
         return { valid: true };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        if (message.includes('401') || message.includes('invalid')) {
+        if (message.includes('401') || message.includes('invalid_api_key') || message.includes('authentication')) {
           return { valid: false, error: 'Invalid API key' };
+        }
+        // Other errors (rate limit, etc.) mean the key is valid
+        if (message.includes('rate') || message.includes('overloaded')) {
+          return { valid: true };
         }
         return { valid: false, error: message };
       }
@@ -198,23 +216,8 @@ export function createAnthropicProvider(secrets: SecureStorage): LLMProvider {
       const apiKey = await secrets.getApiKey('anthropic');
       if (!apiKey) return [];
 
-      try {
-        const client = new Anthropic({ apiKey });
-        const response = await client.models.list();
-
-        const models: LLMModel[] = [];
-        for await (const model of response) {
-          models.push({
-            id: model.id,
-            displayName: model.display_name,
-            createdAt: model.created_at,
-          });
-        }
-        return models;
-      } catch (err) {
-        console.error('Failed to list Anthropic models:', err);
-        return [];
-      }
+      // Return known models (API doesn't have a public models endpoint in SDK v0.27)
+      return ANTHROPIC_MODELS;
     },
   };
 }
