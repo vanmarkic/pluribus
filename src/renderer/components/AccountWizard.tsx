@@ -5,7 +5,8 @@
  */
 
 import { useState, useEffect } from 'react';
-import { IconClose, IconSpinnerBall, IconCircleCheckFill, IconCircleWarningFill, IconEmail } from 'obra-icons-react';
+import { IconClose, IconSpinnerBall, IconCircleCheckFill, IconCircleWarningFill, IconEmail, IconDownload } from 'obra-icons-react';
+import type { SyncProgress } from '../../core/domain';
 
 type Provider = 'gmail' | 'outlook' | 'icloud' | 'infomaniak' | 'fastmail' | 'other';
 
@@ -35,7 +36,7 @@ type Props = {
 };
 
 export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
-  const [step, setStep] = useState<'provider' | 'credentials' | 'test'>('provider');
+  const [step, setStep] = useState<'provider' | 'credentials' | 'test' | 'syncing' | 'complete'>('provider');
   const [form, setForm] = useState<AccountFormData>({
     email: '',
     password: '',
@@ -65,6 +66,8 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
+  const [syncResult, setSyncResult] = useState<{ newCount: number; maxMessagesPerFolder: number } | null>(null);
 
   const handleProviderSelect = (provider: Provider) => {
     setForm(prev => ({
@@ -107,11 +110,23 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
     }
   };
 
+  // Subscribe to sync progress events
+  useEffect(() => {
+    const handleProgress = (progress: SyncProgress) => {
+      if (step === 'syncing') {
+        setSyncProgress(progress);
+      }
+    };
+    window.mailApi.on('sync:progress', handleProgress);
+    return () => window.mailApi.off('sync:progress', handleProgress);
+  }, [step]);
+
   const handleSave = async () => {
     setSaving(true);
     setError(null);
     try {
       if (editAccountId) {
+        // Editing existing account - just update, no sync
         await window.mailApi.accounts.update(editAccountId, {
           name: form.email.split('@')[0],
           imapHost: form.imapHost,
@@ -119,8 +134,13 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
           smtpHost: form.smtpHost,
           smtpPort: form.smtpPort,
         }, form.password || undefined);
+        onSuccess();
       } else {
-        await window.mailApi.accounts.create({
+        // New account - use addAccount which creates + syncs
+        setStep('syncing');
+        setSaving(false);
+
+        const result = await window.mailApi.accounts.add({
           name: form.email.split('@')[0],
           email: form.email,
           imapHost: form.imapHost,
@@ -129,11 +149,19 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
           smtpPort: form.smtpPort,
           username: form.email,
         }, form.password);
+
+        setSyncResult({
+          newCount: result.syncResult.newCount,
+          maxMessagesPerFolder: result.maxMessagesPerFolder,
+        });
+        setStep('complete');
       }
-      onSuccess();
     } catch (err) {
       setError(String(err));
-    } finally {
+      if (step === 'syncing') {
+        setStep('test');
+        setTestResult('success'); // Connection was successful, sync failed
+      }
       setSaving(false);
     }
   };
@@ -359,6 +387,60 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
                   </button>
                 )}
               </div>
+            </div>
+          )}
+
+          {step === 'syncing' && (
+            <div className="space-y-4">
+              <div className="text-center py-4">
+                <IconDownload className="w-12 h-12 mx-auto text-blue-600 animate-pulse mb-3" />
+                <p className="text-zinc-800 font-medium">Downloading emails...</p>
+                {syncProgress && (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-sm text-zinc-600">
+                      {syncProgress.folder}: {syncProgress.current} of {syncProgress.total}
+                    </p>
+                    <div className="w-full bg-zinc-200 rounded-full h-2">
+                      <div
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${syncProgress.total > 0 ? (syncProgress.current / syncProgress.total) * 100 : 0}%` }}
+                      />
+                    </div>
+                    <p className="text-xs text-zinc-500">
+                      {syncProgress.newCount} new emails found
+                    </p>
+                  </div>
+                )}
+                <p className="text-xs text-zinc-400 mt-4">
+                  Downloading up to 1,000 most recent emails per folder
+                </p>
+              </div>
+            </div>
+          )}
+
+          {step === 'complete' && (
+            <div className="space-y-4">
+              <div className="text-center py-4">
+                <IconCircleCheckFill className="w-12 h-12 mx-auto text-green-600 mb-3" />
+                <p className="text-green-600 font-medium">Account added successfully!</p>
+                {syncResult && (
+                  <div className="mt-3 space-y-1">
+                    <p className="text-sm text-zinc-600">
+                      {syncResult.newCount.toLocaleString()} emails downloaded
+                    </p>
+                    <p className="text-xs text-zinc-400">
+                      Only the {syncResult.maxMessagesPerFolder.toLocaleString()} most recent emails per folder were downloaded
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <button
+                onClick={onSuccess}
+                className="w-full px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700"
+              >
+                Done
+              </button>
             </div>
           )}
         </div>

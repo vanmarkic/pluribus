@@ -5,11 +5,11 @@
  * Matches reference design with clean layout.
  */
 
-import { useMemo, useState, useRef, useEffect } from 'react';
+import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import DOMPurify from 'dompurify';
 import {
   IconFavorite, IconTag, IconArchiveBox, IconDelete, IconCircleBack, IconCircleForward,
-  IconAttachment, IconOptionsHorizontal, IconSparkles
+  IconAttachment, IconOptionsHorizontal, IconSparkles, IconImage
 } from 'obra-icons-react';
 import { useEmailStore, useUIStore, useTagStore } from '../stores';
 import { formatSender } from '../../core/domain';
@@ -27,12 +27,21 @@ const purifyConfig: DOMPurify.Config = {
     'href', 'src', 'alt', 'title', 'width', 'height',
     'style', 'class', 'id', 'target', 'rel',
     'colspan', 'rowspan', 'align', 'valign',
+    'data-original-src', // Allow our custom attribute
   ],
-  ALLOW_DATA_ATTR: false,
+  ALLOW_DATA_ATTR: true, // Allow data-* attributes
   ADD_ATTR: ['target'],
   FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input'],
   FORBID_ATTR: ['onerror', 'onclick', 'onload', 'onmouseover'],
 };
+
+// Track blocked image URLs during sanitization
+let blockedImageUrls: string[] = [];
+
+DOMPurify.addHook('beforeSanitizeAttributes', () => {
+  // Reset on each sanitization pass
+  blockedImageUrls = [];
+});
 
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   if (node.tagName === 'A') {
@@ -41,13 +50,20 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   }
   if (node.tagName === 'IMG' && node.hasAttribute('src')) {
     const src = node.getAttribute('src') || '';
-    if (!src.startsWith('data:') && !src.startsWith('cid:')) {
+    if (!src.startsWith('data:') && !src.startsWith('cid:') && !src.startsWith('file:')) {
+      blockedImageUrls.push(src);
       node.setAttribute('data-original-src', src);
       node.removeAttribute('src');
       node.setAttribute('alt', '[Image blocked]');
+      node.setAttribute('class', 'blocked-image');
     }
   }
 });
+
+// Get blocked URLs after sanitization
+function getBlockedImageUrls(): string[] {
+  return [...blockedImageUrls];
+}
 
 export function EmailViewer() {
   const {
@@ -72,6 +88,12 @@ export function EmailViewer() {
 
   // AI classification state
   const [isClassifying, setIsClassifying] = useState(false);
+
+  // Remote images state
+  const [imagesLoaded, setImagesLoaded] = useState(false);
+  const [loadingImages, setLoadingImages] = useState(false);
+  const [blockedUrls, setBlockedUrls] = useState<string[]>([]);
+  const bodyContainerRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -120,11 +142,86 @@ export function EmailViewer() {
     }
   };
 
-  // Sanitize HTML content
+  // Sanitize HTML content and capture blocked URLs
   const sanitizedHtml = useMemo(() => {
-    if (!body?.html) return null;
-    return DOMPurify.sanitize(body.html, purifyConfig as Parameters<typeof DOMPurify.sanitize>[1]);
+    if (!body?.html) {
+      setBlockedUrls([]);
+      return null;
+    }
+    const result = DOMPurify.sanitize(body.html, purifyConfig as Parameters<typeof DOMPurify.sanitize>[1]);
+    setBlockedUrls(getBlockedImageUrls());
+    return result;
   }, [body?.html]);
+
+  // Check if images were previously loaded for this email
+  useEffect(() => {
+    if (!email) return;
+
+    const checkImagesLoaded = async () => {
+      try {
+        // First check global setting
+        const setting = await window.mailApi.images.getSetting();
+        if (setting === 'allow') {
+          // Auto-load if global setting allows
+          setImagesLoaded(true);
+          return;
+        }
+
+        // Check if user previously loaded images for this email
+        const loaded = await window.mailApi.images.hasLoaded(email.id);
+        setImagesLoaded(loaded);
+      } catch (err) {
+        console.error('Failed to check images loaded status:', err);
+      }
+    };
+
+    checkImagesLoaded();
+  }, [email?.id]);
+
+  // Load images when imagesLoaded becomes true and we have blocked URLs
+  useEffect(() => {
+    if (!email || !imagesLoaded || blockedUrls.length === 0 || !bodyContainerRef.current) return;
+
+    const loadImages = async () => {
+      try {
+        const cached = await window.mailApi.images.load(email.id, blockedUrls);
+
+        // Create a URL mapping
+        const urlMap = new Map(cached.map(c => [c.url, c.localPath]));
+
+        // Replace blocked images in the DOM
+        const container = bodyContainerRef.current;
+        if (!container) return;
+
+        const blockedImages = container.querySelectorAll('img[data-original-src]');
+        blockedImages.forEach((img) => {
+          const originalSrc = img.getAttribute('data-original-src');
+          if (originalSrc && urlMap.has(originalSrc)) {
+            img.setAttribute('src', urlMap.get(originalSrc)!);
+            img.removeAttribute('data-original-src');
+            img.setAttribute('alt', '');
+            img.classList.remove('blocked-image');
+          }
+        });
+      } catch (err) {
+        console.error('Failed to load images:', err);
+      }
+    };
+
+    loadImages();
+  }, [email?.id, imagesLoaded, blockedUrls]);
+
+  // Handle loading images when user clicks the banner
+  const handleLoadImages = useCallback(async () => {
+    if (!email || loadingImages) return;
+
+    setLoadingImages(true);
+    try {
+      setImagesLoaded(true);
+    } finally {
+      setLoadingImages(false);
+    }
+  }, [email, loadingImages]);
 
   if (!email) {
     return (
@@ -318,7 +415,31 @@ export function EmailViewer() {
 
       {/* Body */}
       <div className="email-viewer-body">
-        <div className="email-viewer-body-content">
+        {/* Remote Images Banner */}
+        {blockedUrls.length > 0 && !imagesLoaded && (
+          <div
+            className="flex items-center gap-3 px-4 py-3 mb-4 rounded-lg"
+            style={{
+              background: 'var(--color-bg-secondary)',
+              border: '1px solid var(--color-border)',
+            }}
+          >
+            <IconImage className="w-5 h-5 flex-shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
+            <span className="flex-1 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+              Remote images are hidden to protect your privacy.
+            </span>
+            <button
+              onClick={handleLoadImages}
+              disabled={loadingImages}
+              className="btn btn-secondary text-sm"
+              style={{ padding: '0.375rem 0.75rem' }}
+            >
+              {loadingImages ? 'Loading...' : 'Load Images'}
+            </button>
+          </div>
+        )}
+
+        <div className="email-viewer-body-content" ref={bodyContainerRef}>
           {sanitizedHtml ? (
             <div
               className="prose prose-sm max-w-none"
