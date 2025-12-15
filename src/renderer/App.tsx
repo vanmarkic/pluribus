@@ -22,9 +22,9 @@ import { IconSun, IconMoon, IconComputerMonitor } from 'obra-icons-react';
 export function App() {
   const { view, showAccountWizard, editAccountId, composeMode, composeEmailId, composeDraftId, closeAccountWizard, closeCompose, openCompose, classificationTaskId, classificationProgress, updateClassificationProgress, clearClassificationTask } = useUIStore();
   const { setProgress, startSync } = useSyncStore();
-  const { loadAccounts } = useAccountStore();
+  const { loadAccounts, selectedAccountId } = useAccountStore();
   const { loadTags } = useTagStore();
-  const { selectedEmail, selectedBody } = useEmailStore();
+  const { selectedEmail, selectedBody, loadEmails } = useEmailStore();
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
 
   // Initial data load
@@ -32,6 +32,13 @@ export function App() {
     loadAccounts();
     loadTags();
   }, []);
+
+  // Reload emails when selected account changes (clean architecture - component reacts to state)
+  useEffect(() => {
+    if (selectedAccountId) {
+      loadEmails(selectedAccountId);
+    }
+  }, [selectedAccountId, loadEmails]);
 
   // Wire keyboard shortcuts
   useKeyboardShortcuts({
@@ -49,7 +56,9 @@ export function App() {
       // TODO: Focus search input
     },
     onRefresh: () => {
-      startSync();
+      if (selectedAccountId) {
+        startSync(selectedAccountId).then(() => loadEmails(selectedAccountId));
+      }
     },
   });
 
@@ -99,7 +108,9 @@ export function App() {
         await window.mailApi.llm.clearTask(classificationTaskId);
         clearClassificationTask();
         // Refresh emails to show new tags
-        useEmailStore.getState().loadEmails();
+        if (selectedAccountId) {
+          loadEmails(selectedAccountId);
+        }
       }
     }, 1000);
 

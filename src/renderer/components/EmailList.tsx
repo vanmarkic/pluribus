@@ -5,7 +5,6 @@
  * Matches reference design with clean layout.
  */
 
-import { useEffect } from 'react';
 import { IconFavorite } from 'obra-icons-react';
 import { useEmailStore, useUIStore } from '../stores';
 import { formatSender, isRecent } from '../../core/domain';
@@ -15,16 +14,13 @@ export function EmailList() {
     emails,
     selectedId,
     loading,
-    loadEmails,
     selectEmail,
     toggleStar,
     getEmailTags,
   } = useEmailStore();
   const { view } = useUIStore();
 
-  useEffect(() => {
-    loadEmails();
-  }, []);
+  // Note: loadEmails is called by App.tsx when selectedAccountId changes
 
   // Map view to display title
   const viewTitles: Record<string, string> = {

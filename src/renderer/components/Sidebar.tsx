@@ -68,31 +68,34 @@ export function Sidebar() {
 
   const handleNavClick = (id: string) => {
     setView(id as typeof view);
+    if (!selectedAccountId) return;
+
     // Reset all filters first, then apply view-specific filter
     const baseFilter = { tagId: undefined, folderPath: undefined, unreadOnly: false, starredOnly: false };
 
     if (id === 'inbox') {
-      setFilter({ ...baseFilter, folderPath: 'INBOX' });
+      setFilter({ ...baseFilter, folderPath: 'INBOX' }, selectedAccountId);
     } else if (id === 'sent') {
       // Match any Sent folder variant
-      setFilter({ ...baseFilter, folderPath: 'Sent' });
+      setFilter({ ...baseFilter, folderPath: 'Sent' }, selectedAccountId);
     } else if (id === 'drafts') {
       // Drafts view - handled by DraftsList component, no email filter needed
-      setFilter(baseFilter);
+      setFilter(baseFilter, selectedAccountId);
     } else if (id === 'starred') {
-      setFilter({ ...baseFilter, starredOnly: true });
+      setFilter({ ...baseFilter, starredOnly: true }, selectedAccountId);
     } else if (id === 'archive') {
       const archiveTag = tags.find(t => t.slug === 'archive');
-      if (archiveTag) setFilter({ ...baseFilter, tagId: archiveTag.id });
+      if (archiveTag) setFilter({ ...baseFilter, tagId: archiveTag.id }, selectedAccountId);
     } else if (id === 'trash') {
-      setFilter({ ...baseFilter, folderPath: 'Trash' });
+      setFilter({ ...baseFilter, folderPath: 'Trash' }, selectedAccountId);
     } else {
-      setFilter(baseFilter);
+      setFilter(baseFilter, selectedAccountId);
     }
   };
 
   const handleTagClick = (tagId: number) => {
-    setFilter({ tagId });
+    if (!selectedAccountId) return;
+    setFilter({ tagId }, selectedAccountId);
   };
 
   const userTags = tags.filter(t => !t.isSystem);

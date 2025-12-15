@@ -150,15 +150,15 @@ type EmailStore = {
   };
 
   // Actions
-  loadEmails: () => Promise<void>;
+  loadEmails: (accountId?: number) => Promise<void>;
   selectEmail: (id: number | null) => Promise<void>;
   markRead: (id: number, isRead: boolean) => Promise<void>;
   toggleStar: (id: number) => Promise<void>;
   archive: (id: number) => Promise<void>;
   deleteEmail: (id: number) => Promise<void>;
-  search: (query: string) => Promise<void>;
-  setFilter: (filter: Partial<EmailStore['filter']>) => void;
-  clearFilter: () => void;
+  search: (query: string, accountId: number) => Promise<void>;
+  setFilter: (filter: Partial<EmailStore['filter']>, accountId: number) => void;
+  clearFilter: (accountId: number) => void;
   downloadAttachment: (attachmentId: number, action?: 'open' | 'save') => Promise<void>;
   refreshSelectedTags: () => Promise<void>;
   getEmailTags: (emailId: number) => AppliedTag[];
@@ -177,14 +177,13 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   error: null,
   filter: {},
 
-  loadEmails: async () => {
+  loadEmails: async (accountId?: number) => {
     set({ loading: true, error: null });
     try {
       const { filter } = get();
-      const { selectedAccountId } = useAccountStore.getState();
 
-      // Don't load if no account selected
-      if (!selectedAccountId) {
+      // Don't load if no account provided
+      if (!accountId) {
         set({ emails: [], emailTagsMap: {}, loading: false });
         return;
       }
@@ -192,10 +191,10 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       let emails: Email[];
 
       if (filter.searchQuery) {
-        emails = await window.mailApi.emails.search(filter.searchQuery, 100, selectedAccountId);
+        emails = await window.mailApi.emails.search(filter.searchQuery, 100, accountId);
       } else {
         emails = await window.mailApi.emails.list({
-          accountId: selectedAccountId,
+          accountId,
           tagId: filter.tagId,
           folderPath: filter.folderPath,
           unreadOnly: filter.unreadOnly,
@@ -302,19 +301,19 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
     }));
   },
 
-  search: async (query) => {
+  search: async (query, accountId) => {
     set({ filter: { searchQuery: query } });
-    await get().loadEmails();
+    await get().loadEmails(accountId);
   },
 
-  setFilter: (filter) => {
+  setFilter: (filter, accountId) => {
     set(state => ({ filter: { ...state.filter, ...filter } }));
-    get().loadEmails();
+    get().loadEmails(accountId);
   },
 
-  clearFilter: () => {
+  clearFilter: (accountId) => {
     set({ filter: {} });
-    get().loadEmails();
+    get().loadEmails(accountId);
   },
 
   downloadAttachment: async (attachmentId, action = 'open') => {
@@ -384,7 +383,7 @@ type SyncStore = {
   progress: SyncProgress | null;
   lastSync: Date | null;
 
-  startSync: () => Promise<void>;
+  startSync: (accountId: number) => Promise<void>;
   startSyncAll: () => Promise<void>;
   setProgress: (progress: SyncProgress | null) => void;
 };
@@ -394,18 +393,13 @@ export const useSyncStore = create<SyncStore>((set) => ({
   progress: null,
   lastSync: null,
 
-  // Sync currently selected account only
-  startSync: async () => {
-    const { selectedAccountId } = useAccountStore.getState();
-    if (!selectedAccountId) return;
-
+  // Sync specified account - caller provides accountId (no cross-store coupling)
+  startSync: async (accountId: number) => {
     set({ syncing: true });
     try {
-      await window.mailApi.sync.start(selectedAccountId);
+      await window.mailApi.sync.start(accountId);
       set({ lastSync: new Date() });
-
-      // Reload emails after sync
-      useEmailStore.getState().loadEmails();
+      // Note: Caller should reload emails after sync completes
     } finally {
       set({ syncing: false, progress: null });
     }
@@ -417,9 +411,7 @@ export const useSyncStore = create<SyncStore>((set) => ({
     try {
       await window.mailApi.sync.startAll();
       set({ lastSync: new Date() });
-
-      // Reload emails after sync
-      useEmailStore.getState().loadEmails();
+      // Note: Caller should reload emails after sync completes
     } finally {
       set({ syncing: false, progress: null });
     }
@@ -464,8 +456,8 @@ export const useAccountStore = create<AccountStore>()(
 
       selectAccount: (id) => {
         set({ selectedAccountId: id });
-        // Reload emails when account changes
-        useEmailStore.getState().loadEmails();
+        // Note: Components should react to selectedAccountId changes via useEffect
+        // and call loadEmails() - this avoids cross-store coupling
       },
 
       getSelectedAccount: () => {
