@@ -469,6 +469,14 @@ function ClassificationSettings() {
       try {
         const modelList = await window.mailApi.llm.listModels();
         setModels(modelList);
+
+        // Auto-select first model if current model is empty or not in list
+        if (modelList.length > 0) {
+          const currentModelValid = modelList.some(m => m.id === config.model);
+          if (!currentModelValid) {
+            updateConfig({ model: modelList[0].id });
+          }
+        }
       } catch (error) {
         console.error('Failed to load models:', error);
         setModels([]);
@@ -508,6 +516,14 @@ function ClassificationSettings() {
         // Reload models after key is saved
         const modelList = await window.mailApi.llm.listModels();
         setModels(modelList);
+
+        // Auto-select first model if current model is empty or not in list
+        if (modelList.length > 0 && config) {
+          const currentModelValid = modelList.some(m => m.id === config.model);
+          if (!currentModelValid) {
+            updateConfig({ model: modelList[0].id });
+          }
+        }
       } else {
         setKeyError(result.error || 'Invalid API key');
       }
@@ -527,6 +543,14 @@ function ClassificationSettings() {
       if (status.connected) {
         const modelList = await window.mailApi.llm.listModels();
         setModels(modelList);
+
+        // Auto-select first model if current model is empty or not in list
+        if (modelList.length > 0 && config) {
+          const currentModelValid = modelList.some(m => m.id === config.model);
+          if (!currentModelValid) {
+            updateConfig({ model: modelList[0].id });
+          }
+        }
       }
     } finally {
       setTestingConnection(false);
