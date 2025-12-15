@@ -155,6 +155,7 @@ npm run typecheck     # TypeScript check without emit
 - Use TypeScript strict mode
 - Keep `core/` free of external dependencies
 - Name adapters as `create*()` factory functions
+- **Respect the Clean Architecture** - IPC handlers must call use cases, never adapters directly
 
 ## Testing
 
