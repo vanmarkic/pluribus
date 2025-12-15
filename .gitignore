@@ -49,3 +49,4 @@ coverage/
 tmp/
 temp/
 *.tmp
+tsconfig.main.tsbuildinfo
