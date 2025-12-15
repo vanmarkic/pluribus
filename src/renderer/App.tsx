@@ -421,6 +421,11 @@ function ClassificationSettings() {
   const [ollamaStatus, setOllamaStatus] = useState<{ connected: boolean; error?: string } | null>(null);
   const [testingConnection, setTestingConnection] = useState(false);
 
+  // Track initial provider and model to detect changes requiring restart
+  const [initialProvider, setInitialProvider] = useState<string | null>(null);
+  const [initialModel, setInitialModel] = useState<string | null>(null);
+  const [llmConfigChanged, setLlmConfigChanged] = useState(false);
+
   // Load config on mount
   useEffect(() => {
     const loadConfig = async () => {
@@ -433,6 +438,12 @@ function ClassificationSettings() {
         setConfig(llmConfig as typeof config);
         setHasApiKey(apiKeyStatus);
         setEmailBudget(budget);
+        // Capture initial provider and model on first load
+        if (initialProvider === null && llmConfig) {
+          const cfg = llmConfig as typeof config;
+          setInitialProvider(cfg?.provider ?? null);
+          setInitialModel(cfg?.model ?? null);
+        }
       } catch (error) {
         console.error('Failed to load classification settings:', error);
       } finally {
@@ -495,6 +506,12 @@ function ClassificationSettings() {
     try {
       await window.mailApi.config.set('llm', newConfig);
       setConfig(newConfig);
+      // Check if provider or model changed from initial
+      const providerChanged = updates.provider && updates.provider !== initialProvider;
+      const modelChanged = updates.model && updates.model !== initialModel;
+      if (providerChanged || modelChanged) {
+        setLlmConfigChanged(true);
+      }
     } catch (error) {
       console.error('Failed to save classification settings:', error);
     }
@@ -586,23 +603,37 @@ function ClassificationSettings() {
       </div>
 
       {/* Provider selection */}
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
-            Provider
+      <div>
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
+              Provider
+            </div>
+            <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+              Choose between cloud or local LLM
+            </div>
           </div>
-          <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
-            Choose between cloud or local LLM
-          </div>
+          <select
+            value={config.provider}
+            onChange={(e) => updateConfig({ provider: e.target.value as 'anthropic' | 'ollama', model: '' })}
+            className="input w-48"
+          >
+            <option value="anthropic">Anthropic Claude</option>
+            <option value="ollama">Local (Ollama)</option>
+          </select>
         </div>
-        <select
-          value={config.provider}
-          onChange={(e) => updateConfig({ provider: e.target.value as 'anthropic' | 'ollama', model: '' })}
-          className="input w-48"
-        >
-          <option value="anthropic">Anthropic Claude</option>
-          <option value="ollama">Local (Ollama)</option>
-        </select>
+        {llmConfigChanged && (
+          <div
+            className="mt-2 p-2 rounded text-sm"
+            style={{
+              background: '#fef3c7',
+              color: '#92400e',
+              border: '1px solid #fde68a'
+            }}
+          >
+            Restart the app for provider/model change to take effect
+          </div>
+        )}
       </div>
 
       {/* Anthropic API Key */}
