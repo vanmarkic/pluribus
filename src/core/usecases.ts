@@ -1081,6 +1081,30 @@ export const clearAllImageCache = (deps: Pick<Deps, 'imageCache'>) =>
   (): Promise<void> =>
     deps.imageCache.clearAllCache();
 
+export const autoLoadImagesForEmail = (deps: Pick<Deps, 'config' | 'imageCache'>) =>
+  async (emailId: number, blockedUrls: string[]): Promise<CachedImage[]> => {
+    // Check setting - block means no auto-load
+    const setting = deps.config.getRemoteImagesSetting();
+    if (setting === 'block') {
+      return [];
+    }
+
+    // Check if already loaded
+    const alreadyLoaded = await deps.imageCache.hasLoadedImages(emailId);
+    if (alreadyLoaded) {
+      return deps.imageCache.getCachedImages(emailId);
+    }
+
+    // For 'auto' or 'allow', fetch and cache
+    if (blockedUrls.length === 0) {
+      return [];
+    }
+
+    const cached = await deps.imageCache.cacheImages(emailId, blockedUrls);
+    await deps.imageCache.markImagesLoaded(emailId);
+    return cached;
+  };
+
 // ============================================
 // Contact Use Cases
 // ============================================
@@ -1210,6 +1234,7 @@ export function createUseCases(deps: Deps) {
     setRemoteImagesSetting: setRemoteImagesSetting(deps),
     clearImageCache: clearImageCache(deps),
     clearAllImageCache: clearAllImageCache(deps),
+    autoLoadImagesForEmail: autoLoadImagesForEmail(deps),
 
     // Drafts
     saveDraft: saveDraft(deps),
