@@ -78,6 +78,7 @@ export type AccountRepo = {
 // ============================================
 
 export type FolderRepo = {
+  findById: (id: number) => Promise<Folder | null>;
   getOrCreate: (accountId: number, path: string, name: string, uidValidity?: number) => Promise<Folder>;
   updateLastUid: (folderId: number, lastUid: number) => Promise<void>;
   clear: (folderId: number) => Promise<void>;
@@ -260,7 +261,7 @@ export type LLMProvider = {
   testConnection?: () => Promise<{ connected: boolean; error?: string }>;
 };
 
-export type RemoteImagesSetting = 'block' | 'allow';
+export type RemoteImagesSetting = 'block' | 'allow' | 'auto';
 
 export type ConfigStore = {
   getLLMConfig: () => LLMConfig;
