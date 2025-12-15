@@ -22,6 +22,6 @@
       "@app/*": ["./src/application/*"]
     }
   },
-  "include": ["src/renderer", "src/domain", "src/ports"],
+  "include": ["src/renderer", "src/core"],
   "references": [{ "path": "./tsconfig.main.json" }]
 }
