@@ -288,12 +288,11 @@ export function createMailSync(
             const emails: Omit<Email, 'id'>[] = [];
 
             for await (const msg of client.fetch(batch, {
-              uid: true,
               envelope: true,
               flags: true,
               bodyStructure: true,
               size: true,
-            })) {
+            }, { uid: true })) {
               if (!msg.envelope) continue;
 
               const email = mapImapToEmail(
@@ -382,7 +381,7 @@ export function createMailSync(
         let text = '';
         let html = '';
 
-        for await (const msg of client.fetch([email.uid], { uid: true, source: true })) {
+        for await (const msg of client.fetch([email.uid], { source: true }, { uid: true })) {
           if (msg.source) {
             const parsed = await simpleParser(msg.source);
             text = parsed.text || '';
