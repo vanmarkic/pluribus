@@ -57,6 +57,7 @@ const api = {
     classifyAndApply: (emailId: number) => ipcRenderer.invoke('llm:classifyAndApply', emailId),
     getBudget: () => ipcRenderer.invoke('llm:getBudget'),
     getEmailBudget: () => ipcRenderer.invoke('llm:getEmailBudget'),
+    listModels: () => ipcRenderer.invoke('llm:listModels') as Promise<{ id: string; displayName: string }[]>,
   },
 
   aiSort: {

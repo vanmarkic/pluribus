@@ -71,6 +71,7 @@ declare global {
         classifyAndApply: (emailId: number) => Promise<any>;
         getBudget: () => Promise<{ used: number; limit: number; allowed: boolean }>;
         getEmailBudget: () => Promise<{ used: number; limit: number; allowed: boolean }>;
+        listModels: () => Promise<{ id: string; displayName: string }[]>;
       };
       config: {
         get: (key: string) => Promise<any>;

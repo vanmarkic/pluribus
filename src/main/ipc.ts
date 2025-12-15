@@ -252,6 +252,15 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
 
   ipcMain.handle('llm:getEmailBudget', () => deps.classifier.getEmailBudget());
 
+  ipcMain.handle('llm:listModels', () => {
+    // TODO: When LLMProvider is implemented, call deps.llmProvider.listModels()
+    // For now, return hardcoded Anthropic models
+    return Promise.resolve([
+      { id: 'claude-haiku-4-20250514', displayName: 'Claude Haiku 4' },
+      { id: 'claude-sonnet-4-20250514', displayName: 'Claude Sonnet 4' },
+    ]);
+  });
+
   // ==========================================
   // AI Sort (Review Queue & Stats)
   // ==========================================

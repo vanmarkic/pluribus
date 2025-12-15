@@ -5,7 +5,7 @@
  * Clean design matching reference.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { EmailList } from './components/EmailList';
 import { DraftsList } from './components/DraftsList';
@@ -399,7 +399,8 @@ const COOLDOWN_OPTIONS = [
 
 function ClassificationSettings() {
   const [config, setConfig] = useState<{
-    model: 'claude-sonnet-4-20250514' | 'claude-haiku-4-20250514';
+    provider?: 'anthropic' | 'ollama';
+    model: string;
     dailyBudget: number;
     dailyEmailLimit: number;
     autoClassify: boolean;
@@ -410,7 +411,13 @@ function ClassificationSettings() {
   const [emailBudget, setEmailBudget] = useState<{ used: number; limit: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [initialModel, setInitialModel] = useState<string | null>(null);
-  const [modelChanged, setModelChanged] = useState(false);
+  const [initialProvider, setInitialProvider] = useState<string | null>(null);
+  const [llmConfigChanged, setLlmConfigChanged] = useState(false);
+  const [models, setModels] = useState<{ id: string; displayName: string }[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+
+  // In-memory cache for models per provider
+  const modelCache = useRef<Record<string, { id: string; displayName: string }[]>>({});
 
   // Load config on mount
   useEffect(() => {
@@ -424,9 +431,10 @@ function ClassificationSettings() {
         setConfig(llmConfig as typeof config);
         setHasApiKey(apiKeyStatus);
         setEmailBudget(budget);
-        // Capture initial model on first load
+        // Capture initial provider and model on first load
         if (initialModel === null && llmConfig) {
           setInitialModel((llmConfig as typeof config)?.model ?? null);
+          setInitialProvider((llmConfig as typeof config)?.provider ?? null);
         }
       } catch (error) {
         console.error('Failed to load classification settings:', error);
@@ -437,6 +445,43 @@ function ClassificationSettings() {
     loadConfig();
   }, []);
 
+  // Load models with caching
+  useEffect(() => {
+    if (!config) return;
+
+    const loadModels = async () => {
+      // Use provider as cache key (defaulting to 'anthropic' for now)
+      const cacheKey = config.provider || 'anthropic';
+
+      // Check cache first
+      if (modelCache.current[cacheKey]?.length > 0) {
+        setModels(modelCache.current[cacheKey]);
+        return;
+      }
+
+      // Only fetch if API key is configured (for Anthropic)
+      if (!hasApiKey && (!config.provider || config.provider === 'anthropic')) {
+        setModels([]);
+        return;
+      }
+
+      setLoadingModels(true);
+      try {
+        const modelList = await window.mailApi.llm.listModels();
+        // Cache the results
+        modelCache.current[cacheKey] = modelList;
+        setModels(modelList);
+      } catch (error) {
+        console.error('Failed to load models:', error);
+        setModels([]);
+      } finally {
+        setLoadingModels(false);
+      }
+    };
+
+    loadModels();
+  }, [config?.provider, hasApiKey]);
+
   // Save config changes
   const updateConfig = async (updates: Partial<NonNullable<typeof config>>) => {
     if (!config) return;
@@ -444,9 +489,16 @@ function ClassificationSettings() {
     try {
       await window.mailApi.config.set('llm', newConfig);
       setConfig(newConfig);
-      // Check if model changed from initial
-      if (updates.model && updates.model !== initialModel) {
-        setModelChanged(true);
+      // Check if model or provider changed from initial
+      const modelChanged = updates.model && updates.model !== initialModel;
+      const providerChanged = updates.provider && updates.provider !== initialProvider;
+      if (modelChanged || providerChanged) {
+        setLlmConfigChanged(true);
+      }
+      // Clear cache if provider changes
+      if (updates.provider && updates.provider !== config.provider) {
+        const cacheKey = config.provider || 'anthropic';
+        delete modelCache.current[cacheKey];
       }
     } catch (error) {
       console.error('Failed to save classification settings:', error);
@@ -487,19 +539,27 @@ function ClassificationSettings() {
               Model
             </div>
             <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
-              Choose between speed (Haiku) or quality (Sonnet)
+              {loadingModels ? 'Loading models...' : 'Choose between speed (Haiku) or quality (Sonnet)'}
             </div>
           </div>
           <select
             value={config.model}
-            onChange={(e) => updateConfig({ model: e.target.value as typeof config.model })}
+            onChange={(e) => updateConfig({ model: e.target.value })}
             className="input w-48"
+            disabled={loadingModels || models.length === 0}
           >
-            <option value="claude-haiku-4-20250514">Claude Haiku 4</option>
-            <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+            {loadingModels ? (
+              <option>Loading...</option>
+            ) : models.length === 0 ? (
+              <option>No models available</option>
+            ) : (
+              models.map(m => (
+                <option key={m.id} value={m.id}>{m.displayName}</option>
+              ))
+            )}
           </select>
         </div>
-        {modelChanged && (
+        {llmConfigChanged && (
           <div
             className="mt-2 p-2 rounded text-sm"
             style={{
@@ -508,7 +568,7 @@ function ClassificationSettings() {
               border: '1px solid #fde68a'
             }}
           >
-            Restart the app for model change to take effect
+            Restart the app for changes to take effect
           </div>
         )}
       </div>
