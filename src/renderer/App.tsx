@@ -399,16 +399,27 @@ const COOLDOWN_OPTIONS = [
 
 function ClassificationSettings() {
   const [config, setConfig] = useState<{
-    model: 'claude-sonnet-4-20250514' | 'claude-haiku-4-20250514';
+    provider: 'anthropic' | 'ollama';
+    model: string;
     dailyBudget: number;
     dailyEmailLimit: number;
     autoClassify: boolean;
     confidenceThreshold?: number;
     reclassifyCooldownDays?: number;
+    ollamaServerUrl?: string;
   } | null>(null);
   const [hasApiKey, setHasApiKey] = useState<boolean>(false);
   const [emailBudget, setEmailBudget] = useState<{ used: number; limit: number } | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // New state for provider features
+  const [models, setModels] = useState<{ id: string; displayName: string }[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [validatingKey, setValidatingKey] = useState(false);
+  const [keyError, setKeyError] = useState<string | null>(null);
+  const [ollamaStatus, setOllamaStatus] = useState<{ connected: boolean; error?: string } | null>(null);
+  const [testingConnection, setTestingConnection] = useState(false);
 
   // Load config on mount
   useEffect(() => {
@@ -431,6 +442,44 @@ function ClassificationSettings() {
     loadConfig();
   }, []);
 
+  // Load models when provider changes or API key is set
+  useEffect(() => {
+    if (!config) return;
+
+    const loadModels = async () => {
+      // For Anthropic, only load if API key is configured
+      if (config.provider === 'anthropic' && !hasApiKey) {
+        setModels([]);
+        return;
+      }
+
+      // For Ollama, check connection first
+      if (config.provider === 'ollama') {
+        setTestingConnection(true);
+        const status = await window.mailApi.llm.testConnection();
+        setOllamaStatus(status);
+        setTestingConnection(false);
+        if (!status.connected) {
+          setModels([]);
+          return;
+        }
+      }
+
+      setLoadingModels(true);
+      try {
+        const modelList = await window.mailApi.llm.listModels();
+        setModels(modelList);
+      } catch (error) {
+        console.error('Failed to load models:', error);
+        setModels([]);
+      } finally {
+        setLoadingModels(false);
+      }
+    };
+
+    loadModels();
+  }, [config?.provider, hasApiKey]);
+
   // Save config changes
   const updateConfig = async (updates: Partial<NonNullable<typeof config>>) => {
     if (!config) return;
@@ -440,6 +489,47 @@ function ClassificationSettings() {
       setConfig(newConfig);
     } catch (error) {
       console.error('Failed to save classification settings:', error);
+    }
+  };
+
+  // Validate and save API key
+  const handleSaveApiKey = async () => {
+    if (!apiKeyInput.trim()) return;
+
+    setValidatingKey(true);
+    setKeyError(null);
+
+    try {
+      const result = await window.mailApi.llm.validate(apiKeyInput);
+      if (result.valid) {
+        await window.mailApi.credentials.setApiKey('anthropic', apiKeyInput);
+        setHasApiKey(true);
+        setApiKeyInput('');
+        // Reload models after key is saved
+        const modelList = await window.mailApi.llm.listModels();
+        setModels(modelList);
+      } else {
+        setKeyError(result.error || 'Invalid API key');
+      }
+    } catch (error) {
+      setKeyError(String(error));
+    } finally {
+      setValidatingKey(false);
+    }
+  };
+
+  // Test Ollama connection
+  const handleTestOllama = async () => {
+    setTestingConnection(true);
+    try {
+      const status = await window.mailApi.llm.testConnection();
+      setOllamaStatus(status);
+      if (status.connected) {
+        const modelList = await window.mailApi.llm.listModels();
+        setModels(modelList);
+      }
+    } finally {
+      setTestingConnection(false);
     }
   };
 
@@ -453,6 +543,7 @@ function ClassificationSettings() {
 
   return (
     <div className="space-y-4">
+      {/* Auto-classify toggle */}
       <div className="flex items-center justify-between">
         <div>
           <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
@@ -470,25 +561,144 @@ function ClassificationSettings() {
         />
       </div>
 
+      {/* Provider selection */}
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
+            Provider
+          </div>
+          <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+            Choose between cloud or local LLM
+          </div>
+        </div>
+        <select
+          value={config.provider}
+          onChange={(e) => updateConfig({ provider: e.target.value as 'anthropic' | 'ollama', model: '' })}
+          className="input w-48"
+        >
+          <option value="anthropic">Anthropic Claude</option>
+          <option value="ollama">Local (Ollama)</option>
+        </select>
+      </div>
+
+      {/* Anthropic API Key */}
+      {config.provider === 'anthropic' && (
+        <div className="pt-4 border-t" style={{ borderColor: 'var(--color-border)' }}>
+          <div className="font-medium mb-2" style={{ color: 'var(--color-text-primary)' }}>
+            API Key
+          </div>
+          {hasApiKey ? (
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <div
+                  className="w-2 h-2 rounded-full"
+                  style={{ background: 'var(--color-success)' }}
+                />
+                <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                  sk-ant-••••••••••••
+                </span>
+              </div>
+              <button
+                onClick={() => setHasApiKey(false)}
+                className="text-sm px-3 py-1 rounded"
+                style={{ color: 'var(--color-primary)', background: 'var(--color-bg-secondary)' }}
+              >
+                Change
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={apiKeyInput}
+                  onChange={(e) => setApiKeyInput(e.target.value)}
+                  placeholder="sk-ant-..."
+                  className="input flex-1"
+                />
+                <button
+                  onClick={handleSaveApiKey}
+                  disabled={validatingKey || !apiKeyInput.trim()}
+                  className="btn btn-primary"
+                >
+                  {validatingKey ? 'Validating...' : 'Save'}
+                </button>
+              </div>
+              {keyError && (
+                <div className="text-sm" style={{ color: 'var(--color-danger)' }}>
+                  {keyError}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Ollama Server URL */}
+      {config.provider === 'ollama' && (
+        <div className="pt-4 border-t" style={{ borderColor: 'var(--color-border)' }}>
+          <div className="font-medium mb-2" style={{ color: 'var(--color-text-primary)' }}>
+            Server URL
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={config.ollamaServerUrl || 'http://localhost:11434'}
+              onChange={(e) => updateConfig({ ollamaServerUrl: e.target.value })}
+              className="input flex-1"
+            />
+            <button
+              onClick={handleTestOllama}
+              disabled={testingConnection}
+              className="btn"
+              style={{ background: 'var(--color-bg-secondary)' }}
+            >
+              {testingConnection ? 'Testing...' : 'Test'}
+            </button>
+          </div>
+          {ollamaStatus && (
+            <div className="flex items-center gap-2 mt-2">
+              <div
+                className="w-2 h-2 rounded-full"
+                style={{ background: ollamaStatus.connected ? 'var(--color-success)' : 'var(--color-danger)' }}
+              />
+              <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                {ollamaStatus.connected ? 'Connected' : ollamaStatus.error || 'Not connected'}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Model selection */}
       <div className="flex items-center justify-between">
         <div>
           <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
             Model
           </div>
           <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
-            Choose between speed (Haiku) or quality (Sonnet)
+            {config.provider === 'anthropic' ? 'Choose speed vs quality' : 'Select installed model'}
           </div>
         </div>
         <select
           value={config.model}
-          onChange={(e) => updateConfig({ model: e.target.value as typeof config.model })}
+          onChange={(e) => updateConfig({ model: e.target.value })}
           className="input w-48"
+          disabled={loadingModels || models.length === 0}
         >
-          <option value="claude-haiku-4-20250514">Claude Haiku 4</option>
-          <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+          {loadingModels ? (
+            <option>Loading...</option>
+          ) : models.length === 0 ? (
+            <option>{config.provider === 'anthropic' ? 'Configure API key first' : 'No models found'}</option>
+          ) : (
+            models.map(m => (
+              <option key={m.id} value={m.id}>{m.displayName}</option>
+            ))
+          )}
         </select>
       </div>
 
+      {/* Daily token budget */}
       <div className="flex items-center justify-between">
         <div>
           <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
@@ -508,6 +718,7 @@ function ClassificationSettings() {
         />
       </div>
 
+      {/* Daily email limit */}
       <div className="flex items-center justify-between">
         <div>
           <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
@@ -527,6 +738,7 @@ function ClassificationSettings() {
         />
       </div>
 
+      {/* Confidence threshold */}
       <div className="flex items-center justify-between">
         <div>
           <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
@@ -547,6 +759,7 @@ function ClassificationSettings() {
         </select>
       </div>
 
+      {/* Reclassify cooldown */}
       <div className="flex items-center justify-between">
         <div>
           <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
@@ -567,31 +780,10 @@ function ClassificationSettings() {
         </select>
       </div>
 
-      <div
-        className="pt-4 border-t"
-        style={{ borderColor: 'var(--color-border)' }}
-      >
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
-            API Key Status
-          </div>
-          <div className="flex items-center gap-2">
-            <div
-              className="w-2 h-2 rounded-full"
-              style={{ background: hasApiKey ? 'var(--color-success)' : 'var(--color-danger)' }}
-            />
-            <span className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-              {hasApiKey ? 'Configured' : 'Not configured'}
-            </span>
-          </div>
-        </div>
-        {!hasApiKey && (
-          <div className="text-sm mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
-            Set your Anthropic API key in the terminal to enable AI classification
-          </div>
-        )}
+      {/* Usage section */}
+      <div className="pt-4 border-t" style={{ borderColor: 'var(--color-border)' }}>
         {emailBudget && (
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between mb-3">
             <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
               Daily usage
             </div>
@@ -599,6 +791,18 @@ function ClassificationSettings() {
               {emailBudget.used} / {emailBudget.limit} emails classified today
             </span>
           </div>
+        )}
+        {config.provider === 'anthropic' && (
+          <a
+            href="https://console.anthropic.com/settings/usage"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-sm flex items-center gap-1"
+            style={{ color: 'var(--color-primary)' }}
+          >
+            View usage in Anthropic Console
+            <span>→</span>
+          </a>
         )}
       </div>
     </div>
