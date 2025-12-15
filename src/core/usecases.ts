@@ -7,7 +7,7 @@
  */
 
 import type { Deps, AccountInput, SmtpConfig, EmailDraft, SendResult, SyncResult, CachedImage, RemoteImagesSetting, DraftRepo } from './ports';
-import type { Email, EmailBody, Tag, AppliedTag, Account, ListEmailsOptions, SyncOptions, Classification, ClassificationState, ClassificationStats, ClassificationFeedback, ConfusedPattern, Draft, DraftInput, ListDraftsOptions } from './domain';
+import type { Email, EmailBody, Tag, AppliedTag, Account, ListEmailsOptions, SyncOptions, Classification, ClassificationState, ClassificationStats, ClassificationFeedback, ConfusedPattern, Draft, DraftInput, ListDraftsOptions, RecentContact } from './domain';
 import { extractDomain, extractSubjectPattern } from './domain';
 
 // ============================================
@@ -1082,6 +1082,22 @@ export const clearAllImageCache = (deps: Pick<Deps, 'imageCache'>) =>
     deps.imageCache.clearAllCache();
 
 // ============================================
+// Contact Use Cases
+// ============================================
+
+export const getRecentContacts = (deps: Pick<Deps, 'contacts'>) =>
+  (limit?: number): Promise<RecentContact[]> =>
+    deps.contacts.getRecent(limit);
+
+export const searchContacts = (deps: Pick<Deps, 'contacts'>) =>
+  (query: string, limit?: number): Promise<RecentContact[]> =>
+    deps.contacts.search(query, limit);
+
+export const recordContactUsage = (deps: Pick<Deps, 'contacts'>) =>
+  (addresses: string[]): Promise<void> =>
+    deps.contacts.recordUsage(addresses);
+
+// ============================================
 // Draft Use Cases
 // ============================================
 
@@ -1200,6 +1216,11 @@ export function createUseCases(deps: Deps) {
     getDraft: getDraft(deps),
     listDrafts: listDrafts(deps),
     deleteDraft: deleteDraft(deps),
+
+    // Contacts
+    getRecentContacts: getRecentContacts(deps),
+    searchContacts: searchContacts(deps),
+    recordContactUsage: recordContactUsage(deps),
   };
 }
 

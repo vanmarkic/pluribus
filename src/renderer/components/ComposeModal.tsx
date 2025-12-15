@@ -11,6 +11,7 @@ import type { Email, EmailBody } from '../../core/domain';
 import { formatSender } from '../../core/domain';
 import { useAccountStore } from '../stores';
 import { debounce } from '../utils/debounce';
+import { ContactAutocomplete } from './ContactAutocomplete';
 
 export type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward';
 
@@ -213,17 +214,17 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
   }, [to, cc, bcc, subject, body, attachments, hasUserEdited]);
 
   // Input change handlers that mark form as user-edited
-  const handleToChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleToChange = (value: string) => {
     setHasUserEdited(true);
-    setTo(e.target.value);
+    setTo(value);
   };
-  const handleCcChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleCcChange = (value: string) => {
     setHasUserEdited(true);
-    setCc(e.target.value);
+    setCc(value);
   };
-  const handleBccChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBccChange = (value: string) => {
     setHasUserEdited(true);
-    setBcc(e.target.value);
+    setBcc(value);
   };
   const handleSubjectChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setHasUserEdited(true);
@@ -437,13 +438,11 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
               style={{ borderColor: 'var(--color-border)' }}
             >
               <label className="w-16 text-sm" style={{ color: 'var(--color-text-tertiary)' }}>To</label>
-              <input
-                type="text"
+              <ContactAutocomplete
                 value={to}
                 onChange={handleToChange}
-                className="flex-1 outline-none text-sm bg-transparent"
-                style={{ color: 'var(--color-text-primary)' }}
                 placeholder="recipient@example.com"
+                label="To"
               />
               {!showCc && (
                 <button
@@ -463,13 +462,11 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
                 style={{ borderColor: 'var(--color-border)' }}
               >
                 <label className="w-16 text-sm" style={{ color: 'var(--color-text-tertiary)' }}>Cc</label>
-                <input
-                  type="text"
+                <ContactAutocomplete
                   value={cc}
                   onChange={handleCcChange}
-                  className="flex-1 outline-none text-sm bg-transparent"
-                  style={{ color: 'var(--color-text-primary)' }}
                   placeholder="cc@example.com"
+                  label="Cc"
                 />
               </div>
             )}
@@ -481,13 +478,11 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
                 style={{ borderColor: 'var(--color-border)' }}
               >
                 <label className="w-16 text-sm" style={{ color: 'var(--color-text-tertiary)' }}>Bcc</label>
-                <input
-                  type="text"
+                <ContactAutocomplete
                   value={bcc}
                   onChange={handleBccChange}
-                  className="flex-1 outline-none text-sm bg-transparent"
-                  style={{ color: 'var(--color-text-primary)' }}
                   placeholder="bcc@example.com"
+                  label="Bcc"
                 />
               </div>
             )}

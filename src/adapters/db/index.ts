@@ -8,8 +8,8 @@
 import Database from 'better-sqlite3';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { EmailRepo, AttachmentRepo, TagRepo, AccountRepo, FolderRepo, DraftRepo } from '../../core/ports';
-import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, Folder, ListEmailsOptions, Draft, DraftInput, DraftAttachment, DraftAttachmentInput, ListDraftsOptions } from '../../core/domain';
+import type { EmailRepo, AttachmentRepo, TagRepo, AccountRepo, FolderRepo, DraftRepo, ContactRepo } from '../../core/ports';
+import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, Folder, ListEmailsOptions, Draft, DraftInput, DraftAttachment, DraftAttachmentInput, ListDraftsOptions, RecentContact } from '../../core/domain';
 
 export { createClassificationStateRepo } from './classification-state';
 
@@ -57,6 +57,43 @@ export function getDb(): Database.Database {
 export function closeDb(): void {
   db?.close();
   db = null;
+}
+
+// ============================================
+// SQL Safety Utilities
+// ============================================
+
+/**
+ * Escapes special characters in LIKE patterns to prevent SQL injection.
+ * Escapes: % (matches any string), _ (matches any character), \ (escape char)
+ */
+function escapeLike(input: string): string {
+  return input.replace(/[%_\\]/g, '\\$&');
+}
+
+/**
+ * Sanitizes FTS query input to prevent injection attacks.
+ * - Removes FTS special operators: * " ( ) { } [ ] ^ ~ \
+ * - Removes boolean operators: AND, OR, NOT, NEAR
+ * - Limits query length to prevent DoS
+ * - Splits into individual terms and wraps each in quotes
+ */
+function escapeFtsQuery(query: string): string | null {
+  // Remove FTS special characters and boolean operators
+  const sanitized = query
+    .replace(/[*"(){}[\]^~\\]/g, ' ')  // Remove FTS special chars
+    .replace(/\b(AND|OR|NOT|NEAR)\b/gi, ' ')  // Remove boolean operators
+    .trim()
+    .slice(0, 200);  // Limit query length
+
+  if (!sanitized) return null;
+
+  // Split into terms, filter short terms, and limit count
+  const terms = sanitized.split(/\s+/).filter(t => t.length >= 2).slice(0, 10);
+  if (terms.length === 0) return null;
+
+  // Wrap each term in quotes and add prefix wildcard for partial matching
+  return terms.map(t => `"${t}"*`).join(' ');
 }
 
 // ============================================
@@ -203,8 +240,9 @@ export function createEmailRepo(): EmailRepo {
         // Join with folders table to filter by folder path pattern
         joins.push('JOIN folders f ON e.folder_id = f.id');
         // Match folder path containing the pattern (e.g., 'Sent' matches 'Sent', 'Sent Items', '[Gmail]/Sent Mail')
-        conditions.push('f.path LIKE ?');
-        params.push(`%${folderPath}%`);
+        // Escape LIKE special characters to prevent SQL injection
+        conditions.push("f.path LIKE ? ESCAPE '\\'");
+        params.push(`%${escapeLike(folderPath)}%`);
       }
       if (unreadOnly) conditions.push('e.is_read = 0');
       if (starredOnly) conditions.push('e.is_starred = 1');
@@ -221,21 +259,9 @@ export function createEmailRepo(): EmailRepo {
     },
 
     async search(query, limit = 100, accountId?: number) {
-      // Sanitize FTS query to prevent DoS via complex patterns
-      // Remove special FTS operators and limit wildcards
-      const sanitized = query
-        .replace(/[*"(){}[\]^~\\]/g, ' ')  // Remove FTS special chars
-        .replace(/\b(AND|OR|NOT|NEAR)\b/gi, ' ')  // Remove boolean operators
-        .trim()
-        .slice(0, 200);  // Limit query length
-
-      if (!sanitized) return [];
-
-      // Use simple prefix matching with sanitized terms
-      const terms = sanitized.split(/\s+/).filter(t => t.length >= 2).slice(0, 10);
-      if (terms.length === 0) return [];
-
-      const ftsQuery = terms.map(t => `"${t}"*`).join(' ');
+      // Use the escapeFtsQuery utility to sanitize input
+      const ftsQuery = escapeFtsQuery(query);
+      if (!ftsQuery) return [];
 
       // Build query with optional account filter
       let sql = `
@@ -678,6 +704,72 @@ export function createDraftRepo(): DraftRepo {
     async delete(id) {
       // Attachments are deleted via CASCADE
       getDb().prepare('DELETE FROM drafts WHERE id = ?').run(id);
+    },
+  };
+}
+
+// ============================================
+// Contact Repository
+// ============================================
+
+function mapContact(row: any): RecentContact {
+  const lastUsed = new Date(row.last_used_at);
+  const daysSince = (Date.now() - lastUsed.getTime()) / (1000 * 60 * 60 * 24);
+  const recencyMultiplier = 1 / (1 + daysSince / 30);
+
+  return {
+    address: row.address,
+    name: row.name,
+    useCount: row.use_count,
+    lastUsed,
+    score: row.use_count * recencyMultiplier,
+  };
+}
+
+export function createContactRepo(): ContactRepo {
+  return {
+    async getRecent(limit = 20) {
+      const rows = getDb().prepare(`
+        SELECT address, name, use_count, last_used_at
+        FROM recent_contacts
+        ORDER BY (use_count * (1.0 / (1 + (julianday('now') - julianday(last_used_at)) / 30))) DESC
+        LIMIT ?
+      `).all(limit);
+      return rows.map(mapContact);
+    },
+
+    async search(query, limit = 10) {
+      // Escape LIKE special characters to prevent SQL injection
+      const escaped = escapeLike(query.toLowerCase());
+      const pattern = `%${escaped}%`;
+      const rows = getDb().prepare(`
+        SELECT address, name, use_count, last_used_at
+        FROM recent_contacts
+        WHERE lower(address) LIKE ? ESCAPE '\\' OR lower(name) LIKE ? ESCAPE '\\'
+        ORDER BY (use_count * (1.0 / (1 + (julianday('now') - julianday(last_used_at)) / 30))) DESC
+        LIMIT ?
+      `).all(pattern, pattern, limit);
+      return rows.map(mapContact);
+    },
+
+    async recordUsage(addresses) {
+      if (addresses.length === 0) return;
+
+      const stmt = getDb().prepare(`
+        INSERT INTO recent_contacts (address, name, use_count, last_used_at)
+        VALUES (?, ?, 1, datetime('now'))
+        ON CONFLICT(address) DO UPDATE SET
+          use_count = use_count + 1,
+          last_used_at = datetime('now'),
+          name = COALESCE(excluded.name, name)
+      `);
+
+      const transaction = getDb().transaction(() => {
+        for (const addr of addresses) {
+          stmt.run(addr.toLowerCase(), null);
+        }
+      });
+      transaction();
     },
   };
 }

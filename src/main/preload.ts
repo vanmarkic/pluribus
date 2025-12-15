@@ -157,6 +157,11 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('drafts:delete', id),
   },
 
+  contacts: {
+    getRecent: (limit?: number) => ipcRenderer.invoke('contacts:getRecent', limit),
+    search: (query: string, limit?: number) => ipcRenderer.invoke('contacts:search', query, limit),
+  },
+
   on: (channel: string, callback: Callback) => {
     if (!listeners.has(channel)) listeners.set(channel, new Set());
     listeners.get(channel)!.add(callback);

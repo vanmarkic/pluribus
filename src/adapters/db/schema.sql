@@ -215,3 +215,14 @@ CREATE TABLE IF NOT EXISTS confused_patterns (
 );
 
 CREATE INDEX IF NOT EXISTS idx_confused_patterns_count ON confused_patterns(dismissal_count DESC);
+
+-- Recent Contacts (for autocomplete)
+CREATE TABLE IF NOT EXISTS recent_contacts (
+  address TEXT PRIMARY KEY,
+  name TEXT,
+  use_count INTEGER NOT NULL DEFAULT 1,
+  last_used_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_recent_contacts_score
+  ON recent_contacts(use_count DESC, last_used_at DESC);

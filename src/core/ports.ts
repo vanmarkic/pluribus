@@ -5,7 +5,7 @@
  * This is dependency inversion without the ceremony.
  */
 
-import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, Folder, ListEmailsOptions, Classification, SyncProgress, SyncOptions, Draft, DraftInput, ListDraftsOptions, ClassificationState, ClassificationFeedback, ConfusedPattern, ClassificationStats, ClassificationStatus } from './domain';
+import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, Folder, ListEmailsOptions, Classification, SyncProgress, SyncOptions, Draft, DraftInput, ListDraftsOptions, ClassificationState, ClassificationFeedback, ConfusedPattern, ClassificationStats, ClassificationStatus, RecentContact } from './domain';
 
 // ============================================
 // Email Repository
@@ -81,6 +81,16 @@ export type FolderRepo = {
   getOrCreate: (accountId: number, path: string, name: string, uidValidity?: number) => Promise<Folder>;
   updateLastUid: (folderId: number, lastUid: number) => Promise<void>;
   clear: (folderId: number) => Promise<void>;
+};
+
+// ============================================
+// Contact Repository
+// ============================================
+
+export type ContactRepo = {
+  getRecent: (limit?: number) => Promise<RecentContact[]>;
+  search: (query: string, limit?: number) => Promise<RecentContact[]>;
+  recordUsage: (addresses: string[]) => Promise<void>;
 };
 
 // ============================================
@@ -336,6 +346,7 @@ export type Deps = {
   accounts: AccountRepo;
   folders: FolderRepo;
   drafts: DraftRepo;
+  contacts: ContactRepo;
   sync: MailSync;
   classifier: Classifier;
   classificationState: ClassificationStateRepo;

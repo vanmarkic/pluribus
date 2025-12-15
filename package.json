@@ -39,7 +39,7 @@
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist"
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist"
     },
     "dmg": {
       "title": "${productName}-${version}",
@@ -72,6 +72,7 @@
     "mailparser": "^3.7.1",
     "nodemailer": "^6.9.15",
     "obra-icons-react": "^1.23.1",
+    "sanitize-filename": "^1.6.3",
     "tailwind-merge": "^2.6.0",
     "zustand": "^4.5.0"
   },

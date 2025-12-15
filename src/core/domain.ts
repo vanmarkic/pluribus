@@ -201,6 +201,18 @@ export type ListDraftsOptions = {
 };
 
 // ============================================
+// Contacts
+// ============================================
+
+export type RecentContact = {
+  address: string;
+  name: string | null;
+  score: number;
+  lastUsed: Date;
+  useCount: number;
+};
+
+// ============================================
 // Business Logic (pure functions)
 // ============================================
 

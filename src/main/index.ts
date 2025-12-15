@@ -15,7 +15,7 @@ const CSP = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",  // Tailwind needs inline styles
-  "img-src 'self' data: https:",
+  "img-src 'self' data: file:",  // Blocks tracking pixels - only allow local/cached images
   "font-src 'self'",
   "connect-src 'self' https://api.anthropic.com",  // LLM API
   "frame-src 'none'",

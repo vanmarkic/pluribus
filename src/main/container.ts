@@ -13,7 +13,7 @@ import Store from 'electron-store';
 import { createUseCases, type UseCases, type Deps } from '../core';
 
 // Adapters
-import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createTagRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo } from '../adapters/db';
+import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createTagRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo } from '../adapters/db';
 import { createMailSync } from '../adapters/imap';
 import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier } from '../adapters/llm';
 import { createSecureStorage } from '../adapters/keychain';
@@ -109,6 +109,7 @@ export function createContainer(): Container {
   const accounts = createAccountRepo();
   const folders = createFolderRepo();
   const drafts = createDraftRepo();
+  const contacts = createContactRepo();
   const classificationState = createClassificationStateRepo(getDb);
 
   // Create services (with dependencies)
@@ -242,6 +243,7 @@ export function createContainer(): Container {
     accounts,
     folders,
     drafts,
+    contacts,
     classificationState,
     sync,
     classifier,

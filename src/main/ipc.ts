@@ -9,8 +9,31 @@ import { ipcMain, BrowserWindow, shell } from 'electron';
 import { app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
+import sanitizeFilename = require('sanitize-filename');
 import type { Container } from './container';
 import type { DraftInput } from '../core/domain';
+
+// ==========================================
+// Rate Limiting
+// ==========================================
+
+const rateLimiters = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(handler: string, maxPerMinute: number): void {
+  const now = Date.now();
+  const limiter = rateLimiters.get(handler);
+
+  if (!limiter || now > limiter.resetAt) {
+    rateLimiters.set(handler, { count: 1, resetAt: now + 60000 });
+    return;
+  }
+
+  if (limiter.count >= maxPerMinute) {
+    throw new Error('Rate limit exceeded. Please try again later.');
+  }
+
+  limiter.count++;
+}
 
 // ==========================================
 // Input Validation Helpers
@@ -123,6 +146,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   });
 
   ipcMain.handle('attachments:download', async (_, attachmentId, action) => {
+    checkRateLimit('attachments:download', 30);
     const id = assertPositiveInt(attachmentId, 'attachmentId');
     const actionType = action ? assertString(action, 'action', 10) : 'open';
     if (!['open', 'save'].includes(actionType)) throw new Error('Invalid action');
@@ -140,8 +164,10 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
       fs.mkdirSync(tempDir, { recursive: true });
     }
 
-    // Use actual filename
-    const tempPath = path.join(tempDir, `${id}-${attachment.filename}`);
+    // Sanitize filename to prevent path traversal attacks
+    const safeFilename = sanitizeFilename(attachment.filename, { replacement: '_' });
+    if (!safeFilename) throw new Error('Invalid attachment filename');
+    const tempPath = path.join(tempDir, `${id}-${safeFilename}`);
 
     fs.writeFileSync(tempPath, content);
 
@@ -200,6 +226,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   // ==========================================
 
   ipcMain.handle('sync:start', async (_, accountId, opts) => {
+    checkRateLimit('sync:start', 10);
     const validated: Record<string, unknown> = {};
     if (opts && typeof opts === 'object') {
       const o = opts as Record<string, unknown>;
@@ -234,6 +261,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   // ==========================================
 
   ipcMain.handle('llm:classify', async (_, emailId) => {
+    checkRateLimit('llm:classify', 30);
     const id = assertPositiveInt(emailId, 'emailId');
     window.webContents.send('llm:classifying', { emailId: id });
     try {
@@ -287,6 +315,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   });
 
   ipcMain.handle('llm:startBackgroundClassification', async (_, emailIds: number[]) => {
+    checkRateLimit('llm:startBackgroundClassification', 5);
     if (!Array.isArray(emailIds)) {
       throw new Error('emailIds must be an array');
     }
@@ -419,6 +448,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   });
 
   ipcMain.handle('aiSort:classifyUnprocessed', async () => {
+    checkRateLimit('aiSort:classifyUnprocessed', 5);
     const result = await useCases.classifyUnprocessed();
     // Stop Ollama after classification batch completes to free resources
     const llmConfig = container.config.get('llm');
@@ -637,8 +667,9 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   // ==========================================
 
   ipcMain.handle('send:email', async (_, accountId, draft) => {
+    checkRateLimit('send:email', 20);
     const id = assertPositiveInt(accountId, 'accountId');
-    
+
     if (!draft || typeof draft !== 'object') throw new Error('Invalid draft');
     const d = draft as Record<string, unknown>;
     
@@ -673,8 +704,9 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   });
 
   ipcMain.handle('send:reply', async (_, emailId, body, replyAll) => {
+    checkRateLimit('send:reply', 20);
     const id = assertPositiveInt(emailId, 'emailId');
-    
+
     if (!body || typeof body !== 'object') throw new Error('Invalid body');
     const b = body as Record<string, unknown>;
     
@@ -687,8 +719,9 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   });
 
   ipcMain.handle('send:forward', async (_, emailId, to, body) => {
+    checkRateLimit('send:forward', 20);
     const id = assertPositiveInt(emailId, 'emailId');
-    
+
     if (!Array.isArray(to) || to.length === 0) throw new Error('Invalid recipients');
     const recipients = (to as string[]).map(addr => assertString(addr, 'to', 200));
     
@@ -821,5 +854,20 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
 
   ipcMain.handle('drafts:delete', (_, id) => {
     return useCases.deleteDraft(assertPositiveInt(id, 'id'));
+  });
+
+  // ==========================================
+  // Contacts
+  // ==========================================
+
+  ipcMain.handle('contacts:getRecent', (_, limit) => {
+    const l = limit !== undefined ? assertPositiveInt(limit, 'limit') : undefined;
+    return useCases.getRecentContacts(l);
+  });
+
+  ipcMain.handle('contacts:search', (_, query, limit) => {
+    const q = assertString(query, 'query', 100);
+    const l = limit !== undefined ? assertPositiveInt(limit, 'limit') : undefined;
+    return useCases.searchContacts(q, l);
   });
 }

@@ -6,7 +6,7 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, SyncProgress, Draft, DraftInput, ClassificationStats, ClassificationFeedback, ConfusedPattern, ClassificationState } from '../../core/domain';
+import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, SyncProgress, Draft, DraftInput, ClassificationStats, ClassificationFeedback, ConfusedPattern, ClassificationState, RecentContact } from '../../core/domain';
 
 // Type for review queue items - matches backend PendingReviewItem
 // ClassificationState fields at top level, email nested
@@ -117,6 +117,10 @@ declare global {
         getRecentActivity: (limit?: number, accountId?: number) => Promise<ClassificationFeedback[]>;
         classifyUnprocessed: () => Promise<number>;
         clearConfusedPatterns: () => Promise<void>;
+      };
+      contacts: {
+        getRecent: (limit?: number) => Promise<RecentContact[]>;
+        search: (query: string, limit?: number) => Promise<RecentContact[]>;
       };
       on: (channel: string, callback: (...args: any[]) => void) => void;
       off: (channel: string, callback: (...args: any[]) => void) => void;
