@@ -153,21 +153,26 @@ export function EmailViewer() {
     return result;
   }, [body?.html]);
 
-  // Check if images were previously loaded for this email
+  // Check if images should be auto-loaded for this email
   useEffect(() => {
     if (!email) return;
 
-    const checkImagesLoaded = async () => {
+    const checkAndAutoLoad = async () => {
       try {
-        // First check global setting
         const setting = await window.mailApi.images.getSetting();
+
+        if (setting === 'block') {
+          setImagesLoaded(false);
+          return;
+        }
+
         if (setting === 'allow') {
-          // Auto-load if global setting allows
+          // 'allow' loads directly from remote - no caching
           setImagesLoaded(true);
           return;
         }
 
-        // Check if user previously loaded images for this email
+        // 'auto' - check if already loaded, otherwise will auto-load
         const loaded = await window.mailApi.images.hasLoaded(email.id);
         setImagesLoaded(loaded);
       } catch (err) {
@@ -175,7 +180,7 @@ export function EmailViewer() {
       }
     };
 
-    checkImagesLoaded();
+    checkAndAutoLoad();
   }, [email?.id]);
 
   // Load images when imagesLoaded becomes true and we have blocked URLs
@@ -210,6 +215,50 @@ export function EmailViewer() {
 
     loadImages();
   }, [email?.id, imagesLoaded, blockedUrls]);
+
+  // Auto-load images when setting is 'auto' and we have blocked URLs
+  useEffect(() => {
+    if (!email || imagesLoaded || blockedUrls.length === 0) return;
+
+    let cancelled = false;
+    const timeoutId = setTimeout(async () => {
+      if (cancelled) return;
+
+      try {
+        const setting = await window.mailApi.images.getSetting();
+        if (setting !== 'auto') return;
+
+        setLoadingImages(true);
+        const cached = await window.mailApi.images.autoLoad(email.id, blockedUrls);
+
+        if (cancelled || !bodyContainerRef.current) return;
+
+        // Create URL mapping and update DOM
+        const urlMap = new Map(cached.map(c => [c.url, c.localPath]));
+        const blockedImages = bodyContainerRef.current.querySelectorAll('img[data-original-src]');
+        blockedImages.forEach((img) => {
+          const originalSrc = img.getAttribute('data-original-src');
+          if (originalSrc && urlMap.has(originalSrc)) {
+            img.setAttribute('src', urlMap.get(originalSrc)!);
+            img.removeAttribute('data-original-src');
+            img.setAttribute('alt', '');
+            img.classList.remove('blocked-image');
+          }
+        });
+
+        setImagesLoaded(true);
+      } catch (err) {
+        console.error('Failed to auto-load images:', err);
+      } finally {
+        if (!cancelled) setLoadingImages(false);
+      }
+    }, 200); // 200ms debounce for rapid email switching
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
+  }, [email?.id, blockedUrls, imagesLoaded]);
 
   // Handle loading images when user clicks the banner
   const handleLoadImages = useCallback(async () => {
