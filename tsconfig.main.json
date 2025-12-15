@@ -20,5 +20,5 @@
     "src/adapters/**/*",
     "src/main/**/*"
   ],
-  "exclude": ["node_modules", "dist", "src/renderer"]
+  "exclude": ["node_modules", "dist", "src/renderer", "**/*.test.ts"]
 }

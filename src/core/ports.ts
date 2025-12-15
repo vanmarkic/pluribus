@@ -221,6 +221,8 @@ export type LLMConfig = {
   reclassifyCooldownDays: number;
   // Ollama-specific
   ollamaServerUrl?: string;
+  // Parallelism for local models (Ollama) - default 1 for Anthropic (rate limited)
+  classificationConcurrency?: number;
 };
 
 // ============================================

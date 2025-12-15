@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { Email, EmailBody, Tag, AppliedTag, Account, Classification } from './domain';
-import type { EmailRepo, TagRepo, AccountRepo, MailSync, Classifier, SecureStorage, MailSender, ConfigStore, SmtpConfig, ClassificationStateRepo, LLMConfig } from './ports';
+import type { EmailRepo, TagRepo, AccountRepo, MailSync, Classifier, SecureStorage, MailSender, ConfigStore, SmtpConfig, ClassificationStateRepo, LLMConfig, LLMProvider, BackgroundTaskManager, TaskState } from './ports';
 import {
   listEmails,
   getEmail,
@@ -44,6 +44,10 @@ import {
   dismissClassification,
   getConfusedPatterns,
   getPendingReviewCount,
+  isLLMConfigured,
+  startBackgroundClassification,
+  getBackgroundTaskStatus,
+  clearBackgroundTask,
 } from './usecases';
 
 // ============================================
@@ -245,6 +249,25 @@ function createMockClassificationStateRepo(overrides: Partial<ClassificationStat
     updateConfusedPattern: vi.fn().mockResolvedValue(undefined),
     clearConfusedPatterns: vi.fn().mockResolvedValue(undefined),
     listRecentFeedback: vi.fn().mockResolvedValue([]),
+    ...overrides,
+  };
+}
+
+function createMockLLMProvider(overrides: Partial<LLMProvider> = {}): LLMProvider {
+  return {
+    type: 'anthropic',
+    validateKey: vi.fn().mockResolvedValue({ valid: true }),
+    listModels: vi.fn().mockResolvedValue([{ id: 'claude-3', displayName: 'Claude 3' }]),
+    testConnection: vi.fn().mockResolvedValue({ connected: true }),
+    ...overrides,
+  };
+}
+
+function createMockBackgroundTaskManager(overrides: Partial<BackgroundTaskManager> = {}): BackgroundTaskManager {
+  return {
+    start: vi.fn(),
+    getStatus: vi.fn().mockReturnValue(null),
+    clear: vi.fn(),
     ...overrides,
   };
 }
@@ -2052,5 +2075,467 @@ describe('getPendingReviewCount', () => {
     const result = await getPendingReviewCount({ classificationState })();
 
     expect(result).toBe(7);
+  });
+});
+
+// ============================================
+// LLM Gate Use Case Tests
+// ============================================
+
+describe('isLLMConfigured', () => {
+  describe('Anthropic provider', () => {
+    it('returns configured when API key is valid', async () => {
+      const llmProvider = createMockLLMProvider({
+        type: 'anthropic',
+        validateKey: vi.fn().mockResolvedValue({ valid: true }),
+      });
+      const config = createMockConfig({
+        getLLMConfig: vi.fn().mockReturnValue({ ...defaultLLMConfig, provider: 'anthropic' }),
+      });
+      const secrets = createMockSecrets({
+        getApiKey: vi.fn().mockResolvedValue('sk-valid-key'),
+      });
+
+      const result = await isLLMConfigured({ llmProvider, config, secrets })();
+
+      expect(result.configured).toBe(true);
+      expect(result.reason).toBeUndefined();
+      expect(secrets.getApiKey).toHaveBeenCalledWith('anthropic');
+      expect(llmProvider.validateKey).toHaveBeenCalledWith('sk-valid-key');
+    });
+
+    it('returns not configured when no API key', async () => {
+      const llmProvider = createMockLLMProvider({ type: 'anthropic' });
+      const config = createMockConfig({
+        getLLMConfig: vi.fn().mockReturnValue({ ...defaultLLMConfig, provider: 'anthropic' }),
+      });
+      const secrets = createMockSecrets({
+        getApiKey: vi.fn().mockResolvedValue(null),
+      });
+
+      const result = await isLLMConfigured({ llmProvider, config, secrets })();
+
+      expect(result.configured).toBe(false);
+      expect(result.reason).toBe('No API key configured');
+      expect(llmProvider.validateKey).not.toHaveBeenCalled();
+    });
+
+    it('returns not configured when API key is invalid', async () => {
+      const llmProvider = createMockLLMProvider({
+        type: 'anthropic',
+        validateKey: vi.fn().mockResolvedValue({ valid: false, error: 'Invalid API key format' }),
+      });
+      const config = createMockConfig({
+        getLLMConfig: vi.fn().mockReturnValue({ ...defaultLLMConfig, provider: 'anthropic' }),
+      });
+      const secrets = createMockSecrets({
+        getApiKey: vi.fn().mockResolvedValue('invalid-key'),
+      });
+
+      const result = await isLLMConfigured({ llmProvider, config, secrets })();
+
+      expect(result.configured).toBe(false);
+      expect(result.reason).toBe('Invalid API key format');
+    });
+  });
+
+  describe('Ollama provider', () => {
+    it('returns configured when server reachable and has models', async () => {
+      const llmProvider = createMockLLMProvider({
+        type: 'ollama',
+        testConnection: vi.fn().mockResolvedValue({ connected: true }),
+        listModels: vi.fn().mockResolvedValue([{ id: 'llama2', displayName: 'Llama 2' }]),
+      });
+      const config = createMockConfig({
+        getLLMConfig: vi.fn().mockReturnValue({ ...defaultLLMConfig, provider: 'ollama' }),
+      });
+      const secrets = createMockSecrets();
+
+      const result = await isLLMConfigured({ llmProvider, config, secrets })();
+
+      expect(result.configured).toBe(true);
+      expect(result.reason).toBeUndefined();
+    });
+
+    it('returns not configured when server not reachable', async () => {
+      const llmProvider = createMockLLMProvider({
+        type: 'ollama',
+        testConnection: vi.fn().mockResolvedValue({ connected: false, error: 'Connection refused' }),
+      });
+      const config = createMockConfig({
+        getLLMConfig: vi.fn().mockReturnValue({ ...defaultLLMConfig, provider: 'ollama' }),
+      });
+      const secrets = createMockSecrets();
+
+      const result = await isLLMConfigured({ llmProvider, config, secrets })();
+
+      expect(result.configured).toBe(false);
+      expect(result.reason).toBe('Connection refused');
+    });
+
+    it('returns not configured when no models installed', async () => {
+      const llmProvider = createMockLLMProvider({
+        type: 'ollama',
+        testConnection: vi.fn().mockResolvedValue({ connected: true }),
+        listModels: vi.fn().mockResolvedValue([]),
+      });
+      const config = createMockConfig({
+        getLLMConfig: vi.fn().mockReturnValue({ ...defaultLLMConfig, provider: 'ollama' }),
+      });
+      const secrets = createMockSecrets();
+
+      const result = await isLLMConfigured({ llmProvider, config, secrets })();
+
+      expect(result.configured).toBe(false);
+      expect(result.reason).toBe('No models installed in Ollama');
+    });
+
+    it('returns not configured when testConnection not available', async () => {
+      const llmProvider = createMockLLMProvider({
+        type: 'ollama',
+        testConnection: undefined,
+      });
+      const config = createMockConfig({
+        getLLMConfig: vi.fn().mockReturnValue({ ...defaultLLMConfig, provider: 'ollama' }),
+      });
+      const secrets = createMockSecrets();
+
+      const result = await isLLMConfigured({ llmProvider, config, secrets })();
+
+      expect(result.configured).toBe(false);
+      expect(result.reason).toBe('Provider does not support connection test');
+    });
+  });
+});
+
+describe('startBackgroundClassification', () => {
+  it('starts a background task and returns taskId', () => {
+    const backgroundTasks = createMockBackgroundTaskManager();
+    const classifier = createMockClassifier();
+    const config = createMockConfig();
+    const emails = createMockEmailRepo();
+    const tags = createMockTagRepo();
+    const classificationState = createMockClassificationStateRepo();
+
+    const result = startBackgroundClassification({
+      backgroundTasks,
+      emails,
+      tags,
+      classifier,
+      classificationState,
+      config,
+    })([1, 2, 3]);
+
+    expect(result.taskId).toBeDefined();
+    expect(result.count).toBe(3);
+    expect(backgroundTasks.start).toHaveBeenCalledWith(
+      result.taskId,
+      3,
+      expect.any(Function)
+    );
+  });
+
+  it('respects daily budget and skips emails when exhausted', async () => {
+    let budgetAllowed = true;
+    let classifyCallCount = 0;
+    const onProgressMock = vi.fn();
+
+    const backgroundTasks = createMockBackgroundTaskManager({
+      start: vi.fn().mockImplementation((_id, _total, fn) => {
+        // Execute the function synchronously for testing
+        fn(onProgressMock);
+      }),
+    });
+
+    const classifier = createMockClassifier({
+      classify: vi.fn().mockImplementation(async () => {
+        classifyCallCount++;
+        // After 2 classifications, budget is exhausted
+        if (classifyCallCount >= 2) {
+          budgetAllowed = false;
+        }
+        return {
+          suggestedTags: ['work'],
+          confidence: 0.9,
+          reasoning: 'Test',
+          priority: 'normal',
+        };
+      }),
+      getEmailBudget: vi.fn().mockImplementation(() => ({
+        used: classifyCallCount,
+        limit: 2,
+        allowed: budgetAllowed,
+      })),
+    });
+
+    const emails = createMockEmailRepo({
+      findById: vi.fn().mockResolvedValue(testEmail),
+      getBody: vi.fn().mockResolvedValue(testBody),
+    });
+    const tags = createMockTagRepo();
+    const classificationState = createMockClassificationStateRepo();
+    const config = createMockConfig();
+
+    startBackgroundClassification({
+      backgroundTasks,
+      emails,
+      tags,
+      classifier,
+      classificationState,
+      config,
+    })([1, 2, 3, 4, 5]);
+
+    // Wait for async operations
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    // Should have checked budget 5 times (once per email)
+    // But only classified 2 emails before budget exhausted
+    expect(classifier.getEmailBudget).toHaveBeenCalled();
+    // Progress should be called for all emails (even skipped ones)
+    expect(onProgressMock).toHaveBeenCalledTimes(5);
+  });
+
+  it('handles classification errors and continues', async () => {
+    const onProgressMock = vi.fn();
+    let callCount = 0;
+
+    const backgroundTasks = createMockBackgroundTaskManager({
+      start: vi.fn().mockImplementation((_id, _total, fn) => {
+        fn(onProgressMock);
+      }),
+    });
+
+    const classifier = createMockClassifier({
+      classify: vi.fn().mockImplementation(async () => {
+        callCount++;
+        if (callCount === 2) {
+          throw new Error('API error');
+        }
+        return {
+          suggestedTags: ['work'],
+          confidence: 0.9,
+          reasoning: 'Test',
+          priority: 'normal',
+        };
+      }),
+      getEmailBudget: vi.fn().mockReturnValue({ used: 0, limit: 100, allowed: true }),
+    });
+
+    const emails = createMockEmailRepo({
+      findById: vi.fn().mockResolvedValue(testEmail),
+      getBody: vi.fn().mockResolvedValue(testBody),
+    });
+    const tags = createMockTagRepo();
+    const classificationState = createMockClassificationStateRepo();
+    const config = createMockConfig();
+
+    startBackgroundClassification({
+      backgroundTasks,
+      emails,
+      tags,
+      classifier,
+      classificationState,
+      config,
+    })([1, 2, 3]);
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    // All 3 emails should have been processed
+    expect(onProgressMock).toHaveBeenCalledTimes(3);
+    // Error state should be set for email 2
+    expect(classificationState.setState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        emailId: expect.any(Number),
+        status: 'error',
+        errorMessage: 'API error',
+      })
+    );
+  });
+});
+
+describe('getBackgroundTaskStatus', () => {
+  it('returns task status when task exists', () => {
+    const taskState: TaskState = {
+      status: 'running',
+      processed: 5,
+      total: 10,
+    };
+    const backgroundTasks = createMockBackgroundTaskManager({
+      getStatus: vi.fn().mockReturnValue(taskState),
+    });
+
+    const result = getBackgroundTaskStatus({ backgroundTasks })('task-123');
+
+    expect(backgroundTasks.getStatus).toHaveBeenCalledWith('task-123');
+    expect(result).toEqual(taskState);
+  });
+
+  it('returns null when task does not exist', () => {
+    const backgroundTasks = createMockBackgroundTaskManager({
+      getStatus: vi.fn().mockReturnValue(null),
+    });
+
+    const result = getBackgroundTaskStatus({ backgroundTasks })('nonexistent');
+
+    expect(result).toBeNull();
+  });
+});
+
+describe('clearBackgroundTask', () => {
+  it('clears the task', () => {
+    const backgroundTasks = createMockBackgroundTaskManager();
+
+    clearBackgroundTask({ backgroundTasks })('task-123');
+
+    expect(backgroundTasks.clear).toHaveBeenCalledWith('task-123');
+  });
+});
+
+describe('startBackgroundClassification concurrency', () => {
+  it('uses concurrency of 2 by default for Ollama provider', async () => {
+    const processOrder: number[] = [];
+    const onProgressMock = vi.fn();
+
+    const backgroundTasks = createMockBackgroundTaskManager({
+      start: vi.fn().mockImplementation((_id, _total, fn) => {
+        fn(onProgressMock);
+      }),
+    });
+
+    const classifier = createMockClassifier({
+      classify: vi.fn().mockImplementation(async () => {
+        // Simulate some async work
+        await new Promise(resolve => setTimeout(resolve, 5));
+        return {
+          suggestedTags: ['work'],
+          confidence: 0.9,
+          reasoning: 'Test',
+          priority: 'normal',
+        };
+      }),
+      getEmailBudget: vi.fn().mockReturnValue({ used: 0, limit: 100, allowed: true }),
+    });
+
+    const emails = createMockEmailRepo({
+      findById: vi.fn().mockImplementation((id) => {
+        processOrder.push(id);
+        return Promise.resolve({ ...testEmail, id });
+      }),
+      getBody: vi.fn().mockResolvedValue(testBody),
+    });
+    const tags = createMockTagRepo();
+    const classificationState = createMockClassificationStateRepo();
+    const config = createMockConfig({
+      getLLMConfig: vi.fn().mockReturnValue({ ...defaultLLMConfig, provider: 'ollama' }),
+    });
+
+    startBackgroundClassification({
+      backgroundTasks,
+      emails,
+      tags,
+      classifier,
+      classificationState,
+      config,
+    })([1, 2, 3, 4]);
+
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // All 4 should be processed
+    expect(onProgressMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('uses concurrency of 1 for Anthropic provider', async () => {
+    const onProgressMock = vi.fn();
+
+    const backgroundTasks = createMockBackgroundTaskManager({
+      start: vi.fn().mockImplementation((_id, _total, fn) => {
+        fn(onProgressMock);
+      }),
+    });
+
+    const classifier = createMockClassifier({
+      classify: vi.fn().mockResolvedValue({
+        suggestedTags: ['work'],
+        confidence: 0.9,
+        reasoning: 'Test',
+        priority: 'normal',
+      }),
+      getEmailBudget: vi.fn().mockReturnValue({ used: 0, limit: 100, allowed: true }),
+    });
+
+    const emails = createMockEmailRepo({
+      findById: vi.fn().mockResolvedValue(testEmail),
+      getBody: vi.fn().mockResolvedValue(testBody),
+    });
+    const tags = createMockTagRepo();
+    const classificationState = createMockClassificationStateRepo();
+    const config = createMockConfig({
+      getLLMConfig: vi.fn().mockReturnValue({ ...defaultLLMConfig, provider: 'anthropic' }),
+    });
+
+    startBackgroundClassification({
+      backgroundTasks,
+      emails,
+      tags,
+      classifier,
+      classificationState,
+      config,
+    })([1, 2, 3]);
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    // All 3 should be processed sequentially
+    expect(onProgressMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('respects custom classificationConcurrency setting', async () => {
+    const onProgressMock = vi.fn();
+
+    const backgroundTasks = createMockBackgroundTaskManager({
+      start: vi.fn().mockImplementation((_id, _total, fn) => {
+        fn(onProgressMock);
+      }),
+    });
+
+    const classifier = createMockClassifier({
+      classify: vi.fn().mockImplementation(async () => {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        return {
+          suggestedTags: ['work'],
+          confidence: 0.9,
+          reasoning: 'Test',
+          priority: 'normal',
+        };
+      }),
+      getEmailBudget: vi.fn().mockReturnValue({ used: 0, limit: 100, allowed: true }),
+    });
+
+    const emails = createMockEmailRepo({
+      findById: vi.fn().mockResolvedValue(testEmail),
+      getBody: vi.fn().mockResolvedValue(testBody),
+    });
+    const tags = createMockTagRepo();
+    const classificationState = createMockClassificationStateRepo();
+    const config = createMockConfig({
+      getLLMConfig: vi.fn().mockReturnValue({
+        ...defaultLLMConfig,
+        provider: 'ollama',
+        classificationConcurrency: 3, // Custom concurrency
+      }),
+    });
+
+    startBackgroundClassification({
+      backgroundTasks,
+      emails,
+      tags,
+      classifier,
+      classificationState,
+      config,
+    })([1, 2, 3, 4, 5, 6]);
+
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // All 6 should be processed
+    expect(onProgressMock).toHaveBeenCalledTimes(6);
   });
 });

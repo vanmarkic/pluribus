@@ -370,23 +370,28 @@ export const isLLMConfigured = (deps: Pick<Deps, 'llmProvider' | 'config' | 'sec
 export const startBackgroundClassification = (deps: Pick<Deps, 'backgroundTasks' | 'emails' | 'tags' | 'classifier' | 'classificationState' | 'config'>) =>
   (emailIds: number[]): { taskId: string; count: number } => {
     const taskId = crypto.randomUUID();
-    const threshold = deps.config.getLLMConfig().confidenceThreshold;
+    const llmConfig = deps.config.getLLMConfig();
+    const threshold = llmConfig.confidenceThreshold;
+
+    // Determine concurrency: use configured value, or default based on provider
+    // Ollama (local) can handle 2-3 parallel requests; Anthropic should be sequential (rate limited)
+    const concurrency = llmConfig.classificationConcurrency ??
+      (llmConfig.provider === 'ollama' ? 2 : 1);
 
     deps.backgroundTasks.start(taskId, emailIds.length, async (onProgress) => {
-      for (const emailId of emailIds) {
+      // Process emails with controlled concurrency
+      const processEmail = async (emailId: number): Promise<void> => {
         // Check budget before each classification
         const budget = deps.classifier.getEmailBudget();
         if (!budget.allowed) {
-          // Budget exhausted - mark remaining as skipped and stop
-          console.log(`Daily budget exhausted after classifying ${emailId}, stopping background classification`);
-          onProgress(); // Still count as processed for progress tracking
-          continue; // Skip remaining emails
+          console.log(`Daily budget exhausted, skipping email ${emailId}`);
+          onProgress();
+          return;
         }
 
         try {
           await classifyAndApply(deps)(emailId, threshold);
         } catch (error) {
-          // Log error but continue with remaining emails
           console.error(`Background classification failed for email ${emailId}:`, error);
           await deps.classificationState.setState({
             emailId,
@@ -400,6 +405,35 @@ export const startBackgroundClassification = (deps: Pick<Deps, 'backgroundTasks'
           });
         }
         onProgress();
+      };
+
+      if (concurrency <= 1) {
+        // Sequential processing
+        for (const emailId of emailIds) {
+          await processEmail(emailId);
+        }
+      } else {
+        // Parallel processing with concurrency limit
+        const queue = [...emailIds];
+        const inFlight: Promise<void>[] = [];
+
+        while (queue.length > 0 || inFlight.length > 0) {
+          // Fill up to concurrency limit
+          while (queue.length > 0 && inFlight.length < concurrency) {
+            const emailId = queue.shift()!;
+            const promise = processEmail(emailId).then(() => {
+              // Remove from inFlight when done
+              const idx = inFlight.indexOf(promise);
+              if (idx !== -1) inFlight.splice(idx, 1);
+            });
+            inFlight.push(promise);
+          }
+
+          // Wait for at least one to complete before continuing
+          if (inFlight.length > 0) {
+            await Promise.race(inFlight);
+          }
+        }
       }
     });
 
