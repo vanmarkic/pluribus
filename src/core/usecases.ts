@@ -8,7 +8,7 @@
 
 import type { Deps, AccountInput, SmtpConfig, EmailDraft, SendResult, SyncResult, CachedImage, RemoteImagesSetting, DraftRepo } from './ports';
 import type { Email, EmailBody, Tag, AppliedTag, Account, ListEmailsOptions, SyncOptions, Classification, ClassificationState, ClassificationStats, ClassificationFeedback, ConfusedPattern, Draft, DraftInput, ListDraftsOptions, RecentContact } from './domain';
-import { extractDomain, extractSubjectPattern } from './domain';
+import { extractDomain, extractSubjectPattern, DEFAULT_SYNC_DAYS } from './domain';
 
 // ============================================
 // Email Use Cases
@@ -190,6 +190,10 @@ export const syncAllWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | '
       return syncResult;
     }
   };
+
+export const cancelSync = (deps: Pick<Deps, 'sync'>) =>
+  (accountId: number): Promise<void> =>
+    deps.sync.cancel(accountId);
 
 // ============================================
 // Classification Use Cases
@@ -893,8 +897,6 @@ export type AddAccountResult = {
   syncDays: number;
 };
 
-const INITIAL_SYNC_DAYS = 30;
-
 export const addAccount = (deps: Pick<Deps, 'accounts' | 'secrets' | 'sync'>) =>
   async (account: AccountInput, password: string, options: AddAccountOptions = {}): Promise<AddAccountResult> => {
     const { skipSync = false } = options;
@@ -914,13 +916,13 @@ export const addAccount = (deps: Pick<Deps, 'accounts' | 'secrets' | 'sync'>) =>
       return {
         account: createdAccount,
         syncResult: { newCount: 0, newEmailIds: [] },
-        syncDays: INITIAL_SYNC_DAYS,
+        syncDays: DEFAULT_SYNC_DAYS,
       };
     }
 
     // Perform initial sync for provider-specific folders with date-based filter
     const foldersToSync = deps.sync.getDefaultFolders(account.imapHost);
-    const since = new Date(Date.now() - INITIAL_SYNC_DAYS * 24 * 60 * 60 * 1000);
+    const since = new Date(Date.now() - DEFAULT_SYNC_DAYS * 24 * 60 * 60 * 1000);
     let totalNewCount = 0;
     const allNewEmailIds: number[] = [];
 
@@ -941,7 +943,7 @@ export const addAccount = (deps: Pick<Deps, 'accounts' | 'secrets' | 'sync'>) =>
     return {
       account: createdAccount,
       syncResult: { newCount: totalNewCount, newEmailIds: allNewEmailIds },
-      syncDays: INITIAL_SYNC_DAYS,
+      syncDays: DEFAULT_SYNC_DAYS,
     };
   };
 
@@ -1178,6 +1180,7 @@ export function createUseCases(deps: Deps) {
     syncAllMailboxes: syncAllMailboxes(deps),
     syncWithAutoClassify: syncWithAutoClassify(deps),
     syncAllWithAutoClassify: syncAllWithAutoClassify(deps),
+    cancelSync: cancelSync(deps),
 
     // Classification
     classifyEmail: classifyEmail(deps),
