@@ -57,6 +57,9 @@ const api = {
     classifyAndApply: (emailId: number) => ipcRenderer.invoke('llm:classifyAndApply', emailId),
     getBudget: () => ipcRenderer.invoke('llm:getBudget'),
     getEmailBudget: () => ipcRenderer.invoke('llm:getEmailBudget'),
+    validate: (key?: string) => ipcRenderer.invoke('llm:validate', key) as Promise<{ valid: boolean; error?: string }>,
+    listModels: () => ipcRenderer.invoke('llm:listModels') as Promise<{ id: string; displayName: string; createdAt?: string }[]>,
+    testConnection: () => ipcRenderer.invoke('llm:testConnection') as Promise<{ connected: boolean; error?: string }>,
   },
 
   aiSort: {
