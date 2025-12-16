@@ -253,6 +253,51 @@ export function createContainer(): Container {
   // License service
   const license = createLicenseService();
 
+  // Triage stubs (will be replaced with real implementations)
+  const patternMatcher: import('../core/ports').PatternMatcher = {
+    match: () => ({ folder: 'INBOX', confidence: 0.3, tags: [] }),
+  };
+  const triageClassifier: import('../core/ports').TriageClassifier = {
+    classify: async () => ({
+      folder: 'INBOX',
+      tags: [],
+      confidence: 0.5,
+      patternAgreed: true,
+      reasoning: 'Stub implementation',
+    }),
+  };
+  const trainingRepo: import('../core/ports').TrainingRepo = {
+    findByAccount: async () => [],
+    findByDomain: async () => [],
+    save: async (ex) => ({ ...ex, id: 0, createdAt: new Date() }),
+    getRelevantExamples: async () => [],
+  };
+  const senderRules: import('../core/ports').SenderRuleRepo = {
+    findByAccount: async () => [],
+    findAutoApply: async () => [],
+    findByPattern: async () => null,
+    upsert: async (r) => ({ ...r, id: 0, createdAt: new Date(), updatedAt: new Date() }),
+    incrementCount: async () => {},
+  };
+  const snoozes: import('../core/ports').SnoozeRepo = {
+    findByEmail: async () => null,
+    findDue: async () => [],
+    create: async (s) => ({ ...s, id: 0, createdAt: new Date() }),
+    delete: async () => {},
+  };
+  const triageLog: import('../core/ports').TriageLogRepo = {
+    log: async () => {},
+    findByEmail: async () => [],
+    findRecent: async () => [],
+  };
+  const imapFolderOps: import('../core/ports').ImapFolderOps = {
+    createFolder: async () => {},
+    deleteFolder: async () => {},
+    listFolders: async () => [],
+    moveMessage: async () => {},
+    ensureTriageFolders: async () => [],
+  };
+
   // Assemble dependencies
   const deps: Deps = {
     emails,
@@ -273,6 +318,14 @@ export function createContainer(): Container {
     backgroundTasks,
     databaseHealth,
     license,
+    // Triage
+    patternMatcher,
+    triageClassifier,
+    trainingRepo,
+    senderRules,
+    snoozes,
+    triageLog,
+    imapFolderOps,
   };
   
   // Create use cases
