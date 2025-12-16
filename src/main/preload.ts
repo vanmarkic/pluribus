@@ -211,6 +211,27 @@ const api = {
     deactivate: () => ipcRenderer.invoke('license:deactivate') as Promise<void>,
   },
 
+  triage: {
+    classify: (emailId: number) => ipcRenderer.invoke('triage:classify', emailId),
+    moveToFolder: (emailId: number, folder: string, accountId: number) =>
+      ipcRenderer.invoke('triage:moveToFolder', emailId, folder, accountId),
+    learnFromCorrection: (emailId: number, oldFolder: string, newFolder: string, accountId: number) =>
+      ipcRenderer.invoke('triage:learnFromCorrection', emailId, oldFolder, newFolder, accountId),
+    snooze: (emailId: number, accountId: number, until: string) =>
+      ipcRenderer.invoke('triage:snooze', emailId, accountId, until),
+    unsnooze: (emailId: number) => ipcRenderer.invoke('triage:unsnooze', emailId),
+    processSnoozed: () => ipcRenderer.invoke('triage:processSnoozed'),
+    saveTrainingExample: (example: any) =>
+      ipcRenderer.invoke('triage:saveTrainingExample', example),
+    getTrainingExamples: (accountId: number, limit?: number) =>
+      ipcRenderer.invoke('triage:getTrainingExamples', accountId, limit),
+    ensureFolders: (accountId: number) =>
+      ipcRenderer.invoke('triage:ensureFolders', accountId),
+    getSenderRules: (accountId: number) =>
+      ipcRenderer.invoke('triage:getSenderRules', accountId),
+    getLog: (emailId: number) => ipcRenderer.invoke('triage:getLog', emailId),
+  },
+
   on: (channel: string, callback: Callback) => {
     if (!listeners.has(channel)) listeners.set(channel, new Set());
     listeners.get(channel)!.add(callback);

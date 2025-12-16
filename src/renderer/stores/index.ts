@@ -166,6 +166,19 @@ declare global {
         >;
         deactivate: () => Promise<void>;
       };
+      triage: {
+        classify: (emailId: number) => Promise<any>;
+        moveToFolder: (emailId: number, folder: string, accountId: number) => Promise<void>;
+        learnFromCorrection: (emailId: number, oldFolder: string, newFolder: string, accountId: number) => Promise<void>;
+        snooze: (emailId: number, accountId: number, until: string) => Promise<any>;
+        unsnooze: (emailId: number) => Promise<void>;
+        processSnoozed: () => Promise<number[]>;
+        saveTrainingExample: (example: any) => Promise<any>;
+        getTrainingExamples: (accountId: number, limit?: number) => Promise<any[]>;
+        ensureFolders: (accountId: number) => Promise<string[]>;
+        getSenderRules: (accountId: number) => Promise<any[]>;
+        getLog: (emailId: number) => Promise<any[]>;
+      };
       on: (channel: string, callback: (...args: any[]) => void) => void;
       off: (channel: string, callback: (...args: any[]) => void) => void;
     };
@@ -712,7 +725,9 @@ export const useAccountStore = create<AccountStore>()(
 // UI Store
 // ============================================
 
-type View = 'inbox' | 'sent' | 'starred' | 'archive' | 'trash' | 'drafts' | 'settings' | 'ai-sort';
+type View = 'inbox' | 'sent' | 'starred' | 'archive' | 'trash' | 'drafts' | 'settings' | 'ai-sort'
+  | 'planning' | 'review' | 'feed' | 'social' | 'promotions'
+  | 'paper-trail/invoices' | 'paper-trail/admin' | 'paper-trail/travel';
 type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward' | null;
 
 type UIStore = {

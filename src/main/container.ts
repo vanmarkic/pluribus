@@ -14,8 +14,9 @@ import { createUseCases, type UseCases, type Deps } from '../core';
 
 // Adapters
 import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createTagRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup } from '../adapters/db';
-import { createMailSync } from '../adapters/imap';
+import { createMailSync, createImapFolderOps } from '../adapters/imap';
 import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier } from '../adapters/llm';
+import { createPatternMatcher, createTrainingRepo, createSenderRulesRepo, createSnoozeRepo, createTriageLogRepo, createTriageClassifier } from '../adapters/triage';
 import { createSecureStorage } from '../adapters/keychain';
 import { createMailSender } from '../adapters/smtp';
 import { createImageCache } from '../adapters/image-cache';
@@ -253,50 +254,50 @@ export function createContainer(): Container {
   // License service
   const license = createLicenseService();
 
-  // Triage stubs (will be replaced with real implementations)
-  const patternMatcher: import('../core/ports').PatternMatcher = {
-    match: () => ({ folder: 'INBOX', confidence: 0.3, tags: [] }),
+  // Triage adapters
+  const patternMatcher = createPatternMatcher();
+  const trainingRepo = createTrainingRepo(getDb);
+  const senderRules = createSenderRulesRepo(getDb);
+  const snoozes = createSnoozeRepo(getDb);
+  const triageLog = createTriageLogRepo(getDb);
+  const imapFolderOps = createImapFolderOps(secrets);
+
+  // Create LLM client for triage classifier (delegates to current provider)
+  const triageLlmClient = {
+    async complete(prompt: string): Promise<string> {
+      const cfg = configStore.get('llm');
+      if (cfg.provider === 'ollama') {
+        const freshProvider = createOllamaProvider(cfg.ollamaServerUrl);
+        // Use Ollama's generate endpoint
+        const response = await fetch(`${cfg.ollamaServerUrl}/api/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: cfg.model,
+            prompt,
+            stream: false,
+            format: 'json',
+          }),
+        });
+        const data = await response.json();
+        return data.response;
+      } else {
+        // Use Anthropic
+        const apiKey = await secrets.get('anthropic-api-key');
+        if (!apiKey) throw new Error('Anthropic API key not configured');
+        const Anthropic = (await import('@anthropic-ai/sdk')).default;
+        const client = new Anthropic({ apiKey });
+        const message = await client.messages.create({
+          model: cfg.model,
+          max_tokens: 1024,
+          messages: [{ role: 'user', content: prompt }],
+        });
+        const textBlock = message.content.find(b => b.type === 'text');
+        return textBlock?.type === 'text' ? textBlock.text : '';
+      }
+    },
   };
-  const triageClassifier: import('../core/ports').TriageClassifier = {
-    classify: async () => ({
-      folder: 'INBOX',
-      tags: [],
-      confidence: 0.5,
-      patternAgreed: true,
-      reasoning: 'Stub implementation',
-    }),
-  };
-  const trainingRepo: import('../core/ports').TrainingRepo = {
-    findByAccount: async () => [],
-    findByDomain: async () => [],
-    save: async (ex) => ({ ...ex, id: 0, createdAt: new Date() }),
-    getRelevantExamples: async () => [],
-  };
-  const senderRules: import('../core/ports').SenderRuleRepo = {
-    findByAccount: async () => [],
-    findAutoApply: async () => [],
-    findByPattern: async () => null,
-    upsert: async (r) => ({ ...r, id: 0, createdAt: new Date(), updatedAt: new Date() }),
-    incrementCount: async () => {},
-  };
-  const snoozes: import('../core/ports').SnoozeRepo = {
-    findByEmail: async () => null,
-    findDue: async () => [],
-    create: async (s) => ({ ...s, id: 0, createdAt: new Date() }),
-    delete: async () => {},
-  };
-  const triageLog: import('../core/ports').TriageLogRepo = {
-    log: async () => {},
-    findByEmail: async () => [],
-    findRecent: async () => [],
-  };
-  const imapFolderOps: import('../core/ports').ImapFolderOps = {
-    createFolder: async () => {},
-    deleteFolder: async () => {},
-    listFolders: async () => [],
-    moveMessage: async () => {},
-    ensureTriageFolders: async () => [],
-  };
+  const triageClassifier = createTriageClassifier(triageLlmClient);
 
   // Assemble dependencies
   const deps: Deps = {

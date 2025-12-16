@@ -8,7 +8,9 @@
 import { useEffect, useState } from 'react';
 import {
   IconInbox, IconFavorite, IconSend, IconArchiveBox, IconDelete,
-  IconSettings, IconSparkles, IconTag, IconPen, IconDocument
+  IconSettings, IconSparkles, IconTag, IconPen, IconDocument,
+  IconClock3, IconChecklist, IconBill, IconBriefcase, IconPlane,
+  IconNewspaper, IconNotification, IconMegaphone
 } from 'obra-icons-react';
 import { useUIStore, useTagStore, useEmailStore, useAccountStore } from '../stores';
 import { AccountSwitcher } from './AccountSwitcher';
@@ -67,6 +69,34 @@ export function Sidebar() {
     { id: 'trash' as const, icon: IconDelete, label: 'Trash' },
   ];
 
+  // Triage folders
+  const triageFolders = [
+    { id: 'planning' as const, icon: IconClock3, label: 'Planning' },
+    { id: 'review' as const, icon: IconChecklist, label: 'Review' },
+    { id: 'feed' as const, icon: IconNewspaper, label: 'Feed' },
+    { id: 'social' as const, icon: IconNotification, label: 'Social' },
+    { id: 'promotions' as const, icon: IconMegaphone, label: 'Promotions' },
+  ];
+
+  // Paper Trail subfolders
+  const paperTrailFolders = [
+    { id: 'paper-trail/invoices' as const, icon: IconBill, label: 'Invoices' },
+    { id: 'paper-trail/admin' as const, icon: IconBriefcase, label: 'Admin' },
+    { id: 'paper-trail/travel' as const, icon: IconPlane, label: 'Travel' },
+  ];
+
+  // Map view IDs to folder paths for triage folders
+  const triageFolderMap: Record<string, string> = {
+    'planning': 'Planning',
+    'review': 'Review',
+    'feed': 'Feed',
+    'social': 'Social',
+    'promotions': 'Promotions',
+    'paper-trail/invoices': 'Paper-Trail/Invoices',
+    'paper-trail/admin': 'Paper-Trail/Admin',
+    'paper-trail/travel': 'Paper-Trail/Travel',
+  };
+
   const handleNavClick = (id: string) => {
     setView(id as typeof view);
     if (!selectedAccountId) return;
@@ -89,6 +119,9 @@ export function Sidebar() {
       if (archiveTag) setFilter({ ...baseFilter, tagId: archiveTag.id }, selectedAccountId);
     } else if (id === 'trash') {
       setFilter({ ...baseFilter, folderPath: 'Trash' }, selectedAccountId);
+    } else if (triageFolderMap[id]) {
+      // Triage folders - filter by folder path
+      setFilter({ ...baseFilter, folderPath: triageFolderMap[id] }, selectedAccountId);
     } else {
       setFilter(baseFilter, selectedAccountId);
     }
@@ -135,6 +168,44 @@ export function Sidebar() {
             {item.count !== undefined && item.count > 0 && (
               <span className="sidebar-item-count">{item.count}</span>
             )}
+          </button>
+        ))}
+
+        {/* Triage Section */}
+        <div className="sidebar-section flex items-center gap-1 mt-4">
+          <IconSparkles className="w-3 h-3" />
+          <span>Triage</span>
+        </div>
+
+        {triageFolders.map(item => (
+          <button
+            key={item.id}
+            onClick={() => handleNavClick(item.id)}
+            className={`sidebar-item w-full ${view === item.id ? 'active' : ''}`}
+            aria-label={item.label}
+            aria-current={view === item.id ? 'page' : undefined}
+          >
+            <item.icon className="w-4 h-4" />
+            <span className="flex-1 text-left">{item.label}</span>
+          </button>
+        ))}
+
+        {/* Paper Trail Section */}
+        <div className="sidebar-section flex items-center gap-1 mt-4">
+          <IconBill className="w-3 h-3" />
+          <span>Paper Trail</span>
+        </div>
+
+        {paperTrailFolders.map(item => (
+          <button
+            key={item.id}
+            onClick={() => handleNavClick(item.id)}
+            className={`sidebar-item w-full ${view === item.id ? 'active' : ''}`}
+            aria-label={item.label}
+            aria-current={view === item.id ? 'page' : undefined}
+          >
+            <item.icon className="w-4 h-4" />
+            <span className="flex-1 text-left">{item.label}</span>
           </button>
         ))}
 
