@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { Email, TrainingExample, SenderRule, EmailSnooze, TriageLogEntry, TriageClassificationResult, Account, Folder } from '../domain';
 import type { PatternMatcher, TriageClassifier, TrainingRepo, SenderRuleRepo, SnoozeRepo, TriageLogRepo, PatternMatchResult, EmailRepo, ImapFolderOps, AccountRepo, FolderRepo } from '../ports';
 import {
@@ -110,16 +110,13 @@ const createMockEmailRepo = (): EmailRepo => ({
   }),
   list: vi.fn().mockResolvedValue([]),
   search: vi.fn().mockResolvedValue([]),
-  save: vi.fn().mockResolvedValue(testEmail),
-  update: vi.fn().mockResolvedValue(undefined),
+  insert: vi.fn().mockResolvedValue(testEmail),
+  insertBatch: vi.fn().mockResolvedValue({ count: 0, ids: [] }),
   delete: vi.fn().mockResolvedValue(undefined),
-  findByMessageId: vi.fn().mockResolvedValue(null),
   markRead: vi.fn().mockResolvedValue(undefined),
-  star: vi.fn().mockResolvedValue(undefined),
+  setStar: vi.fn().mockResolvedValue(undefined),
   saveBody: vi.fn().mockResolvedValue(undefined),
   getBody: vi.fn().mockResolvedValue(null),
-  countByAccount: vi.fn().mockResolvedValue(0),
-  getOldestSyncedUid: vi.fn().mockResolvedValue(null),
 });
 
 const createMockAccountRepo = (): AccountRepo => ({
@@ -131,13 +128,16 @@ const createMockAccountRepo = (): AccountRepo => ({
     imapPort: 993,
     smtpHost: 'smtp.example.com',
     smtpPort: 587,
+    username: 'test@example.com',
     isActive: true,
-    createdAt: new Date(),
+    lastSync: null,
   } as Account),
-  list: vi.fn().mockResolvedValue([]),
+  findAll: vi.fn().mockResolvedValue([]),
+  findByEmail: vi.fn().mockResolvedValue(null),
   create: vi.fn().mockResolvedValue({} as Account),
   update: vi.fn().mockResolvedValue({} as Account),
   delete: vi.fn().mockResolvedValue(undefined),
+  updateLastSync: vi.fn().mockResolvedValue(undefined),
 });
 
 const createMockFolderRepo = (): FolderRepo => ({
@@ -147,12 +147,11 @@ const createMockFolderRepo = (): FolderRepo => ({
     path: 'INBOX',
     name: 'INBOX',
     uidValidity: 12345,
-    createdAt: new Date(),
+    lastUid: 0,
   } as Folder),
-  findByPath: vi.fn().mockResolvedValue(null),
-  listByAccount: vi.fn().mockResolvedValue([]),
-  upsert: vi.fn().mockResolvedValue({} as Folder),
-  delete: vi.fn().mockResolvedValue(undefined),
+  getOrCreate: vi.fn().mockResolvedValue({} as Folder),
+  updateLastUid: vi.fn().mockResolvedValue(undefined),
+  clear: vi.fn().mockResolvedValue(undefined),
 });
 
 const createMockImapFolderOps = (): ImapFolderOps => ({
@@ -237,7 +236,7 @@ describe('Triage Integration', () => {
       const emails = createMockEmailRepo();
 
       const deps = { trainingRepo, senderRules, triageLog, emails };
-      await learnFromTriageCorrection(deps)(2, 'INBOX', 'Paper-Trail/Invoices', 1);
+      await learnFromTriageCorrection(deps)(2, 'INBOX', 'Paper-Trail/Invoices');
 
       expect(trainingRepo.save).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -258,7 +257,7 @@ describe('Triage Integration', () => {
       const emails = createMockEmailRepo();
 
       const deps = { trainingRepo, senderRules, triageLog, emails };
-      await learnFromTriageCorrection(deps)(2, 'INBOX', 'Paper-Trail/Invoices', 1);
+      await learnFromTriageCorrection(deps)(2, 'INBOX', 'Paper-Trail/Invoices');
 
       expect(senderRules.upsert).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -339,7 +338,7 @@ describe('Triage Integration', () => {
           aiSuggestion: 'INBOX',
           userChoice: 'Planning',
           wasCorrection: true,
-          source: 'manual',
+          source: 'manual_move',
           createdAt: new Date(),
         },
       ];

@@ -23,5 +23,6 @@
     }
   },
   "include": ["src/renderer", "src/core"],
+  "exclude": ["**/*.test.ts", "**/__tests__/**"],
   "references": [{ "path": "./tsconfig.main.json" }]
 }

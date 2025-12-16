@@ -16,6 +16,7 @@ import { ComposeModal } from './components/ComposeModal';
 import { LicenseActivationModal } from './components/LicenseActivation';
 import { AISortView } from './components/ai-sort';
 import { SetupWizard } from './components/SetupWizard';
+import { TriageReviewView } from './components/TriageReviewView';
 import { useKeyboardShortcuts, KeyboardShortcutsHelp } from './hooks/useKeyboardShortcuts';
 import { useTheme } from './hooks/useTheme';
 import { useUIStore, useSyncStore, useAccountStore, useTagStore, useEmailStore, useLicenseStore } from './stores';
@@ -305,6 +306,8 @@ export function App() {
               <p>Select a draft to edit</p>
             </div>
           </>
+        ) : view === 'review' ? (
+          <TriageReviewView />
         ) : view === 'ai-sort' ? (
           <AISortView />
         ) : (
