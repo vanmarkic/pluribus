@@ -4,18 +4,61 @@
 
 import { app, BrowserWindow, session, shell } from 'electron';
 import * as path from 'path';
+import * as fs from 'fs';
 import { createContainer, type Container } from './container';
-import { registerIpcHandlers } from './ipc';
+import { registerIpcHandlers, getTempFiles } from './ipc';
+import { cleanupOllamaProcess } from '../adapters/ollama-manager';
 
 let mainWindow: BrowserWindow | null = null;
 let container: Container | null = null;
+
+// ==========================================
+// Temp File Cleanup
+// ==========================================
+
+function cleanupTempFiles(): void {
+  // Clean up tracked temp files
+  for (const file of getTempFiles()) {
+    try {
+      if (fs.existsSync(file)) {
+        fs.unlinkSync(file);
+      }
+    } catch (error) {
+      console.error('Failed to cleanup temp file:', file, error);
+    }
+  }
+  getTempFiles().clear();
+
+  // Clean up entire temp directory
+  const tempDir = path.join(app.getPath('temp'), 'mail-attachments');
+  try {
+    if (fs.existsSync(tempDir)) {
+      const files = fs.readdirSync(tempDir);
+      for (const file of files) {
+        try {
+          fs.unlinkSync(path.join(tempDir, file));
+        } catch (error) {
+          console.error('Failed to cleanup temp directory file:', file, error);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Failed to cleanup temp directory:', error);
+  }
+}
 
 // Content Security Policy
 const CSP = [
   "default-src 'self'",
   "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",  // Tailwind needs inline styles
-  "img-src 'self' data: file:",  // Blocks tracking pixels - only allow local/cached images
+  // Note: 'unsafe-inline' required for React inline styles (style={}) used extensively for:
+  // - Dynamic values (progress bars, tag colors from database)
+  // - CSS custom properties (var(--color-*) for theming)
+  // - Platform-specific styles (-webkit-app-region for macOS titlebar)
+  // Risk is mitigated by: (1) DOMPurify sanitization of all email HTML, (2) explicit stripping of
+  // CSS attack vectors (expression(), javascript:, behavior:, -moz-binding:) in EmailViewer.tsx
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' https: data: file:",  // Allow local images, HTTPS external images, and data URIs
   "font-src 'self'",
   "connect-src 'self' https://api.anthropic.com",  // LLM API
   "frame-src 'none'",
@@ -89,7 +132,10 @@ async function createWindow(): Promise<void> {
 }
 
 // App lifecycle
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  cleanupTempFiles(); // Clean up temp files on startup
+  createWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
@@ -100,6 +146,8 @@ app.on('activate', () => {
 });
 
 app.on('before-quit', async () => {
+  cleanupTempFiles(); // Clean up temp files on quit
+  cleanupOllamaProcess(); // Clean up Ollama process on quit
   await container?.shutdown();
 });
 

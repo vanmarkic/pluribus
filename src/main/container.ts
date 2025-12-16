@@ -13,14 +13,15 @@ import Store from 'electron-store';
 import { createUseCases, type UseCases, type Deps } from '../core';
 
 // Adapters
-import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createTagRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo } from '../adapters/db';
+import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createTagRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup } from '../adapters/db';
 import { createMailSync } from '../adapters/imap';
 import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier } from '../adapters/llm';
 import { createSecureStorage } from '../adapters/keychain';
 import { createMailSender } from '../adapters/smtp';
 import { createImageCache } from '../adapters/image-cache';
 import { createBackgroundTaskManager } from '../adapters/background';
-import type { RemoteImagesSetting } from '../core/ports';
+import { createOllamaManager, type OllamaManager } from '../adapters/ollama-manager';
+import type { RemoteImagesSetting, DatabaseHealth } from '../core/ports';
 
 // ============================================
 // Config Store (non-sensitive settings only)
@@ -40,6 +41,9 @@ type AppConfig = {
   security: {
     remoteImages: RemoteImagesSetting;
   };
+  ollama: {
+    setupComplete: boolean;
+  };
 };
 
 const LLM_DEFAULTS = {
@@ -58,6 +62,9 @@ const configStore = new Store<AppConfig>({
     llm: LLM_DEFAULTS,
     security: {
       remoteImages: 'block', // Privacy-first default
+    },
+    ollama: {
+      setupComplete: false,
     },
   },
 });
@@ -80,6 +87,7 @@ export type Container = {
     get: <K extends keyof AppConfig>(key: K) => AppConfig[K];
     set: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
   };
+  ollamaManager: OllamaManager;
   shutdown: () => Promise<void>;
 };
 
@@ -235,6 +243,12 @@ export function createContainer(): Container {
   // Background task manager
   const backgroundTasks = createBackgroundTaskManager();
 
+  // Database health adapter (wraps existing db functions)
+  const databaseHealth: DatabaseHealth = {
+    checkIntegrity,
+    createBackup: createDbBackup,
+  };
+
   // Assemble dependencies
   const deps: Deps = {
     emails,
@@ -253,17 +267,21 @@ export function createContainer(): Container {
     imageCache,
     llmProvider,
     backgroundTasks,
+    databaseHealth,
   };
   
   // Create use cases
   const useCases = createUseCases(deps);
-  
+
+  // Create OllamaManager for bundled Ollama binary management
+  const ollamaManager = createOllamaManager();
+
   // Shutdown function
   const shutdown = async () => {
     await sync.disconnect(0); // Disconnect all
     closeDb();
   };
-  
+
   return {
     deps,
     useCases,
@@ -271,6 +289,7 @@ export function createContainer(): Container {
       get: (key) => configStore.get(key),
       set: (key, value) => configStore.set(key, value),
     },
+    ollamaManager,
     shutdown,
   };
 }

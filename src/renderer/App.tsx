@@ -5,7 +5,7 @@
  * Clean design matching reference.
  */
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { EmailList } from './components/EmailList';
 import { DraftsList } from './components/DraftsList';
@@ -14,19 +14,61 @@ import { SecuritySettings } from './components/SecuritySettings';
 import { AccountWizard } from './components/AccountWizard';
 import { ComposeModal } from './components/ComposeModal';
 import { AISortView } from './components/ai-sort';
+import { SetupWizard } from './components/SetupWizard';
 import { useKeyboardShortcuts, KeyboardShortcutsHelp } from './hooks/useKeyboardShortcuts';
 import { useTheme } from './hooks/useTheme';
 import { useUIStore, useSyncStore, useAccountStore, useTagStore, useEmailStore } from './stores';
-import { IconSun, IconMoon, IconComputerMonitor } from 'obra-icons-react';
+import { IconSun, IconMoon, IconComputerMonitor, IconSearch, IconClose } from 'obra-icons-react';
+import { debounce } from './utils/debounce';
 import type { SyncProgress } from '../core/domain';
 
 export function App() {
   const { view, showAccountWizard, editAccountId, composeMode, composeEmailId, composeDraftId, closeAccountWizard, closeCompose, openCompose, classificationTaskId, classificationProgress, updateClassificationProgress, clearClassificationTask } = useUIStore();
-  const { startSync } = useSyncStore();
+  const { startSync, truncationInfo, dismissTruncationInfo } = useSyncStore();
   const { loadAccounts, selectedAccountId } = useAccountStore();
   const { loadTags } = useTagStore();
-  const { selectedEmail, selectedBody, loadEmails } = useEmailStore();
+  const { selectedEmail, selectedBody, loadEmails, search, clearFilter } = useEmailStore();
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+  const [searchInput, setSearchInput] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [showSetupWizard, setShowSetupWizard] = useState(false);
+
+  // Debounced search function
+  const debouncedSearch = useMemo(
+    () =>
+      debounce((query: string) => {
+        if (selectedAccountId) {
+          search(query, selectedAccountId);
+        }
+      }, 300),
+    [selectedAccountId, search]
+  );
+
+  // Handle search input change
+  const handleSearchChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const query = e.target.value;
+      setSearchInput(query);
+      if (query.trim()) {
+        debouncedSearch(query.trim());
+      } else if (selectedAccountId) {
+        // Clear search when input is empty
+        debouncedSearch.cancel();
+        clearFilter(selectedAccountId);
+      }
+    },
+    [debouncedSearch, selectedAccountId, clearFilter]
+  );
+
+  // Clear search
+  const handleClearSearch = useCallback(() => {
+    setSearchInput('');
+    debouncedSearch.cancel();
+    if (selectedAccountId) {
+      clearFilter(selectedAccountId);
+    }
+    searchInputRef.current?.focus();
+  }, [debouncedSearch, selectedAccountId, clearFilter]);
 
   // Initial data load
   useEffect(() => {
@@ -34,12 +76,32 @@ export function App() {
     loadTags();
   }, []);
 
+  // Check if setup wizard should be shown on first run
+  useEffect(() => {
+    const checkSetupComplete = async () => {
+      try {
+        const ollamaConfig = await window.mailApi.config.get('ollama');
+        const accounts = await window.mailApi.accounts.list();
+        // Show wizard if setup not complete AND no accounts yet (first run)
+        if (!ollamaConfig?.setupComplete && accounts.length === 0) {
+          setShowSetupWizard(true);
+        }
+      } catch (err) {
+        console.error('Failed to check setup status:', err);
+      }
+    };
+    checkSetupComplete();
+  }, []);
+
   // Reload emails when selected account changes (clean architecture - component reacts to state)
   useEffect(() => {
     if (selectedAccountId) {
+      // Clear search when switching accounts
+      setSearchInput('');
+      debouncedSearch.cancel();
       loadEmails(selectedAccountId);
     }
-  }, [selectedAccountId, loadEmails]);
+  }, [selectedAccountId, loadEmails, debouncedSearch]);
 
   // Wire keyboard shortcuts
   useKeyboardShortcuts({
@@ -54,7 +116,8 @@ export function App() {
       if (selectedEmail) openCompose('forward', selectedEmail.id);
     },
     onSearch: () => {
-      // TODO: Focus search input
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
     },
     onRefresh: () => {
       if (selectedAccountId) {
@@ -141,6 +204,61 @@ export function App() {
         {/* Space for traffic lights (left) */}
         <div className="w-20" />
 
+        {/* Search Bar */}
+        <div
+          className="flex-1 max-w-md mx-4"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
+          <div
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg"
+            style={{
+              background: 'var(--color-bg-secondary)',
+              border: '1px solid var(--color-border)',
+            }}
+          >
+            <IconSearch
+              className="w-4 h-4 shrink-0"
+              style={{ color: 'var(--color-text-tertiary)' }}
+            />
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchInput}
+              onChange={handleSearchChange}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  handleClearSearch();
+                  e.currentTarget.blur();
+                }
+              }}
+              placeholder="Search emails..."
+              className="flex-1 bg-transparent border-none outline-none text-sm"
+              style={{ color: 'var(--color-text)' }}
+            />
+            {searchInput && (
+              <button
+                onClick={handleClearSearch}
+                className="p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10"
+                title="Clear search (Esc)"
+              >
+                <IconClose
+                  className="w-4 h-4"
+                  style={{ color: 'var(--color-text-tertiary)' }}
+                />
+              </button>
+            )}
+            <span
+              className="text-xs shrink-0"
+              style={{ color: 'var(--color-text-tertiary)' }}
+            >
+              /
+            </span>
+          </div>
+        </div>
+
+        {/* Spacer to balance the layout */}
+        <div className="flex-1" />
+
         {/* Classification progress indicator */}
         {classificationProgress && (
           <div
@@ -217,8 +335,20 @@ export function App() {
           originalBody={composeBody ?? undefined}
           draftId={composeDraftId ?? undefined}
           onClose={closeCompose}
-          onSent={() => {
+          onSent={async () => {
             closeCompose();
+            // Sync to pull the newly sent email into DB
+            // Note: This syncs the default folders (INBOX and Sent) to ensure
+            // the sent email appears immediately in the Sent view
+            if (selectedAccountId) {
+              try {
+                await startSync(selectedAccountId);
+                // Reload emails to refresh the view
+                await loadEmails(selectedAccountId);
+              } catch (err) {
+                console.error('Failed to sync after send:', err);
+              }
+            }
           }}
         />
       )}
@@ -228,6 +358,47 @@ export function App() {
         isOpen={showShortcutsHelp}
         onClose={() => setShowShortcutsHelp(false)}
       />
+
+      {/* Setup Wizard */}
+      {showSetupWizard && (
+        <SetupWizard
+          onComplete={async () => {
+            await window.mailApi.config.set('ollama', { setupComplete: true });
+            setShowSetupWizard(false);
+          }}
+          onSkip={async () => {
+            await window.mailApi.config.set('ollama', { setupComplete: true });
+            setShowSetupWizard(false);
+          }}
+        />
+      )}
+
+      {/* Truncation Notification Banner */}
+      {truncationInfo && truncationInfo.truncated && (
+        <div
+          className="fixed bottom-4 left-1/2 transform -translate-x-1/2 max-w-2xl w-auto px-6 py-3 rounded-lg shadow-lg flex items-center gap-3"
+          style={{
+            background: '#fef3c7',
+            color: '#92400e',
+            border: '1px solid #fde68a',
+            zIndex: 1000
+          }}
+        >
+          <div className="flex-1">
+            <div className="font-medium">Mailbox Truncated</div>
+            <div className="text-sm">
+              Your mailbox has {truncationInfo.totalAvailable.toLocaleString()} emails.
+              Showing most recent {truncationInfo.synced.toLocaleString()}.
+            </div>
+          </div>
+          <button
+            onClick={dismissTruncationInfo}
+            className="px-3 py-1 rounded text-sm font-medium hover:bg-yellow-200/50 transition-colors"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -743,6 +914,7 @@ function ClassificationSettings() {
               <div className="flex gap-2">
                 <input
                   type="password"
+                  autoComplete="new-password"
                   value={apiKeyInput}
                   onChange={(e) => setApiKeyInput(e.target.value)}
                   placeholder="sk-ant-..."

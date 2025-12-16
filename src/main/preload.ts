@@ -12,7 +12,7 @@ type Callback = (...args: any[]) => void;
 const listeners = new Map<string, Set<Callback>>();
 
 // Forward events from main
-['sync:progress', 'llm:classifying', 'llm:classified', 'llm:error'].forEach(channel => {
+['sync:progress', 'llm:classifying', 'llm:classified', 'llm:error', 'ollama:download-progress'].forEach(channel => {
   ipcRenderer.on(channel, (_, data) => {
     listeners.get(channel)?.forEach(cb => cb(data));
   });
@@ -28,6 +28,7 @@ const api = {
     markRead: (id: number, isRead: boolean) => ipcRenderer.invoke('emails:markRead', id, isRead),
     star: (id: number, isStarred: boolean) => ipcRenderer.invoke('emails:star', id, isStarred),
     archive: (id: number) => ipcRenderer.invoke('emails:archive', id),
+    unarchive: (id: number) => ipcRenderer.invoke('emails:unarchive', id),
     delete: (id: number) => ipcRenderer.invoke('emails:delete', id),
   },
 
@@ -40,6 +41,7 @@ const api = {
   tags: {
     list: () => ipcRenderer.invoke('tags:list'),
     getForEmail: (emailId: number) => ipcRenderer.invoke('tags:getForEmail', emailId),
+    getForEmails: (emailIds: number[]) => ipcRenderer.invoke('tags:getForEmails', emailIds),
     apply: (emailId: number, tagId: number, source = 'manual') =>
       ipcRenderer.invoke('tags:apply', emailId, tagId, source),
     remove: (emailId: number, tagId: number) =>
@@ -163,6 +165,30 @@ const api = {
   contacts: {
     getRecent: (limit?: number) => ipcRenderer.invoke('contacts:getRecent', limit),
     search: (query: string, limit?: number) => ipcRenderer.invoke('contacts:search', query, limit),
+  },
+
+  db: {
+    checkIntegrity: (full?: boolean) =>
+      ipcRenderer.invoke('db:checkIntegrity', full) as Promise<{ isHealthy: boolean; errors: string[] }>,
+    backup: () => ipcRenderer.invoke('db:backup') as Promise<string>,
+  },
+
+  ollama: {
+    isInstalled: () => ipcRenderer.invoke('ollama:isInstalled') as Promise<boolean>,
+    isRunning: () => ipcRenderer.invoke('ollama:isRunning') as Promise<boolean>,
+    downloadBinary: () => ipcRenderer.invoke('ollama:downloadBinary') as Promise<void>,
+    start: () => ipcRenderer.invoke('ollama:start') as Promise<void>,
+    stop: () => ipcRenderer.invoke('ollama:stop') as Promise<void>,
+    listLocalModels: () => ipcRenderer.invoke('ollama:listLocalModels') as Promise<{ name: string; size: number; modifiedAt: string }[]>,
+    pullModel: (name: string) => ipcRenderer.invoke('ollama:pullModel', name) as Promise<void>,
+    deleteModel: (name: string) => ipcRenderer.invoke('ollama:deleteModel', name) as Promise<void>,
+    getRecommendedModels: () => ipcRenderer.invoke('ollama:getRecommendedModels') as Promise<{
+      id: string;
+      name: string;
+      description: string;
+      size: string;
+      sizeBytes: number;
+    }[]>,
   },
 
   on: (channel: string, callback: Callback) => {

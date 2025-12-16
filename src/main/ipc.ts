@@ -14,6 +14,16 @@ import type { Container } from './container';
 import type { DraftInput } from '../core/domain';
 
 // ==========================================
+// Temp File Tracking
+// ==========================================
+
+const tempFiles = new Set<string>();
+
+export function getTempFiles(): Set<string> {
+  return tempFiles;
+}
+
+// ==========================================
 // Rate Limiting
 // ==========================================
 
@@ -133,6 +143,10 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
     return useCases.archiveEmail(assertPositiveInt(id, 'id'));
   });
 
+  ipcMain.handle('emails:unarchive', (_, id) => {
+    return useCases.unarchiveEmail(assertPositiveInt(id, 'id'));
+  });
+
   ipcMain.handle('emails:delete', (_, id) => {
     return useCases.deleteEmail(assertPositiveInt(id, 'id'));
   });
@@ -170,6 +184,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
     const tempPath = path.join(tempDir, `${id}-${safeFilename}`);
 
     fs.writeFileSync(tempPath, content);
+    tempFiles.add(tempPath);
 
     if (actionType === 'open') {
       await shell.openPath(tempPath);
@@ -219,6 +234,12 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
       isSystem: t.isSystem ? assertBoolean(t.isSystem, 'isSystem') : false,
       sortOrder: t.sortOrder ? assertNonNegativeInt(t.sortOrder, 'sortOrder') : 0,
     });
+  });
+
+  ipcMain.handle('tags:getForEmails', (_, emailIds) => {
+    if (!Array.isArray(emailIds)) throw new Error('emailIds must be an array');
+    const ids = emailIds.map((id, i) => assertPositiveInt(id, `emailIds[${i}]`));
+    return deps.tags.getForEmails(ids);
   });
 
   // ==========================================
@@ -473,7 +494,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   // Config (allowlisted keys only)
   // ==========================================
 
-  const ALLOWED_CONFIG_KEYS = ['llm'] as const;
+  const ALLOWED_CONFIG_KEYS = ['llm', 'ollama'] as const;
   type AllowedConfigKey = (typeof ALLOWED_CONFIG_KEYS)[number];
 
   ipcMain.handle('config:get', (_, key) => {
@@ -880,5 +901,65 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
     const q = assertString(query, 'query', 100);
     const l = limit !== undefined ? assertPositiveInt(limit, 'limit') : undefined;
     return useCases.searchContacts(q, l);
+  });
+
+  // ==========================================
+  // Database Health & Recovery
+  // ==========================================
+
+  ipcMain.handle('db:checkIntegrity', async (_, full) => {
+    checkRateLimit('db:checkIntegrity', 10);
+    const runFull = full !== undefined ? assertBoolean(full, 'full') : false;
+    return useCases.checkDatabaseIntegrity(runFull);
+  });
+
+  ipcMain.handle('db:backup', async () => {
+    checkRateLimit('db:backup', 5);
+    return useCases.createDatabaseBackup();
+  });
+
+  // ==========================================
+  // Bundled Ollama Management
+  // ==========================================
+
+  const { ollamaManager } = container;
+
+  ipcMain.handle('ollama:isInstalled', () => ollamaManager.isInstalled());
+
+  ipcMain.handle('ollama:isRunning', () => ollamaManager.isRunning());
+
+  ipcMain.handle('ollama:downloadBinary', async (event) => {
+    checkRateLimit('ollama:downloadBinary', 2);
+    await ollamaManager.downloadBinary((progress) => {
+      event.sender.send('ollama:download-progress', progress);
+    });
+  });
+
+  ipcMain.handle('ollama:start', async () => {
+    return ollamaManager.start();
+  });
+
+  ipcMain.handle('ollama:stop', async () => {
+    return ollamaManager.stop();
+  });
+
+  ipcMain.handle('ollama:listLocalModels', () => ollamaManager.listLocalModels());
+
+  ipcMain.handle('ollama:pullModel', async (event, name) => {
+    checkRateLimit('ollama:pullModel', 5);
+    const modelName = assertString(name, 'name', 100);
+    await ollamaManager.pullModel(modelName, (progress) => {
+      event.sender.send('ollama:download-progress', progress);
+    });
+  });
+
+  ipcMain.handle('ollama:deleteModel', async (_, name) => {
+    const modelName = assertString(name, 'name', 100);
+    return ollamaManager.deleteModel(modelName);
+  });
+
+  ipcMain.handle('ollama:getRecommendedModels', async () => {
+    const { RECOMMENDED_MODELS } = await import('../adapters/ollama-manager');
+    return RECOMMENDED_MODELS;
   });
 }

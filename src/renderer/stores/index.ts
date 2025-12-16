@@ -27,6 +27,7 @@ declare global {
         markRead: (id: number, isRead: boolean) => Promise<void>;
         star: (id: number, isStarred: boolean) => Promise<void>;
         archive: (id: number) => Promise<void>;
+        unarchive: (id: number) => Promise<void>;
         delete: (id: number) => Promise<void>;
       };
       attachments: {
@@ -36,6 +37,7 @@ declare global {
       tags: {
         list: () => Promise<Tag[]>;
         getForEmail: (emailId: number) => Promise<AppliedTag[]>;
+        getForEmails: (emailIds: number[]) => Promise<Record<number, AppliedTag[]>>;
         apply: (emailId: number, tagId: number, source?: string) => Promise<void>;
         remove: (emailId: number, tagId: number) => Promise<void>;
       };
@@ -64,8 +66,8 @@ declare global {
         email: (accountId: number, draft: any) => Promise<{ messageId: string }>;
       };
       sync: {
-        start: (accountId: number, opts?: any) => Promise<number>;
-        startAll: (opts?: any) => Promise<number>;
+        start: (accountId: number, opts?: any) => Promise<{ newCount: number; newEmailIds: number[]; truncated?: boolean; totalAvailable?: number; synced?: number }>;
+        startAll: (opts?: any) => Promise<{ newCount: number; newEmailIds: number[]; truncated?: boolean; totalAvailable?: number; synced?: number }>;
         cancel: (accountId: number) => Promise<void>;
       };
       llm: {
@@ -117,12 +119,33 @@ declare global {
         bulkDismiss: (emailIds: number[]) => Promise<void>;
         getConfusedPatterns: (limit?: number, accountId?: number) => Promise<ConfusedPattern[]>;
         getRecentActivity: (limit?: number, accountId?: number) => Promise<ClassificationFeedback[]>;
-        classifyUnprocessed: () => Promise<number>;
+        classifyUnprocessed: () => Promise<{ classified: number; skipped: number }>;
         clearConfusedPatterns: () => Promise<void>;
       };
       contacts: {
         getRecent: (limit?: number) => Promise<RecentContact[]>;
         search: (query: string, limit?: number) => Promise<RecentContact[]>;
+      };
+      db: {
+        checkIntegrity: (full?: boolean) => Promise<{ isHealthy: boolean; errors: string[] }>;
+        backup: () => Promise<string>;
+      };
+      ollama: {
+        isInstalled: () => Promise<boolean>;
+        isRunning: () => Promise<boolean>;
+        downloadBinary: () => Promise<void>;
+        start: () => Promise<void>;
+        stop: () => Promise<void>;
+        listLocalModels: () => Promise<{ name: string; size: number; modifiedAt: string }[]>;
+        pullModel: (name: string) => Promise<void>;
+        deleteModel: (name: string) => Promise<void>;
+        getRecommendedModels: () => Promise<{
+          id: string;
+          name: string;
+          description: string;
+          size: string;
+          sizeBytes: number;
+        }[]>;
       };
       on: (channel: string, callback: (...args: any[]) => void) => void;
       off: (channel: string, callback: (...args: any[]) => void) => void;
@@ -134,6 +157,9 @@ declare global {
 // Email Store
 // ============================================
 
+// Maximum emails to keep in memory - evict oldest when exceeded
+const MAX_CACHED_EMAILS = 500;
+
 type EmailStore = {
   emails: Email[];
   emailTagsMap: Record<number, AppliedTag[]>;  // Map emailId -> tags
@@ -144,7 +170,12 @@ type EmailStore = {
   selectedAttachments: Attachment[];
   loading: boolean;
   loadingBody: boolean;
+  loadingMore: boolean;
   error: string | null;
+
+  // Pagination
+  offset: number;
+  hasMore: boolean;
 
   // Filters
   filter: {
@@ -157,10 +188,12 @@ type EmailStore = {
 
   // Actions
   loadEmails: (accountId?: number) => Promise<void>;
+  loadMore: (accountId: number) => Promise<void>;
   selectEmail: (id: number | null) => Promise<void>;
   markRead: (id: number, isRead: boolean) => Promise<void>;
   toggleStar: (id: number) => Promise<void>;
   archive: (id: number) => Promise<void>;
+  unarchive: (id: number) => Promise<void>;
   deleteEmail: (id: number) => Promise<void>;
   search: (query: string, accountId: number) => Promise<void>;
   setFilter: (filter: Partial<EmailStore['filter']>, accountId: number) => void;
@@ -180,7 +213,10 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   selectedAttachments: [],
   loading: false,
   loadingBody: false,
+  loadingMore: false,
   error: null,
+  offset: 0,
+  hasMore: true,
   filter: {},
 
   loadEmails: async (accountId?: number) => {
@@ -209,18 +245,101 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
         });
       }
 
-      // Load tags for all emails in parallel
-      const tagsMap: Record<number, AppliedTag[]> = {};
-      await Promise.all(
-        emails.map(async (email) => {
-          const tags = await window.mailApi.tags.getForEmail(email.id);
-          tagsMap[email.id] = tags;
-        })
-      );
+      // Load tags for all emails in a single batch call
+      const tagsMap = await window.mailApi.tags.getForEmails(emails.map(e => e.id));
 
-      set({ emails, emailTagsMap: tagsMap, loading: false });
+      // Apply LRU eviction if we exceed the limit
+      let finalEmails = emails;
+      let finalTagsMap = tagsMap;
+
+      if (finalEmails.length > MAX_CACHED_EMAILS) {
+        // Keep most recent emails (they're already sorted by date desc from backend)
+        const evictedEmails = finalEmails.slice(MAX_CACHED_EMAILS);
+        finalEmails = finalEmails.slice(0, MAX_CACHED_EMAILS);
+
+        // Clean up tags for evicted emails
+        const evictedIds = new Set(evictedEmails.map(e => e.id));
+        finalTagsMap = Object.fromEntries(
+          Object.entries(tagsMap).filter(([id]) => !evictedIds.has(Number(id)))
+        );
+      }
+
+      // Auto-select first email if emails are available and nothing is currently selected
+      const currentSelectedId = get().selectedId;
+      const shouldAutoSelect = finalEmails.length > 0 && !currentSelectedId;
+      const newSelectedId = shouldAutoSelect ? finalEmails[0].id : currentSelectedId;
+
+      set({
+        emails: finalEmails,
+        emailTagsMap: finalTagsMap,
+        selectedId: newSelectedId,
+        loading: false,
+        offset: 0,
+        hasMore: emails.length === 100,
+      });
     } catch (err) {
       set({ error: String(err), loading: false });
+    }
+  },
+
+  loadMore: async (accountId: number) => {
+    const { emails, filter, offset, hasMore, loadingMore } = get();
+
+    // Don't load if already loading or no more emails
+    if (loadingMore || !hasMore) return;
+
+    set({ loadingMore: true, error: null });
+    try {
+      let moreEmails: Email[];
+      const newOffset = offset + emails.length;
+
+      if (filter.searchQuery) {
+        // For search, we can't use offset, so just return
+        set({ loadingMore: false, hasMore: false });
+        return;
+      } else {
+        moreEmails = await window.mailApi.emails.list({
+          accountId,
+          tagId: filter.tagId,
+          folderPath: filter.folderPath,
+          unreadOnly: filter.unreadOnly,
+          starredOnly: filter.starredOnly,
+          limit: 100,
+          offset: newOffset,
+        });
+      }
+
+      // Load tags for new emails
+      const newTagsMap = await window.mailApi.tags.getForEmails(moreEmails.map(e => e.id));
+
+      // Combine with existing emails and tags
+      const combinedEmails = [...emails, ...moreEmails];
+      const combinedTagsMap = { ...get().emailTagsMap, ...newTagsMap };
+
+      // Apply LRU eviction if we exceed the limit
+      let finalEmails = combinedEmails;
+      let finalTagsMap = combinedTagsMap;
+
+      if (finalEmails.length > MAX_CACHED_EMAILS) {
+        // Keep most recent emails (they're already sorted by date desc from backend)
+        const evictedEmails = finalEmails.slice(MAX_CACHED_EMAILS);
+        finalEmails = finalEmails.slice(0, MAX_CACHED_EMAILS);
+
+        // Clean up tags for evicted emails
+        const evictedIds = new Set(evictedEmails.map(e => e.id));
+        finalTagsMap = Object.fromEntries(
+          Object.entries(combinedTagsMap).filter(([id]) => !evictedIds.has(Number(id)))
+        );
+      }
+
+      set({
+        emails: finalEmails,
+        emailTagsMap: finalTagsMap,
+        loadingMore: false,
+        hasMore: moreEmails.length === 100,
+      });
+    } catch (err) {
+      set({ error: String(err), loadingMore: false });
     }
   },
 
@@ -288,37 +407,79 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
 
   archive: async (id) => {
     await window.mailApi.emails.archive(id);
-    set(state => ({
-      emails: state.emails.filter(e => e.id !== id),
-      selectedId: state.selectedId === id ? null : state.selectedId,
-      selectedEmail: state.selectedId === id ? null : state.selectedEmail,
-    }));
+    set(state => {
+      const { [id]: _, ...remainingTags } = state.emailTagsMap;
+      return {
+        emails: state.emails.filter(e => e.id !== id),
+        emailTagsMap: remainingTags,
+        selectedId: state.selectedId === id ? null : state.selectedId,
+        selectedEmail: state.selectedId === id ? null : state.selectedEmail,
+      };
+    });
+  },
+
+  unarchive: async (id) => {
+    await window.mailApi.emails.unarchive(id);
+    set(state => {
+      const { [id]: _, ...remainingTags } = state.emailTagsMap;
+      return {
+        emails: state.emails.filter(e => e.id !== id),
+        emailTagsMap: remainingTags,
+        selectedId: state.selectedId === id ? null : state.selectedId,
+        selectedEmail: state.selectedId === id ? null : state.selectedEmail,
+      };
+    });
   },
 
   deleteEmail: async (id) => {
     await window.mailApi.emails.delete(id);
-    set(state => ({
-      emails: state.emails.filter(e => e.id !== id),
-      selectedId: state.selectedId === id ? null : state.selectedId,
-      selectedEmail: state.selectedId === id ? null : state.selectedEmail,
-      selectedBody: state.selectedId === id ? null : state.selectedBody,
-      selectedTags: state.selectedId === id ? [] : state.selectedTags,
-      selectedAttachments: state.selectedId === id ? [] : state.selectedAttachments,
-    }));
+    set(state => {
+      const { [id]: _, ...remainingTags } = state.emailTagsMap;
+      return {
+        emails: state.emails.filter(e => e.id !== id),
+        emailTagsMap: remainingTags,
+        selectedId: state.selectedId === id ? null : state.selectedId,
+        selectedEmail: state.selectedId === id ? null : state.selectedEmail,
+        selectedBody: state.selectedId === id ? null : state.selectedBody,
+        selectedTags: state.selectedId === id ? [] : state.selectedTags,
+        selectedAttachments: state.selectedId === id ? [] : state.selectedAttachments,
+      };
+    });
   },
 
   search: async (query, accountId) => {
-    set({ filter: { searchQuery: query } });
+    set({
+      filter: { searchQuery: query },
+      selectedId: null,
+      selectedEmail: null,
+      selectedBody: null,
+      selectedTags: [],
+      selectedAttachments: []
+    });
     await get().loadEmails(accountId);
   },
 
   setFilter: (filter, accountId) => {
-    set(state => ({ filter: { ...state.filter, ...filter } }));
+    set(state => ({
+      filter: { ...state.filter, ...filter },
+      selectedId: null,
+      selectedEmail: null,
+      selectedBody: null,
+      selectedTags: [],
+      selectedAttachments: []
+    }));
     get().loadEmails(accountId);
   },
 
   clearFilter: (accountId) => {
-    set({ filter: {} });
+    set({
+      filter: {},
+      selectedId: null,
+      selectedEmail: null,
+      selectedBody: null,
+      selectedTags: [],
+      selectedAttachments: []
+    });
     get().loadEmails(accountId);
   },
 
@@ -390,11 +551,17 @@ type SyncStore = {
   progress: SyncProgress | null;
   lastSync: Date | null;
   lastError: string | null;
+  truncationInfo: {
+    truncated: boolean;
+    totalAvailable: number;
+    synced: number;
+  } | null;
 
   startSync: (accountId: number) => Promise<void>;
   startSyncAll: () => Promise<void>;
   cancelSync: (accountId: number) => Promise<void>;
   setProgress: (progress: SyncProgress | null) => void;
+  dismissTruncationInfo: () => void;
 };
 
 export const useSyncStore = create<SyncStore>((set, get) => ({
@@ -403,13 +570,25 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
   progress: null,
   lastSync: null,
   lastError: null,
+  truncationInfo: null,
 
   // Sync specified account - caller provides accountId (no cross-store coupling)
   startSync: async (accountId: number) => {
-    set({ syncing: true, syncingAccountId: accountId, lastError: null });
+    set({ syncing: true, syncingAccountId: accountId, lastError: null, truncationInfo: null });
     try {
-      await window.mailApi.sync.start(accountId);
+      const result = await window.mailApi.sync.start(accountId);
       set({ lastSync: new Date() });
+
+      // Store truncation info if sync was truncated
+      if (result && typeof result === 'object' && 'truncated' in result && result.truncated) {
+        set({
+          truncationInfo: {
+            truncated: result.truncated,
+            totalAvailable: result.totalAvailable || 0,
+            synced: result.synced || 0,
+          }
+        });
+      }
       // Note: Caller should reload emails after sync completes
     } catch (err) {
       set({ lastError: String(err) });
@@ -420,10 +599,21 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
 
   // Sync all accounts
   startSyncAll: async () => {
-    set({ syncing: true, syncingAccountId: null, lastError: null });
+    set({ syncing: true, syncingAccountId: null, lastError: null, truncationInfo: null });
     try {
-      await window.mailApi.sync.startAll();
+      const result = await window.mailApi.sync.startAll();
       set({ lastSync: new Date() });
+
+      // Store truncation info if sync was truncated
+      if (result && typeof result === 'object' && 'truncated' in result && result.truncated) {
+        set({
+          truncationInfo: {
+            truncated: result.truncated,
+            totalAvailable: result.totalAvailable || 0,
+            synced: result.synced || 0,
+          }
+        });
+      }
       // Note: Caller should reload emails after sync completes
     } finally {
       set({ syncing: false, progress: null });
@@ -443,6 +633,8 @@ export const useSyncStore = create<SyncStore>((set, get) => ({
   },
 
   setProgress: (progress) => set({ progress }),
+
+  dismissTruncationInfo: () => set({ truncationInfo: null }),
 }));
 
 // ============================================

@@ -5,6 +5,7 @@
  * Enables UI testing via Chrome DevTools MCP and Storybook.
  */
 
+// Import MailAPI type, but allow unarchive to be added even if not in compiled type yet
 import type { MailAPI } from '../main/preload';
 
 // Event listeners storage
@@ -28,10 +29,10 @@ const mockAccounts = [
 ];
 
 const mockTags = [
-  { id: 1, name: 'Work', slug: 'work', color: '#3b82f6', icon: 'briefcase', isSystem: false },
-  { id: 2, name: 'Personal', slug: 'personal', color: '#ef4444', icon: 'user', isSystem: false },
-  { id: 3, name: 'Finance', slug: 'finance', color: '#22c55e', icon: 'dollar', isSystem: false },
-  { id: 4, name: 'Travel', slug: 'travel', color: '#f59e0b', icon: 'plane', isSystem: false },
+  { id: 1, name: 'Work', slug: 'work', color: '#3b82f6', icon: 'briefcase', isSystem: false, sortOrder: 0 },
+  { id: 2, name: 'Personal', slug: 'personal', color: '#ef4444', icon: 'user', isSystem: false, sortOrder: 1 },
+  { id: 3, name: 'Finance', slug: 'finance', color: '#22c55e', icon: 'dollar', isSystem: false, sortOrder: 2 },
+  { id: 4, name: 'Travel', slug: 'travel', color: '#f59e0b', icon: 'plane', isSystem: false, sortOrder: 3 },
 ];
 
 const mockEmails = [
@@ -79,7 +80,7 @@ const mockEmails = [
     from: { address: 'billing@service.com', name: 'Billing Department' },
     to: ['test@example.com'],
     date: new Date(Date.now() - 1000 * 60 * 60 * 24), // 1 day ago
-    snippet: 'Your invoice for December 2024 is now available. Total amount due: $49.99...',
+    snippet: 'Your invoice for December 2025 is now available. Total amount due: $49.99...',
     sizeBytes: 3200,
     isRead: false,
     isStarred: false,
@@ -113,7 +114,7 @@ const mockEmails = [
     from: { address: 'reservations@airline.com', name: 'Airline Bookings' },
     to: ['test@example.com'],
     date: new Date(Date.now() - 1000 * 60 * 60 * 72), // 3 days ago
-    snippet: 'Your flight to Paris has been confirmed. Departure: Dec 20, 2024 at 10:30 AM...',
+    snippet: 'Your flight to Paris has been confirmed. Departure: Dec 20, 2025 at 10:30 AM...',
     sizeBytes: 4500,
     isRead: true,
     isStarred: true,
@@ -133,13 +134,61 @@ const mockEmailBodies: Record<number, { text: string; html: string }> = {
   },
 };
 
-// Simulated sync progress
-let syncInProgress = false;
-
 export function createMockApi(): MailAPI {
+  // Email to tag mapping (mirrors getForEmail logic)
+  const emailTagMap: Record<number, number[]> = {
+    1: [1], // Work
+    3: [3], // Finance
+    5: [4], // Travel
+  };
+
+  // AI sort pending review items (mutable for accept/dismiss)
+  const pendingReviewItems = [
+    {
+      emailId: 2,
+      status: 'pending' as const,
+      confidence: 0.78,
+      priority: 'normal' as const,
+      suggestedTags: ['work', 'meeting'],
+      reasoning: 'Email discusses a work meeting with quarterly reports',
+      errorMessage: null,
+      classifiedAt: new Date(),
+      reviewedAt: null,
+      dismissedAt: null,
+      email: mockEmails[1], // Alice Johnson's email
+    },
+    {
+      emailId: 4,
+      status: 'pending' as const,
+      confidence: 0.65,
+      priority: 'low' as const,
+      suggestedTags: ['work'],
+      reasoning: 'Project update discussion',
+      errorMessage: null,
+      classifiedAt: new Date(),
+      reviewedAt: null,
+      dismissedAt: null,
+      email: mockEmails[3], // Bob Smith's email
+    },
+  ];
+
   return {
     emails: {
-      list: async () => mockEmails,
+      list: async (options?: { tagId?: number; starredOnly?: boolean; folderPath?: string }) => {
+        let filtered = mockEmails;
+
+        // Filter by tag
+        if (options?.tagId) {
+          filtered = filtered.filter((e) => emailTagMap[e.id]?.includes(options.tagId!));
+        }
+
+        // Filter by starred
+        if (options?.starredOnly) {
+          filtered = filtered.filter((e) => e.isStarred);
+        }
+
+        return filtered;
+      },
       get: async (id) => mockEmails.find((e) => e.id === id) || null,
       getBody: async (id) => mockEmailBodies[id] || { text: 'Email body not available', html: '<p>Email body not available</p>' },
       search: async (query) => mockEmails.filter((e) =>
@@ -154,8 +203,9 @@ export function createMockApi(): MailAPI {
         const email = mockEmails.find((e) => e.id === id);
         if (email) email.isStarred = isStarred;
       },
-      archive: async () => {},
-      delete: async () => {},
+      archive: async (_id: number) => {},
+      unarchive: async (_id: number) => {},
+      delete: async (_id: number) => {},
     },
 
     attachments: {
@@ -167,19 +217,41 @@ export function createMockApi(): MailAPI {
       list: async () => mockTags,
       getForEmail: async (emailId) => {
         // Return some tags for some emails
-        if (emailId === 1) return [mockTags[0]]; // Work
-        if (emailId === 3) return [mockTags[2]]; // Finance
-        if (emailId === 5) return [mockTags[3]]; // Travel
+        if (emailId === 1) return [{ ...mockTags[0], source: 'llm' as const, confidence: 0.85 }]; // Work
+        if (emailId === 3) return [{ ...mockTags[2], source: 'llm' as const, confidence: 0.92 }]; // Finance
+        if (emailId === 5) return [{ ...mockTags[3], source: 'manual' as const, confidence: null }]; // Travel
         return [];
       },
-      apply: async () => {},
-      remove: async () => {},
+      getForEmails: async (emailIds: number[]) => {
+        const result: Record<number, any[]> = {};
+        emailIds.forEach((id: number) => {
+          if (id === 1) result[id] = [{ ...mockTags[0], source: 'llm' as const, confidence: 0.85 }]; // Work
+          else if (id === 3) result[id] = [{ ...mockTags[2], source: 'llm' as const, confidence: 0.92 }]; // Finance
+          else if (id === 5) result[id] = [{ ...mockTags[3], source: 'manual' as const, confidence: null }]; // Travel
+          else result[id] = [];
+        });
+        return result;
+      },
+      apply: async (emailId, tagId) => {
+        // Update internal mapping for consistency
+        if (!emailTagMap[emailId]) {
+          emailTagMap[emailId] = [];
+        }
+        if (!emailTagMap[emailId].includes(tagId)) {
+          emailTagMap[emailId].push(tagId);
+        }
+      },
+      remove: async (emailId, tagId) => {
+        // Update internal mapping for consistency
+        if (emailTagMap[emailId]) {
+          emailTagMap[emailId] = emailTagMap[emailId].filter((id) => id !== tagId);
+        }
+      },
       create: async (tag) => ({ id: mockTags.length + 1, ...tag }),
     },
 
     sync: {
       start: async (accountId) => {
-        syncInProgress = true;
         // Simulate progress events
         setTimeout(() => {
           listeners.get('sync:progress')?.forEach((cb) =>
@@ -195,13 +267,11 @@ export function createMockApi(): MailAPI {
           listeners.get('sync:progress')?.forEach((cb) =>
             cb({ accountId, folder: 'INBOX', phase: 'complete', current: 10, total: 10, newCount: 5 })
           );
-          syncInProgress = false;
         }, 1000);
         return { newCount: 5, newEmailIds: [6, 7, 8, 9, 10] };
       },
       startAll: async () => ({ newCount: 5, newEmailIds: [6, 7, 8, 9, 10] }),
       cancel: async () => {
-        syncInProgress = false;
         listeners.get('sync:progress')?.forEach((cb) =>
           cb({ accountId: 1, folder: 'INBOX', phase: 'cancelled', current: 0, total: 0, newCount: 0 })
         );
@@ -228,13 +298,42 @@ export function createMockApi(): MailAPI {
     },
 
     aiSort: {
-      getPendingReview: async () => [],
+      getPendingReview: async () => pendingReviewItems.filter(item => item.status === 'pending'),
       getByPriority: async () => [],
       getFailed: async () => [],
-      getStats: async () => ({ total: 0, pending: 0, approved: 0, dismissed: 0, failed: 0 }),
-      getPendingCount: async () => 0,
-      accept: async () => {},
-      dismiss: async () => {},
+      getStats: async () => ({
+        classifiedToday: 12,
+        pendingReview: pendingReviewItems.filter(item => item.status === 'pending').length,
+        accuracy30Day: 0.875,
+        budgetUsed: 2500,
+        budgetLimit: 10000,
+        priorityBreakdown: { high: 2, normal: 8, low: 2 },
+      }),
+      getPendingCount: async () => pendingReviewItems.filter(item => item.status === 'pending').length,
+      accept: async (emailId, appliedTags) => {
+        const item = pendingReviewItems.find(i => i.emailId === emailId);
+        if (item) {
+          (item as any).status = 'accepted';
+          (item as any).reviewedAt = new Date();
+          // Apply the tags to the email
+          appliedTags.forEach(tagSlug => {
+            const tag = mockTags.find(t => t.slug === tagSlug);
+            if (tag && !emailTagMap[emailId]) {
+              emailTagMap[emailId] = [];
+            }
+            if (tag && !emailTagMap[emailId].includes(tag.id)) {
+              emailTagMap[emailId].push(tag.id);
+            }
+          });
+        }
+      },
+      dismiss: async (emailId) => {
+        const item = pendingReviewItems.find(i => i.emailId === emailId);
+        if (item) {
+          (item as any).status = 'dismissed';
+          (item as any).dismissedAt = new Date();
+        }
+      },
       retry: async () => {},
       getConfusedPatterns: async () => [],
       clearConfusedPatterns: async () => {},
@@ -327,6 +426,56 @@ export function createMockApi(): MailAPI {
       ].filter((c) => c.email.includes(query) || c.name?.toLowerCase().includes(query.toLowerCase())),
     },
 
+    db: {
+      checkIntegrity: async () => ({ isHealthy: true, errors: [] }),
+      backup: async () => '/tmp/mock-backup.sqlite',
+    },
+
+    ollama: {
+      isInstalled: async () => false,
+      isRunning: async () => false,
+      downloadBinary: async () => {
+        // Simulate download progress
+        setTimeout(() => {
+          listeners.get('ollama:download-progress')?.forEach((cb) =>
+            cb({ phase: 'binary', percent: 25, bytesDownloaded: 12500000, totalBytes: 50000000 })
+          );
+        }, 500);
+        setTimeout(() => {
+          listeners.get('ollama:download-progress')?.forEach((cb) =>
+            cb({ phase: 'binary', percent: 75, bytesDownloaded: 37500000, totalBytes: 50000000 })
+          );
+        }, 1000);
+        setTimeout(() => {
+          listeners.get('ollama:download-progress')?.forEach((cb) =>
+            cb({ phase: 'binary', percent: 100, bytesDownloaded: 50000000, totalBytes: 50000000 })
+          );
+        }, 1500);
+      },
+      start: async () => {},
+      stop: async () => {},
+      listLocalModels: async () => [],
+      pullModel: async (name: string) => {
+        // Simulate model download progress
+        setTimeout(() => {
+          listeners.get('ollama:download-progress')?.forEach((cb) =>
+            cb({ phase: 'model', percent: 50, bytesDownloaded: 1000000000, totalBytes: 2000000000, modelName: name })
+          );
+        }, 500);
+        setTimeout(() => {
+          listeners.get('ollama:download-progress')?.forEach((cb) =>
+            cb({ phase: 'model', percent: 100, bytesDownloaded: 2000000000, totalBytes: 2000000000, modelName: name })
+          );
+        }, 1000);
+      },
+      deleteModel: async () => {},
+      getRecommendedModels: async () => [
+        { id: 'llama3.2:3b', name: 'Llama 3.2', description: 'Best overall accuracy', size: '2.0 GB', sizeBytes: 2000000000 },
+        { id: 'mistral:7b', name: 'Mistral 7B', description: 'Excellent for French & European languages', size: '4.1 GB', sizeBytes: 4100000000 },
+        { id: 'phi3:mini', name: 'Phi-3 Mini', description: 'Smaller, faster, good for older machines', size: '2.2 GB', sizeBytes: 2200000000 },
+      ],
+    },
+
     on: (channel, callback) => {
       if (!listeners.has(channel)) listeners.set(channel, new Set());
       listeners.get(channel)!.add(callback);
@@ -342,6 +491,6 @@ export function createMockApi(): MailAPI {
 export function injectMockApiIfNeeded(): void {
   if (typeof window !== 'undefined' && typeof window.mailApi === 'undefined') {
     console.log('[MockAPI] Injecting mock mailApi for browser testing');
-    (window as unknown as { mailApi: MailAPI }).mailApi = createMockApi();
+    (window as any).mailApi = createMockApi();
   }
 }
