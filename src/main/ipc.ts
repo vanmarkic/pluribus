@@ -325,14 +325,38 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   });
 
   ipcMain.handle('llm:startOllama', async () => {
-    const { startOllama } = await import('../adapters/llm/ollama');
-    const llmConfig = container.config.get('llm');
-    return startOllama(llmConfig.ollamaServerUrl);
+    // Check if bundled Ollama is installed
+    const isBundledInstalled = await ollamaManager.isInstalled();
+
+    if (isBundledInstalled) {
+      // Use bundled Ollama
+      try {
+        await ollamaManager.start();
+        return { started: true };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { started: false, error: message };
+      }
+    } else {
+      // Fall back to system Ollama
+      const { startOllama } = await import('../adapters/llm/ollama');
+      const llmConfig = container.config.get('llm');
+      return startOllama(llmConfig.ollamaServerUrl);
+    }
   });
 
   ipcMain.handle('llm:stopOllama', async () => {
-    const { stopOllama } = await import('../adapters/llm/ollama');
-    return stopOllama();
+    // Check if bundled Ollama is installed
+    const isBundledInstalled = await ollamaManager.isInstalled();
+
+    if (isBundledInstalled) {
+      // Stop bundled Ollama
+      await ollamaManager.stop();
+    } else {
+      // Fall back to system Ollama stop
+      const { stopOllama } = await import('../adapters/llm/ollama');
+      await stopOllama();
+    }
   });
 
   ipcMain.handle('llm:isConfigured', async () => {
