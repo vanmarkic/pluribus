@@ -226,3 +226,101 @@ CREATE TABLE IF NOT EXISTS recent_contacts (
 
 CREATE INDEX IF NOT EXISTS idx_recent_contacts_score
   ON recent_contacts(use_count DESC, last_used_at DESC);
+
+-- ============================================
+-- Email Triage System
+-- ============================================
+
+-- Training examples (onboarding + corrections)
+CREATE TABLE IF NOT EXISTS training_examples (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  email_id INTEGER REFERENCES emails(id) ON DELETE SET NULL,
+  from_address TEXT NOT NULL,
+  from_domain TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  ai_suggestion TEXT,
+  user_choice TEXT NOT NULL,
+  was_correction INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'manual',  -- onboarding, review_folder, manual_move
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_training_account ON training_examples(account_id);
+CREATE INDEX IF NOT EXISTS idx_training_domain ON training_examples(from_domain);
+CREATE INDEX IF NOT EXISTS idx_training_correction ON training_examples(was_correction);
+
+-- Sender-based learned rules
+CREATE TABLE IF NOT EXISTS sender_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  pattern TEXT NOT NULL,
+  pattern_type TEXT NOT NULL DEFAULT 'domain',  -- domain, email, subject_prefix
+  target_folder TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 0.8,
+  correction_count INTEGER NOT NULL DEFAULT 1,
+  auto_apply INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(account_id, pattern, pattern_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sender_rules_account ON sender_rules(account_id);
+CREATE INDEX IF NOT EXISTS idx_sender_rules_auto ON sender_rules(auto_apply) WHERE auto_apply = 1;
+
+-- Email snoozes
+CREATE TABLE IF NOT EXISTS email_snoozes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email_id INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+  snooze_until TEXT NOT NULL,
+  original_folder TEXT NOT NULL,
+  reason TEXT,  -- shipping, waiting_reply, manual
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(email_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_snoozes_until ON email_snoozes(snooze_until);
+
+-- Auto-delete schedules
+CREATE TABLE IF NOT EXISTS email_auto_deletes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email_id INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+  delete_after TEXT NOT NULL,
+  reason TEXT,  -- 2fa, promo, dev
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(email_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_auto_deletes_after ON email_auto_deletes(delete_after);
+
+-- Sent email tracking (for waiting-for-reply)
+CREATE TABLE IF NOT EXISTS sent_tracking (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email_id INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+  thread_id TEXT,
+  expecting_reply INTEGER NOT NULL DEFAULT 1,
+  snooze_until TEXT,
+  reply_received INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(email_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sent_tracking_expecting ON sent_tracking(expecting_reply, snooze_until);
+
+-- Classification log (audit trail)
+CREATE TABLE IF NOT EXISTS triage_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email_id INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+  account_id INTEGER NOT NULL,
+  pattern_hint TEXT,
+  llm_folder TEXT,
+  llm_confidence REAL,
+  pattern_agreed INTEGER,
+  final_folder TEXT NOT NULL,
+  source TEXT NOT NULL,  -- llm, pattern-fallback, sender_rule, user-override
+  reasoning TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_triage_log_email ON triage_log(email_id);
+CREATE INDEX IF NOT EXISTS idx_triage_log_created ON triage_log(created_at DESC);

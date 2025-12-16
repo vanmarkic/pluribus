@@ -5,7 +5,7 @@
  * This is dependency inversion without the ceremony.
  */
 
-import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, Folder, ListEmailsOptions, Classification, SyncProgress, SyncOptions, Draft, DraftInput, ListDraftsOptions, ClassificationState, ClassificationFeedback, ConfusedPattern, ClassificationStats, ClassificationStatus, RecentContact, LicenseState } from './domain';
+import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, Folder, ListEmailsOptions, Classification, SyncProgress, SyncOptions, Draft, DraftInput, ListDraftsOptions, ClassificationState, ClassificationFeedback, ConfusedPattern, ClassificationStats, ClassificationStatus, RecentContact, LicenseState, TriageClassificationResult, TrainingExample, SenderRule, EmailSnooze, TriageLogEntry, TriageFolder } from './domain';
 
 // ============================================
 // Email Repository
@@ -380,6 +380,80 @@ export type LicenseService = {
 };
 
 // ============================================
+// Email Triage Ports
+// ============================================
+
+export type TriageConfig = {
+  enabled: boolean;
+  confidenceThreshold: number;
+  waitingReplyDays: number;
+  twoFaAutoDeleteMinutes: number;
+  promoAutoArchiveDays: number;
+  devAutoDeleteDays: number;
+};
+
+export type PatternMatchResult = {
+  folder: TriageFolder;
+  confidence: number;
+  tags: string[];
+  snoozeUntil?: Date;
+  autoDeleteAfter?: number;
+};
+
+export type PatternMatcher = {
+  match: (email: Email) => PatternMatchResult;
+};
+
+export type TriageClassifier = {
+  classify: (email: Email, patternHint: PatternMatchResult, examples: TrainingExample[]) => Promise<TriageClassificationResult>;
+};
+
+export type TrainingRepo = {
+  findByAccount: (accountId: number, limit?: number) => Promise<TrainingExample[]>;
+  findByDomain: (accountId: number, domain: string, limit?: number) => Promise<TrainingExample[]>;
+  save: (example: Omit<TrainingExample, 'id' | 'createdAt'>) => Promise<TrainingExample>;
+  getRelevantExamples: (accountId: number, email: Email, limit?: number) => Promise<TrainingExample[]>;
+};
+
+export type SenderRuleRepo = {
+  findByAccount: (accountId: number) => Promise<SenderRule[]>;
+  findAutoApply: (accountId: number) => Promise<SenderRule[]>;
+  findByPattern: (accountId: number, pattern: string, patternType: string) => Promise<SenderRule | null>;
+  upsert: (rule: Omit<SenderRule, 'id' | 'createdAt' | 'updatedAt'>) => Promise<SenderRule>;
+  incrementCount: (id: number) => Promise<void>;
+};
+
+export type SnoozeRepo = {
+  findByEmail: (emailId: number) => Promise<EmailSnooze | null>;
+  findDue: () => Promise<EmailSnooze[]>;
+  create: (snooze: Omit<EmailSnooze, 'id' | 'createdAt'>) => Promise<EmailSnooze>;
+  delete: (emailId: number) => Promise<void>;
+};
+
+export type TriageLogRepo = {
+  log: (entry: Omit<TriageLogEntry, 'id' | 'createdAt'>) => Promise<void>;
+  findByEmail: (emailId: number) => Promise<TriageLogEntry[]>;
+  findRecent: (limit?: number, accountId?: number) => Promise<TriageLogEntry[]>;
+};
+
+export type ImapFolderOps = {
+  createFolder: (account: Account, path: string) => Promise<void>;
+  deleteFolder: (account: Account, path: string) => Promise<void>;
+  listFolders: (account: Account) => Promise<{ path: string; specialUse?: string }[]>;
+  moveMessage: (account: Account, emailUid: number, fromFolder: string, toFolder: string) => Promise<void>;
+  ensureTriageFolders: (account: Account) => Promise<string[]>;
+};
+
+export type EmailTriageService = {
+  classifyEmail: (email: Email) => Promise<TriageClassificationResult>;
+  moveToFolder: (emailId: number, folder: TriageFolder) => Promise<void>;
+  scheduleSnooze: (emailId: number, until: Date, reason: EmailSnooze['reason']) => Promise<void>;
+  cancelSnooze: (emailId: number) => Promise<void>;
+  processSnoozedEmails: () => Promise<number>;
+  learnFromCorrection: (emailId: number, fromFolder: string, toFolder: TriageFolder) => Promise<void>;
+};
+
+// ============================================
 // All Dependencies (for DI)
 // ============================================
 
@@ -402,4 +476,12 @@ export type Deps = {
   backgroundTasks: BackgroundTaskManager;
   databaseHealth: DatabaseHealth;
   license: LicenseService;
+  // Triage
+  patternMatcher: PatternMatcher;
+  triageClassifier: TriageClassifier;
+  trainingRepo: TrainingRepo;
+  senderRules: SenderRuleRepo;
+  snoozes: SnoozeRepo;
+  triageLog: TriageLogRepo;
+  imapFolderOps: ImapFolderOps;
 };

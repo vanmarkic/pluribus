@@ -331,3 +331,116 @@ export type LicenseState = {
 
 /** Grace period after expiry before read-only mode (7 days) */
 export const LICENSE_GRACE_PERIOD_DAYS = 7;
+
+// ============================================
+// Email Triage Types
+// ============================================
+
+export type TriageFolder =
+  | 'INBOX'
+  | 'Planning'
+  | 'Review'
+  | 'Paper-Trail/Invoices'
+  | 'Paper-Trail/Admin'
+  | 'Paper-Trail/Travel'
+  | 'Feed'
+  | 'Social'
+  | 'Promotions'
+  | 'Archive';
+
+export type TriageClassificationResult = {
+  folder: TriageFolder;
+  tags: string[];
+  confidence: number;
+  snoozeUntil?: Date;
+  autoDeleteAfter?: number; // minutes
+  patternHint?: TriageFolder;
+  patternAgreed: boolean;
+  reasoning: string;
+};
+
+export type TrainingExample = {
+  id: number;
+  accountId: number;
+  emailId: number | null;
+  fromAddress: string;
+  fromDomain: string;
+  subject: string;
+  aiSuggestion: string | null;
+  userChoice: string;
+  wasCorrection: boolean;
+  source: 'onboarding' | 'review_folder' | 'manual_move';
+  createdAt: Date;
+};
+
+export type SenderRule = {
+  id: number;
+  accountId: number;
+  pattern: string;
+  patternType: 'domain' | 'email' | 'subject_prefix';
+  targetFolder: TriageFolder;
+  confidence: number;
+  correctionCount: number;
+  autoApply: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type EmailSnooze = {
+  id: number;
+  emailId: number;
+  snoozeUntil: Date;
+  originalFolder: string;
+  reason: 'shipping' | 'waiting_reply' | 'manual';
+  createdAt: Date;
+};
+
+export type TriageLogEntry = {
+  id: number;
+  emailId: number;
+  accountId: number;
+  patternHint: string | null;
+  llmFolder: string | null;
+  llmConfidence: number | null;
+  patternAgreed: boolean | null;
+  finalFolder: string;
+  source: 'llm' | 'pattern-fallback' | 'sender_rule' | 'user-override';
+  reasoning: string | null;
+  createdAt: Date;
+};
+
+export const TRIAGE_FOLDERS: TriageFolder[] = [
+  'INBOX',
+  'Planning',
+  'Review',
+  'Paper-Trail/Invoices',
+  'Paper-Trail/Admin',
+  'Paper-Trail/Travel',
+  'Feed',
+  'Social',
+  'Promotions',
+  'Archive',
+];
+
+// Pattern detection signals
+export const TRIAGE_PATTERNS = {
+  twoFA: /verification code|security code|2fa|one-time|otp|sign.?in code/i,
+  shipping: /shipped|tracking|delivery|out for delivery|package|carrier/i,
+  invoice: /receipt|invoice|order confirm|payment|purchase|transaction/i,
+  travel: /flight|booking|itinerary|hotel|reservation|boarding|check-in/i,
+  admin: /contract|agreement|terms of service|account.*(created|updated)|policy/i,
+  socialDM: /sent you a message|direct message|new message from|privately/i,
+  newsletter: /unsubscribe.*newsletter|weekly digest|monthly update/i,
+  promo: /% off|sale|discount|limited time|special offer|exclusive deal/i,
+  dev: /github|gitlab|bitbucket|pull request|issue|commit|build|deploy/i,
+};
+
+export const SOCIAL_DOMAINS = [
+  'linkedin.com', 'twitter.com', 'x.com', 'facebook.com',
+  'facebookmail.com', 'instagram.com', 'reddit.com'
+];
+
+export const DEV_DOMAINS = [
+  'github.com', 'gitlab.com', 'bitbucket.org', 'circleci.com',
+  'travis-ci.com', 'vercel.com', 'netlify.com'
+];
