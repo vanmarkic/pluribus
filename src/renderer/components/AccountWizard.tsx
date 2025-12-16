@@ -1,6 +1,6 @@
 /**
  * Account Setup Wizard
- * 
+ *
  * Add/edit email accounts with connection testing.
  */
 
@@ -8,6 +8,7 @@ import { useState, useEffect } from 'react';
 import { IconClose, IconSpinnerBall, IconCircleCheckFill, IconCircleWarningFill, IconEmail, IconDownload } from 'obra-icons-react';
 import type { SyncProgress } from '../../core/domain';
 import { useUIStore } from '../stores';
+import { TrainingStep } from './onboarding/TrainingStep';
 
 type Provider = 'gmail' | 'outlook' | 'icloud' | 'infomaniak' | 'fastmail' | 'other';
 
@@ -37,7 +38,8 @@ type Props = {
 };
 
 export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
-  const [step, setStep] = useState<'provider' | 'credentials' | 'test' | 'syncing' | 'complete'>('provider');
+  const [step, setStep] = useState<'provider' | 'credentials' | 'test' | 'syncing' | 'training' | 'complete'>('provider');
+  const [newAccountId, setNewAccountId] = useState<number | null>(null);
   const [form, setForm] = useState<AccountFormData>({
     email: '',
     password: '',
@@ -191,7 +193,13 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
           newCount: result.syncResult.newCount,
           syncDays: result.syncDays,
         });
-        setStep('complete');
+        setNewAccountId(result.account.id);
+        // Show training step if we have emails, otherwise complete
+        if (result.syncResult.newCount > 0) {
+          setStep('training');
+        } else {
+          setStep('complete');
+        }
       }
     } catch (err) {
       setError(String(err));
@@ -275,6 +283,58 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
     );
   }
 
+  // Training step renders its own full-screen modal
+  if (step === 'training' && newAccountId) {
+    return (
+      <TrainingStep
+        accountId={newAccountId}
+        onComplete={() => setStep('complete')}
+        onSkip={() => setStep('complete')}
+      />
+    );
+  }
+
+  // Complete step
+  if (step === 'complete') {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200">
+            <h2 className="text-lg font-semibold">Account Added</h2>
+            <button onClick={onSuccess} className="p-1 hover:bg-zinc-100 rounded">
+              <IconClose className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="p-6">
+            <div className="space-y-4">
+              <div className="text-center py-4">
+                <IconCircleCheckFill className="w-12 h-12 mx-auto text-green-600 mb-3" />
+                <p className="text-green-600 font-medium">Account added successfully!</p>
+                {syncResult && (
+                  <div className="mt-3 space-y-1">
+                    <p className="text-sm text-zinc-600">
+                      {syncResult.newCount.toLocaleString()} emails downloaded
+                    </p>
+                    <p className="text-xs text-zinc-400">
+                      Downloaded emails from the last {syncResult.syncDays} days
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <button
+                onClick={onSuccess}
+                className="w-full px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
@@ -320,7 +380,7 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
                   placeholder="you@example.com"
                 />
               </div>
-              
+
               <div>
                 <label className="block text-sm font-medium mb-1">
                   Password
@@ -458,7 +518,7 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
                 >
                   Back
                 </button>
-                
+
                 {!testResult && (
                   <button
                     onClick={handleTest}
@@ -468,7 +528,7 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
                     Test Connection
                   </button>
                 )}
-                
+
                 {testResult === 'error' && (
                   <button
                     onClick={handleTest}
@@ -477,7 +537,7 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
                     Retry
                   </button>
                 )}
-                
+
                 {testResult === 'success' && (
                   <button
                     onClick={handleSave}
@@ -516,32 +576,6 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
                   Downloading emails from the last 30 days
                 </p>
               </div>
-            </div>
-          )}
-
-          {step === 'complete' && (
-            <div className="space-y-4">
-              <div className="text-center py-4">
-                <IconCircleCheckFill className="w-12 h-12 mx-auto text-green-600 mb-3" />
-                <p className="text-green-600 font-medium">Account added successfully!</p>
-                {syncResult && (
-                  <div className="mt-3 space-y-1">
-                    <p className="text-sm text-zinc-600">
-                      {syncResult.newCount.toLocaleString()} emails downloaded
-                    </p>
-                    <p className="text-xs text-zinc-400">
-                      Downloaded emails from the last {syncResult.syncDays} days
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <button
-                onClick={onSuccess}
-                className="w-full px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700"
-              >
-                Done
-              </button>
             </div>
           )}
         </div>

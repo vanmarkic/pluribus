@@ -7,7 +7,7 @@
 
 import { useState, useEffect } from 'react';
 import { IconCheck, IconChevronRight, IconClose } from 'obra-icons-react';
-import type { Email } from '../../core/domain';
+import type { Email } from '../../../core/domain';
 
 const TRIAGE_FOLDERS = [
   { id: 'INBOX', label: 'Inbox', description: 'Urgent, needs response today' },
@@ -116,7 +116,7 @@ export function TrainingStep({ accountId, onComplete, onSkip }: TrainingStepProp
             aiSuggestion: null, // No AI suggestion during initial training
             userChoice: item.selectedFolder,
             wasCorrection: false,
-            source: 'training',
+            source: 'onboarding',
           });
         }
       }
