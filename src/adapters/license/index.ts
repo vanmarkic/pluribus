@@ -105,15 +105,20 @@ function calculateLicenseStatus(expiresAt: Date | null): { status: LicenseStatus
 
 export function createLicenseService(): LicenseService {
   const listeners = new Set<(state: LicenseState) => void>();
+
+  // Default to active with 1 year expiry (development mode)
+  const defaultExpiry = new Date();
+  defaultExpiry.setFullYear(defaultExpiry.getFullYear() + 1);
+
   let cachedState: LicenseState = {
-    status: 'inactive',
-    licenseKey: null,
-    expiresAt: null,
-    daysUntilExpiry: null,
+    status: 'active',
+    licenseKey: 'DEV-LICENSE',
+    expiresAt: defaultExpiry,
+    daysUntilExpiry: 365,
     isReadOnly: false,
   };
 
-  // Initialize from stored license
+  // Override with stored license if available
   const stored = loadStoredLicense();
   if (stored) {
     const expiresAt = new Date(stored.expiresAt);

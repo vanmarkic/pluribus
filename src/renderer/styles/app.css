@@ -6,6 +6,9 @@
    ============================================ */
 
 :root {
+  /* Color scheme for native form elements */
+  color-scheme: light;
+
   /* Colors - Gray Scale */
   --color-bg: #ffffff;
   --color-bg-secondary: #f9fafb;
@@ -81,6 +84,9 @@
 
 /* Dark Mode */
 .dark {
+  /* Color scheme for native form elements */
+  color-scheme: dark;
+
   --color-bg: #18181b;
   --color-bg-secondary: #27272a;
   --color-bg-tertiary: #3f3f46;
@@ -146,9 +152,11 @@ body {
   background: var(--color-bg);
   border-right: 1px solid var(--color-border);
   width: var(--sidebar-width);
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  padding-top: var(--titlebar-height);
+  overflow: hidden;
 }
 
 .sidebar-item {
@@ -226,7 +234,7 @@ body {
 }
 
 .email-item {
-  padding: var(--space-md) var(--space-lg);
+  padding: var(--space-md) var(--space-lg) var(--space-lg);
   border-bottom: 1px solid var(--color-border-light);
   cursor: pointer;
   transition: background 0.15s;

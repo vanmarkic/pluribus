@@ -495,6 +495,20 @@ export function createMockApi(): MailAPI {
       deactivate: async () => {},
     },
 
+    triage: {
+      classify: async () => ({ folder: 'INBOX', tags: [], confidence: 0.9, reasoning: 'Mock classification' }),
+      moveToFolder: async () => {},
+      learnFromCorrection: async () => {},
+      snooze: async () => {},
+      unsnooze: async () => {},
+      processSnoozed: async () => 0,
+      saveTrainingExample: async () => {},
+      getTrainingExamples: async () => [],
+      ensureFolders: async () => ['INBOX', 'Planning', 'Review', 'Feed', 'Social', 'Promotions'],
+      getSenderRules: async () => [],
+      getLog: async () => [],
+    },
+
     on: (channel, callback) => {
       if (!listeners.has(channel)) listeners.set(channel, new Set());
       listeners.get(channel)!.add(callback);

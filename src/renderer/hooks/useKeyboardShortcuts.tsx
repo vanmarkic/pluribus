@@ -225,22 +225,27 @@ export function KeyboardShortcutsHelp({ isOpen, onClose }: { isOpen: boolean; on
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4 p-6" onClick={e => e.stopPropagation()}>
-        <h2 className="text-lg font-semibold mb-4">Keyboard Shortcuts</h2>
-        
+      <div
+        className="rounded-xl shadow-xl w-full max-w-lg mx-4 p-6"
+        style={{ background: 'var(--color-bg)' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--color-text-primary)' }}>Keyboard Shortcuts</h2>
+
         <div className="grid grid-cols-2 gap-6">
           {groups.map(group => (
             <div key={group.name}>
-              <h3 className="text-sm font-medium text-zinc-500 mb-2">{group.name}</h3>
+              <h3 className="text-sm font-medium mb-2" style={{ color: 'var(--color-text-tertiary)' }}>{group.name}</h3>
               <div className="space-y-1">
                 {group.shortcuts.map((s, i) => (
                   <div key={i} className="flex items-center justify-between text-sm">
-                    <span className="text-zinc-600">{s.desc}</span>
+                    <span style={{ color: 'var(--color-text-secondary)' }}>{s.desc}</span>
                     <div className="flex gap-1">
                       {s.keys.map((key, j) => (
                         <kbd
                           key={j}
-                          className="px-1.5 py-0.5 bg-zinc-100 rounded text-xs font-mono"
+                          className="px-1.5 py-0.5 rounded text-xs font-mono"
+                          style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text-primary)' }}
                         >
                           {key}
                         </kbd>
@@ -252,10 +257,11 @@ export function KeyboardShortcutsHelp({ isOpen, onClose }: { isOpen: boolean; on
             </div>
           ))}
         </div>
-        
+
         <button
           onClick={onClose}
-          className="mt-6 w-full py-2 text-sm text-zinc-600 hover:bg-zinc-100 rounded-lg"
+          className="mt-6 w-full py-2 text-sm rounded-lg transition-colors"
+          style={{ color: 'var(--color-text-secondary)', background: 'var(--color-bg-secondary)' }}
         >
           Close
         </button>

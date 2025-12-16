@@ -17,6 +17,7 @@ import { LicenseActivationModal } from './components/LicenseActivation';
 import { AISortView } from './components/ai-sort';
 import { SetupWizard } from './components/SetupWizard';
 import { TriageReviewView } from './components/TriageReviewView';
+import { TrainingStep } from './components/onboarding/TrainingStep';
 import { useKeyboardShortcuts, KeyboardShortcutsHelp } from './hooks/useKeyboardShortcuts';
 import { useTheme } from './hooks/useTheme';
 import { useUIStore, useSyncStore, useAccountStore, useTagStore, useEmailStore, useLicenseStore } from './stores';
@@ -417,8 +418,18 @@ export function App() {
  */
 function SettingsView() {
   const { theme, setTheme } = useTheme();
+  const { selectedAccountId } = useAccountStore();
+  const [showTraining, setShowTraining] = useState(false);
 
   return (
+    <>
+    {showTraining && selectedAccountId && (
+      <TrainingStep
+        accountId={selectedAccountId}
+        onComplete={() => setShowTraining(false)}
+        onSkip={() => setShowTraining(false)}
+      />
+    )}
     <div className="max-w-2xl mx-auto py-8">
       <h1
         className="text-2xl font-semibold px-6 mb-6"
@@ -554,8 +565,53 @@ function SettingsView() {
             <ClassificationSettings />
           </div>
         </section>
+
+        {/* Triage Training Section */}
+        <section
+          className="rounded-lg border"
+          style={{
+            background: 'var(--color-bg)',
+            borderColor: 'var(--color-border)'
+          }}
+        >
+          <div
+            className="px-6 py-4 border-b"
+            style={{ borderColor: 'var(--color-border)' }}
+          >
+            <h2
+              className="font-medium"
+              style={{ color: 'var(--color-text-primary)' }}
+            >
+              Triage Training
+            </h2>
+          </div>
+          <div className="p-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                  Train the AI
+                </div>
+                <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+                  Classify sample emails to improve triage accuracy
+                </div>
+              </div>
+              <button
+                onClick={() => setShowTraining(true)}
+                disabled={!selectedAccountId}
+                className="px-4 py-2 rounded-lg font-medium disabled:opacity-50"
+                style={{
+                  background: 'var(--color-accent)',
+                  color: 'white',
+                }}
+              >
+                Start Training
+              </button>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
+    </>
   );
 }
 

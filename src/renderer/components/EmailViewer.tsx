@@ -522,8 +522,9 @@ export function EmailViewer() {
             {/* Tag dropdown */}
             {showTagDropdown && (
               <div
-                className="absolute top-full left-0 mt-1 py-1 rounded-lg shadow-lg z-50 bg-white dark:bg-zinc-800"
+                className="absolute top-full left-0 mt-1 py-1 rounded-lg shadow-lg z-50"
                 style={{
+                  background: 'var(--color-bg)',
                   border: '1px solid var(--color-border)',
                   minWidth: '160px'
                 }}

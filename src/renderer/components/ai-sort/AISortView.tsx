@@ -104,69 +104,15 @@ export function AISortView() {
       className="h-full flex flex-col w-full relative"
       style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text-primary)' }}
     >
-      {/* Header with tabs */}
-      <div
-        className="px-6 py-4 border-b flex items-center gap-6 flex-shrink-0"
-        style={{ background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
-      >
-        <h1 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-          AI Sort
-        </h1>
-        <div className="h-6 w-px" style={{ background: 'var(--color-border)' }} />
-        <nav className="flex gap-1">
-          <button
-            onClick={() => setActiveTab('dashboard')}
-            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors`}
-            style={{
-              background: activeTab === 'dashboard' ? 'var(--color-bg-tertiary)' : 'transparent',
-              color: activeTab === 'dashboard' ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
-            }}
-          >
-            Dashboard
-          </button>
-          <button
-            onClick={() => setActiveTab('review')}
-            className="px-3 py-1.5 text-sm font-medium rounded-md transition-colors flex items-center gap-2"
-            style={{
-              background: activeTab === 'review' ? 'var(--color-bg-tertiary)' : 'transparent',
-              color: activeTab === 'review' ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
-            }}
-          >
-            Review Queue
-            {reviewItems.length > 0 && (
-              <span
-                className="text-xs px-1.5 py-0.5 rounded-full font-semibold"
-                style={{
-                  background: 'var(--color-accent)',
-                  color: 'white',
-                }}
-              >
-                {reviewItems.length}
-              </span>
-            )}
-          </button>
-        </nav>
-      </div>
-
-      {/* Content */}
+      {/* Content - Dashboard only */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'dashboard' ? (
-          <div className="h-full overflow-y-auto">
-            <AIDashboard
-              onClassifyUnprocessed={handleClassifyUnprocessed}
-              onClearCache={handleClearCache}
-              accountId={selectedAccountId || undefined}
-            />
-          </div>
-        ) : (
-          <ReviewQueue
-            items={reviewItems}
-            onAccept={handleAccept}
-            onDismiss={handleDismiss}
-            onEdit={handleEdit}
-            onRefresh={loadReviewItems}
+        <div className="h-full overflow-y-auto">
+          <AIDashboard
+            onClassifyUnprocessed={handleClassifyUnprocessed}
+            onClearCache={handleClearCache}
+            accountId={selectedAccountId || undefined}
           />
-        )}
+        </div>
       </div>
 
       {/* Tag Manager Modal */}

@@ -110,7 +110,11 @@ export function ContactAutocomplete({ value, onChange, placeholder, label }: Pro
       {showDropdown && suggestions.length > 0 && (
         <div
           ref={dropdownRef}
-          className="absolute top-full left-0 right-0 mt-1 bg-white border border-zinc-200 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto"
+          className="absolute top-full left-0 right-0 mt-1 rounded-lg shadow-lg z-50 max-h-48 overflow-y-auto"
+          style={{
+            background: 'var(--color-bg)',
+            border: '1px solid var(--color-border)',
+          }}
         >
           {suggestions.map((contact, i) => (
             <button
@@ -119,16 +123,18 @@ export function ContactAutocomplete({ value, onChange, placeholder, label }: Pro
               onMouseDown={e => e.preventDefault()} // Prevent blur
               onMouseEnter={() => setHighlightIndex(i)}
               onClick={() => selectContact(contact)}
-              className={cn(
-                'w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 transition-colors',
-                i === highlightIndex && 'bg-blue-50 border-l-2 border-blue-500'
-              )}
+              className="w-full px-3 py-2 text-left text-sm transition-colors"
+              style={{
+                background: i === highlightIndex ? 'var(--color-accent-light, rgba(59, 130, 246, 0.1))' : 'transparent',
+                borderLeft: i === highlightIndex ? '2px solid var(--color-accent)' : '2px solid transparent',
+                color: 'var(--color-text-primary)',
+              }}
             >
               <div className="font-medium truncate">
                 {contact.name || contact.address}
               </div>
               {contact.name && (
-                <div className="text-zinc-500 text-xs truncate">{contact.address}</div>
+                <div className="text-xs truncate" style={{ color: 'var(--color-text-tertiary)' }}>{contact.address}</div>
               )}
             </button>
           ))}

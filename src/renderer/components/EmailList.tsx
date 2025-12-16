@@ -49,41 +49,25 @@ const sanitizeSnippet = (snippet: string): string => {
     .trim();
 };
 
-// Get tag class name for styling
-const getTagClass = (tagSlug: string) => {
-  const slug = tagSlug.toLowerCase();
-  if (slug.includes('work')) return 'tag-work';
-  if (slug.includes('personal')) return 'tag-personal';
-  if (slug.includes('design')) return 'tag-design';
-  if (slug.includes('github')) return 'tag-github';
-  if (slug.includes('development') || slug.includes('dev')) return 'tag-development';
-  if (slug.includes('marketing')) return 'tag-marketing';
-  if (slug.includes('social')) return 'tag-social';
-  if (slug.includes('linkedin')) return 'tag-linkedin';
-  if (slug.includes('shopping')) return 'tag-shopping';
-  return 'tag-work'; // default
-};
-
 // Data passed to virtualized rows
 interface EmailRowData {
   emails: Email[];
   selectedId: number | null;
   selectEmail: (id: number) => void;
   toggleStar: (id: number) => void;
-  getEmailTags: (emailId: number) => any[];
 }
 
 // Virtualized email row component
 const EmailRow = ({ index, style, data }: ListChildComponentProps) => {
-  const { emails, selectedId, selectEmail, toggleStar, getEmailTags } = data;
+  const { emails, selectedId, selectEmail, toggleStar } = data;
   const email = emails[index];
-  const emailTags = getEmailTags(email.id).filter((t: any) => !t.isSystem);
 
   return (
-    <div style={style}>
+    <div style={{ ...style, overflow: 'hidden' }}>
       <button
         onClick={() => selectEmail(email.id)}
         className={`email-item ${selectedId === email.id ? 'selected' : ''} ${!email.isRead ? 'unread' : ''}`}
+        style={{ height: '100%', boxSizing: 'border-box' }}
       >
         {/* Header row: Sender + Star + Date */}
         <div className="email-item-header">
@@ -114,17 +98,6 @@ const EmailRow = ({ index, style, data }: ListChildComponentProps) => {
         <div className="email-item-snippet">
           {sanitizeSnippet(email.snippet)}
         </div>
-
-        {/* Tags */}
-        {emailTags.length > 0 && (
-          <div className="email-item-tags">
-            {emailTags.map((tag: any) => (
-              <span key={tag.id} className={`tag ${getTagClass(tag.slug)}`}>
-                {tag.name}
-              </span>
-            ))}
-          </div>
-        )}
       </button>
     </div>
   );
@@ -140,7 +113,6 @@ export function EmailList() {
     selectEmail,
     toggleStar,
     loadMore,
-    getEmailTags,
     filter,
   } = useEmailStore();
   const { view } = useUIStore();
@@ -160,11 +132,21 @@ export function EmailList() {
     starred: 'Starred',
     archive: 'Archive',
     trash: 'Trash',
+    drafts: 'Drafts',
     'ai-sort': 'AI Sort',
+    // Triage folders
+    planning: 'Planning',
+    review: 'Review',
+    feed: 'Feed',
+    social: 'Social',
+    promotions: 'Promotions',
+    'paper-trail/invoices': 'Invoices',
+    'paper-trail/admin': 'Admin',
+    'paper-trail/travel': 'Travel',
   };
 
   // Determine title based on filter state
-  let title = viewTitles[view] || 'Inbox';
+  let title = viewTitles[view] || view.charAt(0).toUpperCase() + view.slice(1);
   if (filter.searchQuery) {
     title = 'Search Results';
   } else if (filter.tagId) {
@@ -206,7 +188,6 @@ export function EmailList() {
     selectedId,
     selectEmail,
     toggleStar,
-    getEmailTags,
   };
 
   return (
@@ -233,7 +214,7 @@ export function EmailList() {
               ref={listRef}
               height={listHeight - (hasMore ? 50 : 0)}
               itemCount={emails.length}
-              itemSize={105}
+              itemSize={120}
               itemData={itemData}
               width="100%"
             >

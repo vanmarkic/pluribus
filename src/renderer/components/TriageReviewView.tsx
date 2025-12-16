@@ -255,12 +255,12 @@ export function TriageReviewView() {
   // Empty state
   if (!loading && items.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-full" style={{ color: 'var(--color-text-tertiary)' }}>
+      <div className="flex-1 flex flex-col items-center justify-center h-full px-4" style={{ color: 'var(--color-text-tertiary)' }}>
         <IconCheck className="h-12 w-12 mb-4 text-green-500" />
         <h3 className="text-lg font-medium" style={{ color: 'var(--color-text-primary)' }}>
           All caught up!
         </h3>
-        <p className="max-w-md text-center mt-2">
+        <p className="text-center mt-2">
           No emails pending review. Great job!
         </p>
       </div>
@@ -270,7 +270,7 @@ export function TriageReviewView() {
   // Loading state
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
+      <div className="flex-1 flex items-center justify-center h-full">
         <div
           className="w-8 h-8 rounded-full border-4 border-t-transparent animate-spin"
           style={{ borderColor: 'var(--color-accent)', borderTopColor: 'transparent' }}
@@ -280,7 +280,7 @@ export function TriageReviewView() {
   }
 
   return (
-    <div className="h-full flex flex-col" style={{ background: 'var(--color-bg)' }}>
+    <div className="flex-1 h-full flex flex-col" style={{ background: 'var(--color-bg)' }}>
       {/* Toolbar */}
       <div
         className="px-4 py-2 border-b flex items-center justify-between shrink-0 h-12"
