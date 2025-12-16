@@ -279,11 +279,11 @@ export function createContainer(): Container {
             format: 'json',
           }),
         });
-        const data = await response.json();
+        const data = await response.json() as { response: string };
         return data.response;
       } else {
         // Use Anthropic
-        const apiKey = await secrets.get('anthropic-api-key');
+        const apiKey = await secrets.getApiKey('anthropic');
         if (!apiKey) throw new Error('Anthropic API key not configured');
         const Anthropic = (await import('@anthropic-ai/sdk')).default;
         const client = new Anthropic({ apiKey });
