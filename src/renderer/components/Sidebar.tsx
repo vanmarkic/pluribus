@@ -3,14 +3,19 @@
  *
  * Sectioned navigation:
  * - Main: Inbox, Sent, Drafts
+ * - Triage: Planning, Feed, Social, Promotions
+ * - Paper Trail: Invoices, Admin, Travel
  * - AI: Classify, Review
+ * - System: Archive, Trash
  * - Bottom: Settings, License, Account Switcher
  */
 
 import { useEffect, useState } from 'react';
 import {
-  IconInbox, IconSend, IconDocument,
-  IconSettings, IconPen, IconSparkles, IconChecklist
+  IconInbox, IconSend, IconDocument, IconArchiveBox, IconDelete,
+  IconSettings, IconPen, IconSparkles, IconChecklist,
+  IconClock3, IconNewspaper, IconNotification, IconMegaphone,
+  IconBill, IconBriefcase, IconPlane
 } from 'obra-icons-react';
 import { useUIStore, useEmailStore, useAccountStore } from '../stores';
 import { AccountSwitcher } from './AccountSwitcher';
@@ -54,6 +59,17 @@ export function Sidebar() {
 
   const unreadCount = emails.filter(e => !e.isRead).length;
 
+  // Map view IDs to folder paths for triage folders
+  const triageFolderMap: Record<string, string> = {
+    'planning': 'Planning',
+    'feed': 'Feed',
+    'social': 'Social',
+    'promotions': 'Promotions',
+    'paper-trail/invoices': 'Paper-Trail/Invoices',
+    'paper-trail/admin': 'Paper-Trail/Admin',
+    'paper-trail/travel': 'Paper-Trail/Travel',
+  };
+
   const handleNavClick = (id: string) => {
     setView(id as typeof view);
     if (!selectedAccountId) return;
@@ -66,6 +82,12 @@ export function Sidebar() {
       setFilter({ ...baseFilter, folderPath: 'Sent' }, selectedAccountId);
     } else if (id === 'drafts') {
       setFilter(baseFilter, selectedAccountId);
+    } else if (id === 'archive') {
+      setFilter({ ...baseFilter, folderPath: 'Archive' }, selectedAccountId);
+    } else if (id === 'trash') {
+      setFilter({ ...baseFilter, folderPath: 'Trash' }, selectedAccountId);
+    } else if (triageFolderMap[id]) {
+      setFilter({ ...baseFilter, folderPath: triageFolderMap[id] }, selectedAccountId);
     } else {
       setFilter(baseFilter, selectedAccountId);
     }
@@ -125,7 +147,7 @@ export function Sidebar() {
           )}
         </button>
 
-        {/* AI Section - separated by border */}
+        {/* AI Section */}
         <div className="my-3 border-t" style={{ borderColor: 'var(--color-border)' }} />
 
         <button
@@ -143,6 +165,93 @@ export function Sidebar() {
         >
           <IconChecklist className="w-4 h-4" />
           <span className="flex-1 text-left">Review</span>
+        </button>
+
+        {/* Triage Folders */}
+        <div className="sidebar-section flex items-center gap-1 mt-4">
+          <IconSparkles className="w-3 h-3" />
+          <span>Triage</span>
+        </div>
+
+        <button
+          onClick={() => handleNavClick('planning')}
+          className={`sidebar-item w-full ${view === 'planning' ? 'active' : ''}`}
+        >
+          <IconClock3 className="w-4 h-4" />
+          <span className="flex-1 text-left">Planning</span>
+        </button>
+
+        <button
+          onClick={() => handleNavClick('feed')}
+          className={`sidebar-item w-full ${view === 'feed' ? 'active' : ''}`}
+        >
+          <IconNewspaper className="w-4 h-4" />
+          <span className="flex-1 text-left">Feed</span>
+        </button>
+
+        <button
+          onClick={() => handleNavClick('social')}
+          className={`sidebar-item w-full ${view === 'social' ? 'active' : ''}`}
+        >
+          <IconNotification className="w-4 h-4" />
+          <span className="flex-1 text-left">Social</span>
+        </button>
+
+        <button
+          onClick={() => handleNavClick('promotions')}
+          className={`sidebar-item w-full ${view === 'promotions' ? 'active' : ''}`}
+        >
+          <IconMegaphone className="w-4 h-4" />
+          <span className="flex-1 text-left">Promotions</span>
+        </button>
+
+        {/* Paper Trail Section */}
+        <div className="sidebar-section flex items-center gap-1 mt-4">
+          <IconBill className="w-3 h-3" />
+          <span>Paper Trail</span>
+        </div>
+
+        <button
+          onClick={() => handleNavClick('paper-trail/invoices')}
+          className={`sidebar-item w-full ${view === 'paper-trail/invoices' ? 'active' : ''}`}
+        >
+          <IconBill className="w-4 h-4" />
+          <span className="flex-1 text-left">Invoices</span>
+        </button>
+
+        <button
+          onClick={() => handleNavClick('paper-trail/admin')}
+          className={`sidebar-item w-full ${view === 'paper-trail/admin' ? 'active' : ''}`}
+        >
+          <IconBriefcase className="w-4 h-4" />
+          <span className="flex-1 text-left">Admin</span>
+        </button>
+
+        <button
+          onClick={() => handleNavClick('paper-trail/travel')}
+          className={`sidebar-item w-full ${view === 'paper-trail/travel' ? 'active' : ''}`}
+        >
+          <IconPlane className="w-4 h-4" />
+          <span className="flex-1 text-left">Travel</span>
+        </button>
+
+        {/* System folders */}
+        <div className="my-3 border-t" style={{ borderColor: 'var(--color-border)' }} />
+
+        <button
+          onClick={() => handleNavClick('archive')}
+          className={`sidebar-item w-full ${view === 'archive' ? 'active' : ''}`}
+        >
+          <IconArchiveBox className="w-4 h-4" />
+          <span className="flex-1 text-left">Archive</span>
+        </button>
+
+        <button
+          onClick={() => handleNavClick('trash')}
+          className={`sidebar-item w-full ${view === 'trash' ? 'active' : ''}`}
+        >
+          <IconDelete className="w-4 h-4" />
+          <span className="flex-1 text-left">Trash</span>
         </button>
       </nav>
 
