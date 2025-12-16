@@ -9,7 +9,7 @@ import { IconClose, IconSend, IconAttachment, IconDelete, IconSpinnerBall } from
 import { cn } from './ui/utils';
 import type { Email, EmailBody } from '../../core/domain';
 import { formatSender } from '../../core/domain';
-import { useAccountStore } from '../stores';
+import { useAccountStore, useLicenseStore } from '../stores';
 import { debounce } from '../utils/debounce';
 import { ContactAutocomplete } from './ContactAutocomplete';
 
@@ -35,6 +35,7 @@ type Props = {
 
 export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClose, onSent }: Props) {
   const { accounts, getSelectedAccount } = useAccountStore();
+  const { isReadOnly, openActivationModal } = useLicenseStore();
   const [to, setTo] = useState('');
   const [cc, setCc] = useState('');
   const [bcc, setBcc] = useState('');
@@ -42,6 +43,7 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
   const [body, setBody] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showCc, setShowCc] = useState(false);
   const [currentDraftId, setCurrentDraftId] = useState<number | undefined>(draftId);
@@ -261,6 +263,12 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
     // Cancel any pending auto-save to prevent race conditions
     debouncedSave.current.cancel();
 
+    // Block sending when license is expired
+    if (isReadOnly) {
+      setError('License expired. Please renew to send emails.');
+      return;
+    }
+
     if (!to.trim()) {
       setError('Please enter a recipient');
       return;
@@ -307,10 +315,13 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
         }
       }
 
-      onSent();
+      // Show success feedback before closing
+      setSent(true);
+      setTimeout(() => {
+        onSent();
+      }, 500);
     } catch (err) {
       setError(String(err));
-    } finally {
       setSending(false);
     }
   };
@@ -335,7 +346,7 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
   };
 
   // Close handler that saves pending changes first
-  const handleClose = async () => {
+  const handleClose = useCallback(async () => {
     // Cancel any pending debounced save
     debouncedSave.current.cancel();
     // Save immediately if there are unsaved changes
@@ -343,7 +354,31 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
       await saveDraft();
     }
     onClose();
-  };
+  }, [hasUserEdited, saveDraft, onClose]);
+
+  // Keyboard shortcuts: Escape to close, Ctrl+Enter / Cmd+Enter to send
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Escape to close
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        handleClose();
+      }
+      // Ctrl+Enter or Cmd+Enter to send
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        // Trigger send if not already sending and form is valid
+        if (!sending && to.trim() && !loadingDraft) {
+          handleSend();
+        }
+      }
+    };
+
+    // Use capture phase to ensure we get the event before input handlers
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [handleClose, handleSend, sending, to, loadingDraft]);
 
   const handleAttach = () => {
     fileInputRef.current?.click();
@@ -382,7 +417,12 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50">
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="compose-modal-title"
+    >
       <div
         className="rounded-t-xl sm:rounded-xl shadow-xl w-full max-w-2xl mx-0 sm:mx-4 max-h-[90vh] flex flex-col"
         style={{ background: 'var(--color-bg)' }}
@@ -393,7 +433,7 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
           style={{ borderColor: 'var(--color-border)' }}
         >
           <div className="flex items-center gap-3">
-            <h2 className="font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+            <h2 id="compose-modal-title" className="font-semibold" style={{ color: 'var(--color-text-primary)' }}>
               {loadingDraft ? 'Loading draft...' : titles[mode]}
             </h2>
             {saveStatus === 'saving' && (
@@ -403,31 +443,30 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
               <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Saved</span>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <button
+            onClick={handleClose}
+            className="p-1.5 rounded hover:bg-[var(--color-bg-hover)]"
+            style={{ color: 'var(--color-text-secondary)' }}
+            tabIndex={-1}
+          >
+            <IconClose className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* License Expired Banner */}
+        {isReadOnly && (
+          <div className="flex items-center justify-between px-4 py-2 bg-red-900/30 border-b border-red-800">
+            <span className="text-sm text-red-300">
+              Your license has expired. Sending emails is disabled.
+            </span>
             <button
-              onClick={handleSend}
-              disabled={sending || !to.trim() || loadingDraft}
-              className={cn(
-                'flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium',
-                'bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50'
-              )}
+              onClick={openActivationModal}
+              className="px-3 py-1 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-500"
             >
-              {sending ? (
-                <IconSpinnerBall className="w-4 h-4 animate-spin" />
-              ) : (
-                <IconSend className="w-4 h-4" />
-              )}
-              Send
-            </button>
-            <button
-              onClick={handleClose}
-              className="p-1.5 rounded hover:bg-[var(--color-bg-hover)]"
-              style={{ color: 'var(--color-text-secondary)' }}
-            >
-              <IconClose className="w-5 h-5" />
+              Renew License
             </button>
           </div>
-        </div>
+        )}
 
         {/* Form */}
         <div className="flex-1 overflow-y-auto">
@@ -554,35 +593,61 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
 
         {/* Footer */}
         <div
-          className="flex items-center gap-2 px-4 py-3 border-t"
+          className="flex items-center justify-between px-4 py-3 border-t"
           style={{ borderColor: 'var(--color-border)' }}
         >
-          <button
-            onClick={handleAttach}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg hover:bg-[var(--color-bg-hover)]"
-            style={{ color: 'var(--color-text-secondary)' }}
-          >
-            <IconAttachment className="w-4 h-4" />
-            Attach
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            onChange={handleFileSelect}
-            className="hidden"
-          />
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleAttach}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg hover:bg-[var(--color-bg-hover)]"
+              style={{ color: 'var(--color-text-secondary)' }}
+            >
+              <IconAttachment className="w-4 h-4" />
+              Attach
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              onChange={handleFileSelect}
+              className="hidden"
+            />
 
-          <div className="flex-1" />
+            <button
+              onClick={handleDiscard}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg hover:bg-red-50 dark:hover:bg-red-950/20"
+              style={{ color: 'var(--color-danger, rgb(239, 68, 68))' }}
+            >
+              <IconDelete className="w-4 h-4" />
+              Discard
+            </button>
+          </div>
 
-          <button
-            onClick={handleDiscard}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg hover:bg-[var(--color-bg-hover)]"
-            style={{ color: 'var(--color-text-secondary)' }}
-          >
-            <IconDelete className="w-4 h-4" />
-            Discard
-          </button>
+          {sent ? (
+            <div className="flex items-center gap-2 px-4 py-1.5 text-sm font-medium text-green-600">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              Sent!
+            </div>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={sending || !to.trim() || loadingDraft || isReadOnly}
+              title={isReadOnly ? 'License expired - cannot send' : 'Send (Ctrl+Enter)'}
+              className={cn(
+                'flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium',
+                'bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50'
+              )}
+            >
+              {sending ? (
+                <IconSpinnerBall className="w-4 h-4 animate-spin" />
+              ) : (
+                <IconSend className="w-4 h-4" />
+              )}
+              Send
+            </button>
+          )}
         </div>
       </div>
     </div>

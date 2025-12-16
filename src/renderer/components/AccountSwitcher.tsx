@@ -54,7 +54,7 @@ export function AccountSwitcher() {
 
   const selected = getSelectedAccount();
 
-  // Close dropdown when clicking outside
+  // Close dropdown when clicking outside or pressing Escape
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -62,9 +62,19 @@ export function AccountSwitcher() {
       }
     }
 
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setIsOpen(false);
+      }
+    }
+
     if (isOpen) {
       document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleEscape);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+        document.removeEventListener('keydown', handleEscape);
+      };
     }
   }, [isOpen]);
 
@@ -80,7 +90,11 @@ export function AccountSwitcher() {
       <button
         onClick={() => setIsOpen(!isOpen)}
         className="flex-1 flex items-center gap-2 px-2 py-1.5 rounded-md
-                   hover:bg-[var(--color-bg-hover)] transition-colors"
+                   hover:bg-[var(--color-bg-hover)] transition-colors
+                   focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] focus-visible:outline-offset-[-2px]"
+        aria-label={`Switch account (current: ${selected.email})`}
+        aria-expanded={isOpen}
+        aria-haspopup="true"
       >
         <AccountAvatar email={selected.email} size="sm" />
         <span
@@ -97,6 +111,8 @@ export function AccountSwitcher() {
           className="absolute bottom-full left-0 right-0 mb-1
                       rounded-lg border shadow-lg z-50"
           style={{ background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
+          role="menu"
+          aria-label="Account selection"
         >
           {accounts.map(account => (
             <button
@@ -106,12 +122,16 @@ export function AccountSwitcher() {
                 setIsOpen(false);
               }}
               className="w-full flex items-center gap-2 px-3 py-2
-                         hover:bg-[var(--color-bg-hover)] first:rounded-t-lg last:rounded-b-lg"
+                         hover:bg-[var(--color-bg-hover)] first:rounded-t-lg last:rounded-b-lg
+                         focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] focus-visible:outline-offset-[-2px]"
+              role="menuitem"
+              aria-label={`Switch to ${account.email}`}
+              aria-current={account.id === selectedAccountId ? 'true' : undefined}
             >
               <AccountAvatar email={account.email} size="sm" />
               <span className="text-sm truncate flex-1 text-left">{account.email}</span>
               {account.id === selectedAccountId && (
-                <IconCheck className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-text-secondary)' }} />
+                <IconCheck className="w-4 h-4 flex-shrink-0" style={{ color: 'var(--color-text-secondary)' }} aria-hidden="true" />
               )}
             </button>
           ))}

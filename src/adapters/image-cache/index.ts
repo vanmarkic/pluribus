@@ -259,6 +259,16 @@ export function createImageCache(getDb: () => any): ImageCache {
       }
     },
 
+    async clearCacheFiles(emailId: number): Promise<void> {
+      const emailCacheDir = getEmailCacheDir(emailId);
+
+      // Only remove files, NOT the DB tracking record
+      // (CASCADE will handle the DB record when email is deleted)
+      if (fs.existsSync(emailCacheDir)) {
+        fs.rmSync(emailCacheDir, { recursive: true, force: true });
+      }
+    },
+
     async clearAllCache(): Promise<void> {
       // Remove all tracking entries
       getDb().prepare('DELETE FROM email_images_loaded').run();

@@ -44,12 +44,15 @@ export function SyncButton() {
         ${lastError && !syncing ? 'text-red-500 hover:bg-red-500/10' : ''}
         ${!lastError && !syncing ? 'hover:bg-[var(--color-bg-hover)]' : ''}
         ${syncing ? 'text-[var(--color-accent)]' : ''}
-        disabled:opacity-50 disabled:cursor-not-allowed`}
+        disabled:opacity-50 disabled:cursor-not-allowed
+        focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] focus-visible:outline-offset-[-2px]`}
       title={tooltip}
+      aria-label={tooltip}
     >
       <IconRotate
         className={`w-4 h-4 ${isSyncingCurrentAccount ? 'animate-spin' : ''}`}
         style={{ color: lastError && !syncing ? undefined : 'var(--color-text-tertiary)' }}
+        aria-hidden="true"
       />
     </button>
   );

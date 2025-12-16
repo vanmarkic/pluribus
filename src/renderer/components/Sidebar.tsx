@@ -12,6 +12,7 @@ import {
 } from 'obra-icons-react';
 import { useUIStore, useTagStore, useEmailStore, useAccountStore } from '../stores';
 import { AccountSwitcher } from './AccountSwitcher';
+import { LicenseStatusBadge } from './LicenseActivation';
 
 export function Sidebar() {
   const { view, setView, openCompose } = useUIStore();
@@ -71,7 +72,7 @@ export function Sidebar() {
     if (!selectedAccountId) return;
 
     // Reset all filters first, then apply view-specific filter
-    const baseFilter = { tagId: undefined, folderPath: undefined, unreadOnly: false, starredOnly: false };
+    const baseFilter = { tagId: undefined, folderPath: undefined, unreadOnly: false, starredOnly: false, searchQuery: undefined };
 
     if (id === 'inbox') {
       setFilter({ ...baseFilter, folderPath: 'INBOX' }, selectedAccountId);
@@ -95,7 +96,9 @@ export function Sidebar() {
 
   const handleTagClick = (tagId: number) => {
     if (!selectedAccountId) return;
-    setFilter({ tagId }, selectedAccountId);
+    // Reset all filters first, then apply tag filter
+    const baseFilter = { tagId: undefined, folderPath: undefined, unreadOnly: false, starredOnly: false, searchQuery: undefined };
+    setFilter({ ...baseFilter, tagId }, selectedAccountId);
   };
 
   const userTags = tags.filter(t => !t.isSystem);
@@ -109,8 +112,9 @@ export function Sidebar() {
         </span>
         <button
           onClick={() => openCompose('new')}
-          className="p-1.5 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors"
+          className="p-1.5 rounded-md hover:bg-[var(--color-bg-hover)] transition-colors focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] focus-visible:outline-offset-[-2px]"
           title="Compose (C)"
+          aria-label="Compose new email"
         >
           <IconPen className="w-4 h-4" style={{ color: 'var(--color-text-secondary)' }} />
         </button>
@@ -123,6 +127,8 @@ export function Sidebar() {
             key={item.id}
             onClick={() => handleNavClick(item.id)}
             className={`sidebar-item w-full ${view === item.id ? 'active' : ''}`}
+            aria-label={`${item.label}${item.count ? ` (${item.count} items)` : ''}`}
+            aria-current={view === item.id ? 'page' : undefined}
           >
             <item.icon className="w-4 h-4" />
             <span className="flex-1 text-left">{item.label}</span>
@@ -145,10 +151,13 @@ export function Sidebar() {
                 key={tag.id}
                 onClick={() => handleTagClick(tag.id)}
                 className={`sidebar-item w-full ${filter.tagId === tag.id ? 'active' : ''}`}
+                aria-label={`Filter by tag: ${tag.name}`}
+                aria-pressed={filter.tagId === tag.id}
               >
                 <span
                   className="w-2 h-2 rounded-full flex-shrink-0"
                   style={{ backgroundColor: tag.color }}
+                  aria-hidden="true"
                 />
                 <span className="flex-1 text-left">{tag.name}</span>
               </button>
@@ -157,15 +166,20 @@ export function Sidebar() {
         )}
       </nav>
 
-      {/* Settings & Account Switcher */}
+      {/* Settings, License & Account Switcher */}
       <div className="px-2 py-3 border-t" style={{ borderColor: 'var(--color-border)' }}>
         <button
           onClick={() => setView('settings')}
           className={`sidebar-item w-full ${view === 'settings' ? 'active' : ''}`}
+          aria-label="Settings"
+          aria-current={view === 'settings' ? 'page' : undefined}
         >
           <IconSettings className="w-4 h-4" />
           <span>Settings</span>
         </button>
+        <div className="px-2 py-1">
+          <LicenseStatusBadge />
+        </div>
         <AccountSwitcher />
       </div>
     </aside>

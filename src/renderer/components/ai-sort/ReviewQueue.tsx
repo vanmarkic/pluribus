@@ -299,7 +299,7 @@ export function ReviewQueue({ items, onAccept, onDismiss, onEdit, onRefresh }: R
                           }}
                         />
                         <span className="font-medium" style={{ color: 'var(--color-text-secondary)' }}>
-                          {Math.round((item.confidence ?? 0) * 100)}%
+                          {!isNaN(item.confidence ?? 0) ? `${Math.round((item.confidence ?? 0) * 100)}%` : 'N/A'}
                         </span>
                       </div>
                     </td>

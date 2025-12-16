@@ -82,10 +82,12 @@ export function AISortView() {
 
   const handleClassifyUnprocessed = async () => {
     try {
-      await window.mailApi.aiSort.classifyUnprocessed();
+      const result = await window.mailApi.aiSort.classifyUnprocessed();
       await loadReviewItems();
+      return result;
     } catch (err) {
       console.error('Failed to classify unprocessed:', err);
+      throw err;
     }
   };
 

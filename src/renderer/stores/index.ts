@@ -147,6 +147,25 @@ declare global {
           sizeBytes: number;
         }[]>;
       };
+      license: {
+        getState: () => Promise<{
+          status: 'active' | 'expired' | 'grace' | 'inactive';
+          licenseKey: string | null;
+          expiresAt: string | null;
+          daysUntilExpiry: number | null;
+          isReadOnly: boolean;
+        }>;
+        activate: (licenseKey: string) => Promise<
+          | { success: true; expiresAt: string }
+          | { success: true; warning: 'device_changed'; message: string; expiresAt: string }
+          | { success: false; error: string }
+        >;
+        validate: () => Promise<
+          | { success: true; expiresAt: string }
+          | { success: false; error: string }
+        >;
+        deactivate: () => Promise<void>;
+      };
       on: (channel: string, callback: (...args: any[]) => void) => void;
       off: (channel: string, callback: (...args: any[]) => void) => void;
     };
@@ -754,3 +773,104 @@ export const useUIStore = create<UIStore>((set) => ({
   updateClassificationProgress: (processed, total) => set({ classificationProgress: { processed, total } }),
   clearClassificationTask: () => set({ classificationTaskId: null, classificationProgress: null }),
 }));
+
+// ============================================
+// License Store
+// ============================================
+
+type LicenseStatus = 'active' | 'expired' | 'grace' | 'inactive';
+
+type LicenseStore = {
+  status: LicenseStatus;
+  licenseKey: string | null;
+  expiresAt: Date | null;
+  daysUntilExpiry: number | null;
+  isReadOnly: boolean;
+  loading: boolean;
+  error: string | null;
+  showActivationModal: boolean;
+
+  // Actions
+  loadState: () => Promise<void>;
+  activate: (licenseKey: string) => Promise<{ success: boolean; warning?: string; error?: string }>;
+  deactivate: () => Promise<void>;
+  openActivationModal: () => void;
+  closeActivationModal: () => void;
+};
+
+export const useLicenseStore = create<LicenseStore>((set, get) => ({
+  status: 'inactive',
+  licenseKey: null,
+  expiresAt: null,
+  daysUntilExpiry: null,
+  isReadOnly: false,
+  loading: false,
+  error: null,
+  showActivationModal: false,
+
+  loadState: async () => {
+    try {
+      const state = await window.mailApi.license.getState();
+      set({
+        status: state.status,
+        licenseKey: state.licenseKey,
+        expiresAt: state.expiresAt ? new Date(state.expiresAt) : null,
+        daysUntilExpiry: state.daysUntilExpiry,
+        isReadOnly: state.isReadOnly,
+        error: null,
+      });
+    } catch (err) {
+      console.error('Failed to load license state:', err);
+    }
+  },
+
+  activate: async (licenseKey) => {
+    set({ loading: true, error: null });
+    try {
+      const result = await window.mailApi.license.activate(licenseKey);
+      if (result.success) {
+        await get().loadState();
+        set({ loading: false, showActivationModal: false });
+        if ('warning' in result) {
+          return { success: true, warning: result.message };
+        }
+        return { success: true };
+      } else {
+        set({ loading: false, error: result.error });
+        return { success: false, error: result.error };
+      }
+    } catch (err) {
+      const error = err instanceof Error ? err.message : 'Unknown error';
+      set({ loading: false, error });
+      return { success: false, error };
+    }
+  },
+
+  deactivate: async () => {
+    set({ loading: true });
+    try {
+      await window.mailApi.license.deactivate();
+      await get().loadState();
+      set({ loading: false });
+    } catch (err) {
+      console.error('Failed to deactivate license:', err);
+      set({ loading: false });
+    }
+  },
+
+  openActivationModal: () => set({ showActivationModal: true, error: null }),
+  closeActivationModal: () => set({ showActivationModal: false, error: null }),
+}));
+
+// Subscribe to license state changes from main process
+if (typeof window !== 'undefined' && window.mailApi) {
+  window.mailApi.on('license:state-changed', (state: any) => {
+    useLicenseStore.setState({
+      status: state.status,
+      licenseKey: state.licenseKey,
+      expiresAt: state.expiresAt ? new Date(state.expiresAt) : null,
+      daysUntilExpiry: state.daysUntilExpiry,
+      isReadOnly: state.isReadOnly,
+    });
+  });
+}

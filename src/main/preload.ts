@@ -12,7 +12,7 @@ type Callback = (...args: any[]) => void;
 const listeners = new Map<string, Set<Callback>>();
 
 // Forward events from main
-['sync:progress', 'llm:classifying', 'llm:classified', 'llm:error', 'ollama:download-progress'].forEach(channel => {
+['sync:progress', 'llm:classifying', 'llm:classified', 'llm:error', 'ollama:download-progress', 'license:state-changed'].forEach(channel => {
   ipcRenderer.on(channel, (_, data) => {
     listeners.get(channel)?.forEach(cb => cb(data));
   });
@@ -189,6 +189,26 @@ const api = {
       size: string;
       sizeBytes: number;
     }[]>,
+  },
+
+  license: {
+    getState: () => ipcRenderer.invoke('license:getState') as Promise<{
+      status: 'active' | 'expired' | 'grace' | 'inactive';
+      licenseKey: string | null;
+      expiresAt: string | null;
+      daysUntilExpiry: number | null;
+      isReadOnly: boolean;
+    }>,
+    activate: (licenseKey: string) => ipcRenderer.invoke('license:activate', licenseKey) as Promise<
+      | { success: true; expiresAt: string }
+      | { success: true; warning: 'device_changed'; message: string; expiresAt: string }
+      | { success: false; error: string }
+    >,
+    validate: () => ipcRenderer.invoke('license:validate') as Promise<
+      | { success: true; expiresAt: string }
+      | { success: false; error: string }
+    >,
+    deactivate: () => ipcRenderer.invoke('license:deactivate') as Promise<void>,
   },
 
   on: (channel: string, callback: Callback) => {

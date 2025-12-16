@@ -476,6 +476,25 @@ export function createMockApi(): MailAPI {
       ],
     },
 
+    license: {
+      getState: async () => ({
+        status: 'inactive' as const,
+        licenseKey: null,
+        expiresAt: null,
+        daysUntilExpiry: null,
+        isReadOnly: false,
+      }),
+      activate: async () => ({
+        success: true as const,
+        expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+      }),
+      validate: async () => ({
+        success: true as const,
+        expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+      }),
+      deactivate: async () => {},
+    },
+
     on: (channel, callback) => {
       if (!listeners.has(channel)) listeners.set(channel, new Set());
       listeners.get(channel)!.add(callback);

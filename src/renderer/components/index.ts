@@ -4,3 +4,4 @@ export { EmailViewer } from './EmailViewer';
 export { SecuritySettings } from './SecuritySettings';
 export { AccountWizard } from './AccountWizard';
 export { ComposeModal } from './ComposeModal';
+export { LicenseActivationModal, LicenseStatusBadge } from './LicenseActivation';

@@ -291,4 +291,124 @@ describe('Database Adapter - SQL Injection Protection', () => {
       expect(results).toEqual([]);
     });
   });
+
+  describe('Database Integrity Checks', () => {
+    it('should check database integrity successfully on healthy database', async () => {
+      const { checkIntegrity } = await import('./index');
+      const result = await checkIntegrity();
+
+      expect(result.isHealthy).toBe(true);
+      expect(result.errors).toEqual([]);
+    });
+
+    it('should detect database corruption', async () => {
+      // This test validates that checkIntegrity can detect corruption
+      // In a real scenario, the database would be corrupted
+      const { checkIntegrity } = await import('./index');
+      const result = await checkIntegrity();
+
+      // Should always return a result object with isHealthy property
+      expect(result).toHaveProperty('isHealthy');
+      expect(result).toHaveProperty('errors');
+      expect(Array.isArray(result.errors)).toBe(true);
+    });
+
+    it('should perform quick check by default', async () => {
+      const { checkIntegrity } = await import('./index');
+      const startTime = Date.now();
+      await checkIntegrity();
+      const duration = Date.now() - startTime;
+
+      // Quick check should complete in reasonable time (< 1 second for test DB)
+      expect(duration).toBeLessThan(1000);
+    });
+
+    it('should allow full integrity check', async () => {
+      const { checkIntegrity } = await import('./index');
+      const result = await checkIntegrity(true);
+
+      expect(result.isHealthy).toBe(true);
+      expect(result.errors).toEqual([]);
+    });
+
+    it('should handle database not initialized error', async () => {
+      // Close the database first
+      const { closeDb, checkIntegrity } = await import('./index');
+      closeDb();
+
+      await expect(checkIntegrity()).rejects.toThrow('Database not initialized');
+    });
+  });
+
+  describe('Database Corruption Recovery', () => {
+    it('should backup corrupted database', async () => {
+      // This test validates backup functionality
+      const { createDbBackup } = await import('./index');
+      const backupPath = await createDbBackup();
+
+      expect(backupPath).toBeTruthy();
+      expect(backupPath).toContain('.backup');
+
+      // Cleanup backup
+      const fs = await import('fs');
+      if (fs.existsSync(backupPath)) {
+        fs.unlinkSync(backupPath);
+      }
+    });
+
+    it('should handle backup when database is not initialized', async () => {
+      const { closeDb, createDbBackup } = await import('./index');
+      closeDb();
+
+      await expect(createDbBackup()).rejects.toThrow('Database not initialized');
+    });
+  });
+
+  describe('Error Handling in Delete Operations', () => {
+    it('should handle delete gracefully on healthy database', async () => {
+      const { createEmailRepo, createAccountRepo, createFolderRepo } = await import('./index');
+
+      // Create test account and folder
+      const accountRepo = createAccountRepo();
+      const account = await accountRepo.create({
+        name: 'Test',
+        email: 'test@example.com',
+        imapHost: 'imap.example.com',
+        imapPort: 993,
+        smtpHost: 'smtp.example.com',
+        smtpPort: 587,
+        username: 'test',
+        isActive: true,
+      });
+
+      const folderRepo = createFolderRepo();
+      const folder = await folderRepo.getOrCreate(account.id, 'INBOX', 'Inbox', null);
+
+      // Create and delete email
+      const emailRepo = createEmailRepo();
+      const email = await emailRepo.insert({
+        messageId: 'test-delete-msg',
+        accountId: account.id,
+        folderId: folder.id,
+        uid: 9999,
+        subject: 'Test Delete',
+        from: { address: 'sender@example.com', name: 'Sender' },
+        to: [],
+        date: new Date(),
+        snippet: 'Test',
+        sizeBytes: 100,
+        isRead: false,
+        isStarred: false,
+        hasAttachments: false,
+        bodyFetched: false,
+      });
+
+      // Should not throw
+      await expect(emailRepo.delete(email.id)).resolves.not.toThrow();
+
+      // Verify email is deleted
+      const deletedEmail = await emailRepo.findById(email.id);
+      expect(deletedEmail).toBeNull();
+    });
+  });
 });

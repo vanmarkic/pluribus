@@ -19,7 +19,11 @@ export { createClassificationStateRepo } from './classification-state';
 
 let db: Database.Database | null = null;
 
-export function initDb(dbPath: string, schemaPath?: string): Database.Database {
+export interface InitDbOptions {
+  checkIntegrity?: boolean;
+}
+
+export function initDb(dbPath: string, schemaPath?: string, options?: InitDbOptions): Database.Database {
   if (db) return db;
 
   // Poka-yoke: Fail fast if schema path provided but file doesn't exist
@@ -46,6 +50,17 @@ export function initDb(dbPath: string, schemaPath?: string): Database.Database {
     throw new Error(`Database schema incomplete - missing tables: ${missing.join(', ')}`);
   }
 
+  // Optional: Run integrity check on startup
+  if (options?.checkIntegrity) {
+    const result = db.prepare('PRAGMA quick_check').all() as { quick_check: string }[];
+    const firstResult = result[0]?.quick_check;
+    if (firstResult !== 'ok') {
+      const errors = result.map(row => row.quick_check).filter(Boolean);
+      console.warn('[DB] Database integrity issues detected on startup:', errors);
+      // Don't throw - allow app to start but log the warning
+    }
+  }
+
   return db;
 }
 
@@ -57,6 +72,78 @@ export function getDb(): Database.Database {
 export function closeDb(): void {
   db?.close();
   db = null;
+}
+
+// ============================================
+// Database Health & Recovery
+// ============================================
+
+export interface IntegrityCheckResult {
+  isHealthy: boolean;
+  errors: string[];
+}
+
+/**
+ * Checks database integrity using SQLite's built-in PRAGMA integrity_check.
+ * This helps detect corruption early and enables graceful error handling.
+ *
+ * @param full - If true, performs full check. If false, performs quick check (default).
+ * @returns Object with isHealthy boolean and any error messages found.
+ */
+export async function checkIntegrity(full: boolean = false): Promise<IntegrityCheckResult> {
+  if (!db) {
+    throw new Error('Database not initialized');
+  }
+
+  try {
+    // PRAGMA integrity_check returns "ok" if healthy, or list of errors
+    // Use quick_check for faster validation (doesn't check UNIQUE constraints)
+    const pragma = full ? 'integrity_check' : 'quick_check';
+    const results = db.prepare(`PRAGMA ${pragma}`).all() as { integrity_check?: string; quick_check?: string }[];
+
+    const resultKey = full ? 'integrity_check' : 'quick_check';
+    const firstResult = results[0]?.[resultKey];
+
+    if (firstResult === 'ok') {
+      return { isHealthy: true, errors: [] };
+    }
+
+    // Extract error messages from results
+    const errors = results.map(row => row[resultKey]).filter(Boolean) as string[];
+    return { isHealthy: false, errors };
+  } catch (error) {
+    return {
+      isHealthy: false,
+      errors: [`Failed to run integrity check: ${error instanceof Error ? error.message : String(error)}`]
+    };
+  }
+}
+
+/**
+ * Creates a backup of the current database file.
+ * Useful before attempting recovery operations on a corrupted database.
+ *
+ * @returns Path to the backup file
+ */
+export async function createDbBackup(): Promise<string> {
+  if (!db) {
+    throw new Error('Database not initialized');
+  }
+
+  try {
+    // Get the current database file path
+    const dbPath = db.name;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const backupPath = `${dbPath}.${timestamp}.backup`;
+
+    // Use SQLite's VACUUM INTO to create a backup
+    // This also rebuilds the database, which can fix some types of corruption
+    db.prepare(`VACUUM INTO ?`).run(backupPath);
+
+    return backupPath;
+  } catch (error) {
+    throw new Error(`Failed to create backup: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 // ============================================
@@ -356,7 +443,27 @@ export function createEmailRepo(): EmailRepo {
     },
 
     async delete(id) {
-      getDb().prepare('DELETE FROM emails WHERE id = ?').run(id);
+      // Use transaction to ensure atomicity with CASCADE deletes
+      const db = getDb();
+      try {
+        const deleteTransaction = db.transaction(() => {
+          db.prepare('DELETE FROM emails WHERE id = ?').run(id);
+        });
+        deleteTransaction();
+      } catch (error) {
+        // If deletion fails, it could be due to database corruption
+        // Check integrity and provide helpful error message
+        if (error instanceof Error && error.message.includes('malformed')) {
+          const integrityResult = await checkIntegrity(false);
+          if (!integrityResult.isHealthy) {
+            throw new Error(
+              `Database corruption detected during delete operation: ${integrityResult.errors.join('; ')}. ` +
+              `Consider running database integrity check and backup.`
+            );
+          }
+        }
+        throw error;
+      }
     },
   };
 }
@@ -435,12 +542,43 @@ export function createTagRepo(): TagRepo {
         WHERE et.email_id = ?
         ORDER BY t.sort_order
       `).all(emailId);
-      
+
       return rows.map(row => ({
         ...mapTag(row),
         source: (row as any).source,
         confidence: (row as any).confidence,
       }));
+    },
+
+    async getForEmails(emailIds) {
+      if (emailIds.length === 0) return {};
+
+      const placeholders = emailIds.map(() => '?').join(',');
+      const rows = getDb().prepare(`
+        SELECT et.email_id, t.id, t.name, t.slug, t.color, t.is_system, t.sort_order, et.source, et.confidence
+        FROM email_tags et
+        JOIN tags t ON et.tag_id = t.id
+        WHERE et.email_id IN (${placeholders})
+        ORDER BY t.sort_order, t.name
+      `).all(...emailIds) as any[];
+
+      const result: Record<number, AppliedTag[]> = {};
+      emailIds.forEach(id => result[id] = []);
+
+      for (const row of rows) {
+        result[row.email_id].push({
+          id: row.id,
+          name: row.name,
+          slug: row.slug,
+          color: row.color,
+          isSystem: Boolean(row.is_system),
+          sortOrder: row.sort_order,
+          source: row.source,
+          confidence: row.confidence,
+        });
+      }
+
+      return result;
     },
 
     async apply(emailId, tagId, source, confidence) {
@@ -677,7 +815,7 @@ export function createDraftRepo(): DraftRepo {
     },
 
     async update(id, input) {
-      const fields: string[] = ['saved_at = datetime("now")'];
+      const fields: string[] = ["saved_at = datetime('now')"];
       const values: any[] = [];
 
       if (input.to !== undefined) { fields.push('to_addresses = ?'); values.push(JSON.stringify(input.to)); }

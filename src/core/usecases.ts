@@ -65,10 +65,19 @@ export const archiveEmail = (deps: Pick<Deps, 'tags'>) =>
     if (inboxTag) await deps.tags.remove(emailId, inboxTag.id);
   };
 
+export const unarchiveEmail = (deps: Pick<Deps, 'tags'>) =>
+  async (emailId: number): Promise<void> => {
+    const archiveTag = await deps.tags.findBySlug('archive');
+    const inboxTag = await deps.tags.findBySlug('inbox');
+
+    if (archiveTag) await deps.tags.remove(emailId, archiveTag.id);
+    if (inboxTag) await deps.tags.apply(emailId, inboxTag.id, 'manual');
+  };
+
 export const deleteEmail = (deps: Pick<Deps, 'emails' | 'imageCache'>) =>
   async (id: number): Promise<void> => {
-    // Clear cached images before deleting email
-    await deps.imageCache.clearCache(id);
+    // Clear cached image files (DB cascade handles email_images_loaded table)
+    await deps.imageCache.clearCacheFiles(id);
     await deps.emails.delete(id);
   };
 
@@ -105,6 +114,30 @@ export const syncMailbox = (deps: Pick<Deps, 'accounts' | 'sync'>) =>
     const account = await deps.accounts.findById(accountId);
     if (!account) throw new Error('Account not found');
 
+    // If no specific folder is requested, sync both default folders (INBOX + Sent)
+    // to ensure sent emails appear immediately after sending
+    if (!options.folder) {
+      const foldersToSync = deps.sync.getDefaultFolders(account.imapHost);
+      let totalNew = 0;
+      const allNewEmailIds: number[] = [];
+
+      for (const folder of foldersToSync) {
+        try {
+          const result = await deps.sync.sync(account, { ...options, folder });
+          totalNew += result.newCount;
+          allNewEmailIds.push(...result.newEmailIds);
+        } catch (e) {
+          // Folder might not exist, continue to next
+          const errorMsg = e instanceof Error ? e.message : String(e);
+          console.error(`Failed to sync ${folder}:`, errorMsg);
+        }
+      }
+
+      await deps.accounts.updateLastSync(accountId);
+      return { newCount: totalNew, newEmailIds: allNewEmailIds };
+    }
+
+    // Otherwise sync the specific folder requested
     const result = await deps.sync.sync(account, options);
     await deps.accounts.updateLastSync(accountId);
 
@@ -1153,6 +1186,18 @@ export const deleteDraft = (deps: Pick<Deps, 'drafts'>) =>
     deps.drafts.delete(id);
 
 // ============================================
+// Database Health & Recovery Use Cases
+// ============================================
+
+export const checkDatabaseIntegrity = (deps: Pick<Deps, 'databaseHealth'>) =>
+  (full = false): Promise<import('./ports').IntegrityCheckResult> =>
+    deps.databaseHealth.checkIntegrity(full);
+
+export const createDatabaseBackup = (deps: Pick<Deps, 'databaseHealth'>) =>
+  (): Promise<string> =>
+    deps.databaseHealth.createBackup();
+
+// ============================================
 // Factory: Create all use cases with deps
 // ============================================
 
@@ -1166,6 +1211,7 @@ export function createUseCases(deps: Deps) {
     markRead: markRead(deps),
     starEmail: starEmail(deps),
     archiveEmail: archiveEmail(deps),
+    unarchiveEmail: unarchiveEmail(deps),
     deleteEmail: deleteEmail(deps),
 
     // Tags
@@ -1249,6 +1295,10 @@ export function createUseCases(deps: Deps) {
     getRecentContacts: getRecentContacts(deps),
     searchContacts: searchContacts(deps),
     recordContactUsage: recordContactUsage(deps),
+
+    // Database Health
+    checkDatabaseIntegrity: checkDatabaseIntegrity(deps),
+    createDatabaseBackup: createDatabaseBackup(deps),
   };
 }
 

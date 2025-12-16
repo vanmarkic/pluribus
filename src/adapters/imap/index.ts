@@ -213,6 +213,9 @@ export function createMailSync(
 
       let totalNew = 0;
       const newEmailIds: number[] = [];
+      let wasTruncated = false;
+      let originalUidCount = 0;
+      let total = 0;
 
       // Create abort controller for this sync
       const abortController = new AbortController();
@@ -260,15 +263,24 @@ export function createMailSync(
 
           // Poka-yoke: Hard limit to prevent runaway syncs
           const effectiveMax = maxMessages ? Math.min(maxMessages, MAX_SYNC_EMAILS) : MAX_SYNC_EMAILS;
-          if (uids.length > effectiveMax) {
+          originalUidCount = uids.length;
+          wasTruncated = uids.length > effectiveMax;
+
+          if (wasTruncated) {
             console.warn(`Truncating ${folder} sync: ${uids.length} emails found, limiting to ${effectiveMax} most recent`);
             uids = uids.slice(-effectiveMax);
           }
 
-          const total = uids.length;
+          total = uids.length;
           if (total === 0) {
             emit({ accountId: account.id, folder, phase: 'complete', current: 0, total: 0, newCount: 0 });
-            return { newCount: 0, newEmailIds: [] };
+            return {
+              newCount: 0,
+              newEmailIds: [],
+              truncated: wasTruncated,
+              totalAvailable: originalUidCount,
+              synced: 0
+            };
           }
 
           emit({ accountId: account.id, folder, phase: 'fetching', current: 0, total, newCount: 0 });
@@ -281,7 +293,13 @@ export function createMailSync(
             // Check if sync was cancelled
             if (abortController.signal.aborted) {
               emit({ accountId: account.id, folder, phase: 'cancelled', current: processed, total, newCount: totalNew });
-              return { newCount: totalNew, newEmailIds };
+              return {
+                newCount: totalNew,
+                newEmailIds,
+                truncated: wasTruncated,
+                totalAvailable: originalUidCount,
+                synced: total
+              };
             }
 
             const batch = uids.slice(i, i + batchSize);
@@ -354,7 +372,13 @@ export function createMailSync(
         abortControllers.delete(account.id);
       }
 
-      return { newCount: totalNew, newEmailIds };
+      return {
+        newCount: totalNew,
+        newEmailIds,
+        truncated: wasTruncated,
+        totalAvailable: originalUidCount,
+        synced: total
+      };
     },
 
     async fetchBody(account, emailId) {

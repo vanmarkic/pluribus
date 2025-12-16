@@ -20,9 +20,9 @@ const SHORTCUTS: Record<string, { key: string; ctrl?: boolean; shift?: boolean; 
   markRead: { key: 'u', description: 'Mark read/unread' },
   search: { key: '/', description: 'Search' },
   refresh: { key: 'r', ctrl: true, description: 'Refresh' },
-  nextEmail: { key: 'j', description: 'Next email' },
-  prevEmail: { key: 'k', description: 'Previous email' },
-  openEmail: { key: 'o', description: 'Open email' },
+  nextEmail: { key: 'j or ↓', description: 'Next email' },
+  prevEmail: { key: 'k or ↑', description: 'Previous email' },
+  openEmail: { key: 'o or Enter', description: 'Open email' },
   escape: { key: 'Escape', description: 'Close/deselect' },
   inbox: { key: 'g', description: 'Go to inbox (press twice)' },
   settings: { key: ',', ctrl: true, description: 'Settings' },
@@ -124,22 +124,28 @@ export function useKeyboardShortcuts(handlers: {
       return;
     }
 
-    // Next email
-    if (e.key === 'j' && !ctrl) {
+    // Next email (j or down arrow)
+    if ((e.key === 'j' || e.key === 'ArrowDown') && !ctrl) {
       e.preventDefault();
       const currentIndex = emails.findIndex(em => em.id === selectedId);
       if (currentIndex < emails.length - 1) {
         selectEmail(emails[currentIndex + 1].id);
+      } else if (currentIndex === -1 && emails.length > 0) {
+        // No email selected, select first one
+        selectEmail(emails[0].id);
       }
       return;
     }
 
-    // Previous email
-    if (e.key === 'k' && !ctrl) {
+    // Previous email (k or up arrow)
+    if ((e.key === 'k' || e.key === 'ArrowUp') && !ctrl) {
       e.preventDefault();
       const currentIndex = emails.findIndex(em => em.id === selectedId);
       if (currentIndex > 0) {
         selectEmail(emails[currentIndex - 1].id);
+      } else if (currentIndex === -1 && emails.length > 0) {
+        // No email selected, select first one
+        selectEmail(emails[0].id);
       }
       return;
     }
@@ -163,7 +169,7 @@ export function useKeyboardShortcuts(handlers: {
       e.preventDefault();
       setView('inbox');
       if (selectedAccountId) {
-        setFilter({ folderPath: 'INBOX', tagId: undefined, unreadOnly: false, starredOnly: false }, selectedAccountId);
+        setFilter({ folderPath: 'INBOX', tagId: undefined, unreadOnly: false, starredOnly: false, searchQuery: undefined }, selectedAccountId);
       }
       return;
     }
@@ -187,9 +193,9 @@ export function KeyboardShortcutsHelp({ isOpen, onClose }: { isOpen: boolean; on
     {
       name: 'Navigation',
       shortcuts: [
-        { keys: ['j'], desc: 'Next email' },
-        { keys: ['k'], desc: 'Previous email' },
-        { keys: ['o'], desc: 'Open email' },
+        { keys: ['j', '↓'], desc: 'Next email' },
+        { keys: ['k', '↑'], desc: 'Previous email' },
+        { keys: ['o', '↵'], desc: 'Open email' },
         { keys: ['Esc'], desc: 'Close/deselect' },
         { keys: ['g'], desc: 'Go to inbox' },
         { keys: ['/'], desc: 'Search' },

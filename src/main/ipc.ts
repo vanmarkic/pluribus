@@ -107,6 +107,14 @@ function assertListOptions(opts: unknown): Record<string, unknown> {
 export function registerIpcHandlers(window: BrowserWindow, container: Container): void {
   const { useCases, deps, config } = container;
 
+  // License check helper - throws if license expired and write operations blocked
+  const checkLicenseForSend = () => {
+    const state = deps.license.getState();
+    if (state.isReadOnly) {
+      throw new Error('License expired. Please renew to send emails.');
+    }
+  };
+
   // ==========================================
   // Emails
   // ==========================================
@@ -717,6 +725,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
 
   ipcMain.handle('send:email', async (_, accountId, draft) => {
     checkRateLimit('send:email', 20);
+    checkLicenseForSend();
     const id = assertPositiveInt(accountId, 'accountId');
 
     if (!draft || typeof draft !== 'object') throw new Error('Invalid draft');
@@ -754,6 +763,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
 
   ipcMain.handle('send:reply', async (_, emailId, body, replyAll) => {
     checkRateLimit('send:reply', 20);
+    checkLicenseForSend();
     const id = assertPositiveInt(emailId, 'emailId');
 
     if (!body || typeof body !== 'object') throw new Error('Invalid body');
@@ -769,6 +779,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
 
   ipcMain.handle('send:forward', async (_, emailId, to, body) => {
     checkRateLimit('send:forward', 20);
+    checkLicenseForSend();
     const id = assertPositiveInt(emailId, 'emailId');
 
     if (!Array.isArray(to) || to.length === 0) throw new Error('Invalid recipients');
@@ -985,5 +996,38 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   ipcMain.handle('ollama:getRecommendedModels', async () => {
     const { RECOMMENDED_MODELS } = await import('../adapters/ollama-manager');
     return RECOMMENDED_MODELS;
+  });
+
+  // ==========================================
+  // License Management
+  // ==========================================
+
+  const { license } = container.deps;
+
+  ipcMain.handle('license:getState', () => {
+    return license.getState();
+  });
+
+  ipcMain.handle('license:activate', async (_, key) => {
+    checkRateLimit('license:activate', 10);
+    const licenseKey = assertString(key, 'licenseKey', 50);
+    return license.activate(licenseKey);
+  });
+
+  ipcMain.handle('license:validate', async () => {
+    checkRateLimit('license:validate', 30);
+    return license.validate();
+  });
+
+  ipcMain.handle('license:deactivate', async () => {
+    checkRateLimit('license:deactivate', 5);
+    return license.deactivate();
+  });
+
+  // Forward license state changes to renderer
+  license.onStateChange((state) => {
+    BrowserWindow.getAllWindows().forEach((win) => {
+      win.webContents.send('license:state-changed', state);
+    });
   });
 }

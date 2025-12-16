@@ -9,7 +9,7 @@ import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import DOMPurify from 'dompurify';
 import {
   IconFavorite, IconTag, IconArchiveBox, IconDelete, IconCircleBack, IconCircleForward,
-  IconAttachment, IconOptionsHorizontal, IconSparkles, IconImage
+  IconAttachment, IconOptionsHorizontal, IconSparkles, IconImage, IconSpinnerBall
 } from 'obra-icons-react';
 import { useEmailStore, useUIStore, useTagStore } from '../stores';
 import { formatSender } from '../../core/domain';
@@ -58,6 +58,20 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
       node.setAttribute('class', 'blocked-image');
     }
   }
+  // Defense-in-depth: Sanitize dangerous CSS patterns in style attributes
+  // Even though DOMPurify handles most cases, explicitly strip known attack vectors
+  if (node.hasAttribute('style')) {
+    const style = node.getAttribute('style') || '';
+    // Remove: expression(), url(javascript:), behavior:, -moz-binding:
+    const sanitized = style
+      .replace(/expression\s*\([^)]*\)/gi, '')
+      .replace(/url\s*\(\s*["']?\s*javascript:/gi, 'url(blocked:')
+      .replace(/behavior\s*:/gi, '')
+      .replace(/-moz-binding\s*:/gi, '');
+    if (sanitized !== style) {
+      node.setAttribute('style', sanitized);
+    }
+  }
 });
 
 // Get blocked URLs after sanitization
@@ -74,9 +88,13 @@ export function EmailViewer() {
     loadingBody,
     toggleStar,
     archive,
+    unarchive,
     deleteEmail,
     downloadAttachment,
   } = useEmailStore();
+
+  // Check if email is archived
+  const isArchived = selectedTags.some(t => t.slug === 'archive');
 
   const { tags, applyTag, removeTag } = useTagStore();
   const { openCompose } = useUIStore();
@@ -86,13 +104,18 @@ export function EmailViewer() {
   const [showTagDropdown, setShowTagDropdown] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
+  // Tag feedback state
+  const [tagFeedback, setTagFeedback] = useState<string | null>(null);
+  const tagFeedbackTimeoutRef = useRef<NodeJS.Timeout>();
+
   // AI classification state
   const [isClassifying, setIsClassifying] = useState(false);
+  const [classificationFeedback, setClassificationFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  const classificationFeedbackTimeoutRef = useRef<NodeJS.Timeout>();
 
   // Remote images state
   const [imagesLoaded, setImagesLoaded] = useState(false);
   const [loadingImages, setLoadingImages] = useState(false);
-  const [blockedUrls, setBlockedUrls] = useState<string[]>([]);
   const bodyContainerRef = useRef<HTMLDivElement>(null);
 
   // Close dropdown when clicking outside
@@ -108,6 +131,18 @@ export function EmailViewer() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showTagDropdown]);
 
+  // Cleanup timeouts on unmount or email change
+  useEffect(() => {
+    return () => {
+      if (tagFeedbackTimeoutRef.current) {
+        clearTimeout(tagFeedbackTimeoutRef.current);
+      }
+      if (classificationFeedbackTimeoutRef.current) {
+        clearTimeout(classificationFeedbackTimeoutRef.current);
+      }
+    };
+  }, [email?.id]);
+
   // Get tags not yet applied to this email
   const availableTags = tags.filter(
     t => !t.isSystem && !selectedTags.some(st => st.id === t.id)
@@ -116,9 +151,27 @@ export function EmailViewer() {
   // Handle applying a tag
   const handleApplyTag = async (tagId: number) => {
     if (!email) return;
+
+    // Find the tag name for feedback
+    const tag = tags.find(t => t.id === tagId);
+    const tagName = tag?.name || 'Tag';
+
     await applyTag(email.id, tagId);
     await refreshSelectedTags();
     setShowTagDropdown(false);
+
+    // Show feedback message
+    setTagFeedback(`${tagName} added`);
+
+    // Clear any existing timeout
+    if (tagFeedbackTimeoutRef.current) {
+      clearTimeout(tagFeedbackTimeoutRef.current);
+    }
+
+    // Auto-hide after 2 seconds
+    tagFeedbackTimeoutRef.current = setTimeout(() => {
+      setTagFeedback(null);
+    }, 2000);
   };
 
   // Handle removing a tag
@@ -132,25 +185,53 @@ export function EmailViewer() {
   const handleClassify = async () => {
     if (!email || isClassifying) return;
     setIsClassifying(true);
+    setClassificationFeedback(null);
+
     try {
       await window.mailApi.llm.classifyAndApply(email.id);
       await refreshSelectedTags();
+
+      // Show success feedback
+      setClassificationFeedback({ type: 'success', message: 'Classified!' });
+
+      // Clear any existing timeout
+      if (classificationFeedbackTimeoutRef.current) {
+        clearTimeout(classificationFeedbackTimeoutRef.current);
+      }
+
+      // Auto-hide after 2 seconds
+      classificationFeedbackTimeoutRef.current = setTimeout(() => {
+        setClassificationFeedback(null);
+      }, 2000);
     } catch (error) {
       console.error('Classification failed:', error);
+
+      // Show error feedback
+      setClassificationFeedback({ type: 'error', message: 'Classification failed' });
+
+      // Clear any existing timeout
+      if (classificationFeedbackTimeoutRef.current) {
+        clearTimeout(classificationFeedbackTimeoutRef.current);
+      }
+
+      // Auto-hide after 3 seconds
+      classificationFeedbackTimeoutRef.current = setTimeout(() => {
+        setClassificationFeedback(null);
+      }, 3000);
     } finally {
       setIsClassifying(false);
     }
   };
 
   // Sanitize HTML content and capture blocked URLs
-  const sanitizedHtml = useMemo(() => {
+  // NOTE: blockedUrls is derived, not state - this avoids race conditions where
+  // effects would run before setState took effect
+  const { sanitizedHtml, blockedUrls } = useMemo(() => {
     if (!body?.html) {
-      setBlockedUrls([]);
-      return null;
+      return { sanitizedHtml: null, blockedUrls: [] };
     }
     const result = DOMPurify.sanitize(body.html, purifyConfig as Parameters<typeof DOMPurify.sanitize>[1]);
-    setBlockedUrls(getBlockedImageUrls());
-    return result;
+    return { sanitizedHtml: result, blockedUrls: getBlockedImageUrls() };
   }, [body?.html]);
 
   // Check if images should be auto-loaded for this email
@@ -336,10 +417,14 @@ export function EmailViewer() {
             <button
               onClick={handleClassify}
               disabled={isClassifying}
-              className={`btn btn-icon btn-ghost ${isClassifying ? 'animate-pulse' : ''}`}
-              title="Classify with AI"
+              className="btn btn-icon btn-ghost"
+              title={isClassifying ? 'Classifying...' : 'Classify with AI'}
             >
-              <IconSparkles className="w-5 h-5" />
+              {isClassifying ? (
+                <IconSpinnerBall className="w-5 h-5 animate-spin" />
+              ) : (
+                <IconSparkles className="w-5 h-5" />
+              )}
             </button>
             <button
               onClick={() => setShowTagDropdown(!showTagDropdown)}
@@ -349,11 +434,11 @@ export function EmailViewer() {
               <IconTag className="w-5 h-5" />
             </button>
             <button
-              onClick={() => archive(email.id)}
+              onClick={() => isArchived ? unarchive(email.id) : archive(email.id)}
               className="btn btn-icon btn-ghost"
-              title="Archive"
+              title={isArchived ? "Restore to Inbox" : "Archive"}
             >
-              <IconArchiveBox className="w-5 h-5" />
+              <IconArchiveBox className="w-5 h-5" style={isArchived ? { transform: 'scaleX(-1)' } : undefined} />
             </button>
             <button
               onClick={() => deleteEmail(email.id)}
@@ -388,6 +473,37 @@ export function EmailViewer() {
             </button>
           ))}
 
+          {/* Tag feedback message */}
+          {tagFeedback && (
+            <span
+              className="text-sm px-2 py-1 rounded-md animate-fade-in"
+              style={{
+                background: 'var(--color-success-bg)',
+                color: 'var(--color-success-text)',
+              }}
+            >
+              {tagFeedback}
+            </span>
+          )}
+
+          {/* Classification feedback message */}
+          {classificationFeedback && (
+            <span
+              className="text-sm px-2 py-1 rounded-md animate-fade-in flex items-center gap-1.5"
+              style={{
+                background: classificationFeedback.type === 'success'
+                  ? 'var(--color-success-bg)'
+                  : 'rgba(239, 68, 68, 0.1)',
+                color: classificationFeedback.type === 'success'
+                  ? 'var(--color-success-text)'
+                  : 'var(--color-danger)',
+              }}
+            >
+              <IconSparkles className="w-3.5 h-3.5" />
+              {classificationFeedback.message}
+            </span>
+          )}
+
           {/* Add tag button with dropdown */}
           <div className="relative" ref={dropdownRef}>
             <button
@@ -406,9 +522,8 @@ export function EmailViewer() {
             {/* Tag dropdown */}
             {showTagDropdown && (
               <div
-                className="absolute top-full left-0 mt-1 py-1 rounded-lg shadow-lg z-50"
+                className="absolute top-full left-0 mt-1 py-1 rounded-lg shadow-lg z-50 bg-white dark:bg-zinc-800"
                 style={{
-                  background: 'var(--color-bg-primary)',
                   border: '1px solid var(--color-border)',
                   minWidth: '160px'
                 }}
@@ -425,7 +540,7 @@ export function EmailViewer() {
                     <button
                       key={tag.id}
                       onClick={() => handleApplyTag(tag.id)}
-                      className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-[var(--color-bg-secondary)]"
+                      className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-[var(--color-bg-secondary)] text-[var(--color-text)]"
                     >
                       <span
                         className="w-2 h-2 rounded-full"

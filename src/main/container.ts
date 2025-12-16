@@ -21,6 +21,7 @@ import { createMailSender } from '../adapters/smtp';
 import { createImageCache } from '../adapters/image-cache';
 import { createBackgroundTaskManager } from '../adapters/background';
 import { createOllamaManager, type OllamaManager } from '../adapters/ollama-manager';
+import { createLicenseService } from '../adapters/license';
 import type { RemoteImagesSetting, DatabaseHealth } from '../core/ports';
 
 // ============================================
@@ -249,6 +250,9 @@ export function createContainer(): Container {
     createBackup: createDbBackup,
   };
 
+  // License service
+  const license = createLicenseService();
+
   // Assemble dependencies
   const deps: Deps = {
     emails,
@@ -268,6 +272,7 @@ export function createContainer(): Container {
     llmProvider,
     backgroundTasks,
     databaseHealth,
+    license,
   };
   
   // Create use cases

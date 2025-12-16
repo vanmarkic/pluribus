@@ -46,6 +46,7 @@ describe('autoLoadImagesForEmail', () => {
         markImagesLoaded: async () => {},
         clearCache: async () => {},
         clearAllCache: async () => {},
+        clearCacheFiles: async () => {},
       },
     });
 
@@ -65,6 +66,7 @@ describe('autoLoadImagesForEmail', () => {
         markImagesLoaded: markLoadedSpy,
         clearCache: async () => {},
         clearAllCache: async () => {},
+        clearCacheFiles: async () => {},
       },
     });
 

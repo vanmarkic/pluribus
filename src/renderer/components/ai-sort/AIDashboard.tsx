@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent } from '../ui/card';
 import { Progress } from '../ui/progress';
 import { Button } from '../ui/button';
@@ -6,7 +6,7 @@ import type { AIStats, ClassificationFeedback, ConfusedPattern } from './types';
 import { IconSpinnerBall, IconBarChart, IconClock3, IconArrowUp } from 'obra-icons-react';
 
 type AIDashboardProps = {
-  onClassifyUnprocessed: () => void;
+  onClassifyUnprocessed: () => Promise<{ classified: number; skipped: number }>;
   onClearCache: () => void;
   accountId?: number;
 };
@@ -17,6 +17,8 @@ export function AIDashboard({ onClassifyUnprocessed, onClearCache, accountId }: 
   const [activity, setActivity] = useState<ClassificationFeedback[]>([]);
   const [loading, setLoading] = useState(true);
   const [classifying, setClassifying] = useState(false);
+  const [classifyResult, setClassifyResult] = useState<{ classified: number; skipped: number } | null>(null);
+  const clearResultTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const loadData = async () => {
     try {
@@ -41,13 +43,32 @@ export function AIDashboard({ onClassifyUnprocessed, onClearCache, accountId }: 
 
   const handleClassify = async () => {
     setClassifying(true);
+    setClassifyResult(null);
+    // Clear any existing timeout
+    if (clearResultTimeoutRef.current) {
+      clearTimeout(clearResultTimeoutRef.current);
+    }
     try {
-      await onClassifyUnprocessed();
+      const result = await onClassifyUnprocessed();
       await loadData();
+      setClassifyResult(result);
+      // Clear the result message after 5 seconds
+      clearResultTimeoutRef.current = setTimeout(() => setClassifyResult(null), 5000);
+    } catch (err) {
+      console.error('Classification error:', err);
     } finally {
       setClassifying(false);
     }
   };
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (clearResultTimeoutRef.current) {
+        clearTimeout(clearResultTimeoutRef.current);
+      }
+    };
+  }, []);
 
   if (loading || !stats) {
     return (
@@ -71,14 +92,29 @@ export function AIDashboard({ onClassifyUnprocessed, onClearCache, accountId }: 
             Monitor classification performance and manage your sorting budget.
           </p>
         </div>
-        <div className="flex gap-3">
-          <Button variant="outline" size="sm" onClick={onClearCache}>
-            <IconSpinnerBall className="mr-2 h-4 w-4" />
-            Clear Cache
-          </Button>
-          <Button size="sm" onClick={handleClassify} disabled={classifying}>
-            {classifying ? 'Classifying...' : 'Classify Unprocessed'}
-          </Button>
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex gap-3">
+            <Button variant="outline" size="sm" onClick={onClearCache}>
+              <IconSpinnerBall className="mr-2 h-4 w-4" />
+              Clear Cache
+            </Button>
+            <Button size="sm" onClick={handleClassify} disabled={classifying}>
+              {classifying && <IconSpinnerBall className="mr-2 h-4 w-4 animate-spin" />}
+              {classifying ? 'Processing...' : 'Classify Unprocessed'}
+            </Button>
+          </div>
+          {classifyResult && (
+            <div
+              className="text-sm px-3 py-1.5 rounded-md"
+              style={{
+                background: 'var(--color-success-bg, rgba(34, 197, 94, 0.1))',
+                color: 'var(--color-success, #22c55e)'
+              }}
+            >
+              Processed {classifyResult.classified} email{classifyResult.classified !== 1 ? 's' : ''}
+              {classifyResult.skipped > 0 && `, skipped ${classifyResult.skipped}`}
+            </div>
+          )}
         </div>
       </div>
 
@@ -127,7 +163,9 @@ export function AIDashboard({ onClassifyUnprocessed, onClearCache, accountId }: 
               <IconArrowUp className="h-4 w-4" style={{ color: 'var(--color-success)' }} />
             </div>
             <div className="text-3xl font-bold" style={{ color: 'var(--color-text-primary)' }}>
-              {Math.round(stats.accuracy30Day)}%
+              {stats.accuracy30Day != null && !isNaN(stats.accuracy30Day)
+                ? `${Math.round(stats.accuracy30Day * 100)}%`
+                : 'N/A'}
             </div>
             <p className="text-xs mt-1" style={{ color: 'var(--color-text-tertiary)' }}>
               based on corrections
@@ -184,7 +222,9 @@ export function AIDashboard({ onClassifyUnprocessed, onClearCache, accountId }: 
                         {item.patternValue}
                       </div>
                       <div className="text-xs mt-0.5" style={{ color: 'var(--color-text-tertiary)' }}>
-                        Avg Confidence: {Math.round(item.avgConfidence ?? 0)}%
+                        Avg Confidence: {item.avgConfidence != null && !isNaN(item.avgConfidence)
+                          ? `${Math.round(item.avgConfidence * 100)}%`
+                          : 'N/A'}
                       </div>
                     </div>
                     <div

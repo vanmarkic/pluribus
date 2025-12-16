@@ -13,11 +13,12 @@ import { EmailViewer } from './components/EmailViewer';
 import { SecuritySettings } from './components/SecuritySettings';
 import { AccountWizard } from './components/AccountWizard';
 import { ComposeModal } from './components/ComposeModal';
+import { LicenseActivationModal } from './components/LicenseActivation';
 import { AISortView } from './components/ai-sort';
 import { SetupWizard } from './components/SetupWizard';
 import { useKeyboardShortcuts, KeyboardShortcutsHelp } from './hooks/useKeyboardShortcuts';
 import { useTheme } from './hooks/useTheme';
-import { useUIStore, useSyncStore, useAccountStore, useTagStore, useEmailStore } from './stores';
+import { useUIStore, useSyncStore, useAccountStore, useTagStore, useEmailStore, useLicenseStore } from './stores';
 import { IconSun, IconMoon, IconComputerMonitor, IconSearch, IconClose } from 'obra-icons-react';
 import { debounce } from './utils/debounce';
 import type { SyncProgress } from '../core/domain';
@@ -28,6 +29,7 @@ export function App() {
   const { loadAccounts, selectedAccountId } = useAccountStore();
   const { loadTags } = useTagStore();
   const { selectedEmail, selectedBody, loadEmails, search, clearFilter } = useEmailStore();
+  const { loadState: loadLicenseState } = useLicenseStore();
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const [searchInput, setSearchInput] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -74,6 +76,7 @@ export function App() {
   useEffect(() => {
     loadAccounts();
     loadTags();
+    loadLicenseState();
   }, []);
 
   // Check if setup wizard should be shown on first run
@@ -326,6 +329,9 @@ export function App() {
           }}
         />
       )}
+
+      {/* License Activation Modal */}
+      <LicenseActivationModal />
 
       {/* Compose Modal */}
       {composeMode && (

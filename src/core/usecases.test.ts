@@ -9,6 +9,7 @@ import {
   markRead,
   starEmail,
   archiveEmail,
+  unarchiveEmail,
   deleteEmail,
   listTags,
   getEmailTags,
@@ -154,6 +155,7 @@ function createMockTagRepo(overrides: Partial<TagRepo> = {}): TagRepo {
     findAll: vi.fn().mockResolvedValue(testTags),
     findBySlug: vi.fn().mockResolvedValue(null),
     findByEmailId: vi.fn().mockResolvedValue([]),
+    getForEmails: vi.fn().mockResolvedValue({}),
     apply: vi.fn().mockResolvedValue(undefined),
     remove: vi.fn().mockResolvedValue(undefined),
     create: vi.fn().mockResolvedValue(testTags[2]),
@@ -433,6 +435,7 @@ describe('deleteEmail', () => {
       hasLoadedImages: vi.fn(),
       markImagesLoaded: vi.fn(),
       clearCache: vi.fn().mockResolvedValue(undefined),
+      clearCacheFiles: vi.fn().mockResolvedValue(undefined),
       clearAllCache: vi.fn().mockResolvedValue(undefined),
     };
 
@@ -441,7 +444,7 @@ describe('deleteEmail', () => {
     expect(emails.delete).toHaveBeenCalledWith(1);
   });
 
-  it('clears image cache before deleting email', async () => {
+  it('clears image cache files before deleting email', async () => {
     const emails = createMockEmailRepo();
     const imageCache = {
       cacheImages: vi.fn(),
@@ -449,12 +452,13 @@ describe('deleteEmail', () => {
       hasLoadedImages: vi.fn(),
       markImagesLoaded: vi.fn(),
       clearCache: vi.fn().mockResolvedValue(undefined),
+      clearCacheFiles: vi.fn().mockResolvedValue(undefined),
       clearAllCache: vi.fn().mockResolvedValue(undefined),
     };
 
     await deleteEmail({ emails, imageCache })(1);
 
-    expect(imageCache.clearCache).toHaveBeenCalledWith(1);
+    expect(imageCache.clearCacheFiles).toHaveBeenCalledWith(1);
     expect(emails.delete).toHaveBeenCalledWith(1);
   });
 });
@@ -485,6 +489,34 @@ describe('archiveEmail', () => {
     });
 
     await archiveEmail({ tags })(1);
+
+    expect(tags.apply).not.toHaveBeenCalled();
+    expect(tags.remove).not.toHaveBeenCalled();
+  });
+});
+
+describe('unarchiveEmail', () => {
+  it('removes archive tag and applies inbox tag', async () => {
+    const tags = createMockTagRepo({
+      findBySlug: vi.fn()
+        .mockResolvedValueOnce(testTags[1]) // archive
+        .mockResolvedValueOnce(testTags[0]), // inbox
+    });
+
+    await unarchiveEmail({ tags })(1);
+
+    expect(tags.findBySlug).toHaveBeenCalledWith('archive');
+    expect(tags.findBySlug).toHaveBeenCalledWith('inbox');
+    expect(tags.remove).toHaveBeenCalledWith(1, testTags[1].id);
+    expect(tags.apply).toHaveBeenCalledWith(1, testTags[0].id, 'manual');
+  });
+
+  it('handles missing tags gracefully', async () => {
+    const tags = createMockTagRepo({
+      findBySlug: vi.fn().mockResolvedValue(null),
+    });
+
+    await unarchiveEmail({ tags })(1);
 
     expect(tags.apply).not.toHaveBeenCalled();
     expect(tags.remove).not.toHaveBeenCalled();
@@ -584,6 +616,26 @@ describe('syncMailbox', () => {
 
     await expect(syncMailbox({ accounts, sync })(999)).rejects.toThrow('Account not found');
     expect(sync.sync).not.toHaveBeenCalled();
+  });
+
+  it('syncs both INBOX and Sent when no folder specified', async () => {
+    const accounts = createMockAccountRepo({ findById: vi.fn().mockResolvedValue(testAccount) });
+    const sync = createMockSync({
+      sync: vi.fn().mockResolvedValue({ newCount: 3, newEmailIds: [1, 2, 3] }),
+      getDefaultFolders: vi.fn().mockReturnValue(['INBOX', 'Sent']),
+    });
+
+    const result = await syncMailbox({ accounts, sync })(1);
+
+    expect(accounts.findById).toHaveBeenCalledWith(1);
+    expect(sync.getDefaultFolders).toHaveBeenCalledWith(testAccount.imapHost);
+    expect(sync.sync).toHaveBeenCalledTimes(2);
+    expect(sync.sync).toHaveBeenCalledWith(testAccount, { folder: 'INBOX' });
+    expect(sync.sync).toHaveBeenCalledWith(testAccount, { folder: 'Sent' });
+    expect(accounts.updateLastSync).toHaveBeenCalledWith(1);
+    // 2 folders × 3 emails = 6 total
+    expect(result.newCount).toBe(6);
+    expect(result.newEmailIds).toEqual([1, 2, 3, 1, 2, 3]);
   });
 });
 
@@ -1432,6 +1484,7 @@ describe('loadRemoteImages', () => {
       markImagesLoaded: vi.fn().mockResolvedValue(undefined),
       clearCache: vi.fn().mockResolvedValue(undefined),
       clearAllCache: vi.fn().mockResolvedValue(undefined),
+      clearCacheFiles: vi.fn().mockResolvedValue(undefined),
     };
     const emails = createMockEmailRepo({ findById: vi.fn().mockResolvedValue(testEmail) });
 
@@ -1453,6 +1506,7 @@ describe('loadRemoteImages', () => {
       markImagesLoaded: vi.fn(),
       clearCache: vi.fn().mockResolvedValue(undefined),
       clearAllCache: vi.fn().mockResolvedValue(undefined),
+      clearCacheFiles: vi.fn().mockResolvedValue(undefined),
     };
     const emails = createMockEmailRepo({ findById: vi.fn().mockResolvedValue(testEmail) });
 
@@ -1472,6 +1526,7 @@ describe('loadRemoteImages', () => {
       markImagesLoaded: vi.fn(),
       clearCache: vi.fn().mockResolvedValue(undefined),
       clearAllCache: vi.fn().mockResolvedValue(undefined),
+      clearCacheFiles: vi.fn().mockResolvedValue(undefined),
     };
     const emails = createMockEmailRepo({ findById: vi.fn().mockResolvedValue(null) });
 
@@ -1489,6 +1544,7 @@ describe('hasLoadedRemoteImages', () => {
       markImagesLoaded: vi.fn(),
       clearCache: vi.fn().mockResolvedValue(undefined),
       clearAllCache: vi.fn().mockResolvedValue(undefined),
+      clearCacheFiles: vi.fn().mockResolvedValue(undefined),
     };
 
     const result = await hasLoadedRemoteImages({ imageCache })(1);
@@ -1505,6 +1561,7 @@ describe('hasLoadedRemoteImages', () => {
       markImagesLoaded: vi.fn(),
       clearCache: vi.fn().mockResolvedValue(undefined),
       clearAllCache: vi.fn().mockResolvedValue(undefined),
+      clearCacheFiles: vi.fn().mockResolvedValue(undefined),
     };
 
     const result = await hasLoadedRemoteImages({ imageCache })(1);
@@ -1551,6 +1608,7 @@ describe('clearImageCache', () => {
       markImagesLoaded: vi.fn(),
       clearCache: vi.fn().mockResolvedValue(undefined),
       clearAllCache: vi.fn().mockResolvedValue(undefined),
+      clearCacheFiles: vi.fn().mockResolvedValue(undefined),
     };
 
     await clearImageCache({ imageCache })(1);

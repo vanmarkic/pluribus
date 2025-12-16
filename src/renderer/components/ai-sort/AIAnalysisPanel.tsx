@@ -11,7 +11,7 @@ type AIAnalysisPanelProps = {
 export function AIAnalysisPanel({ classification, className }: AIAnalysisPanelProps) {
   // Confidence is stored as 0.0-1.0, convert to 0-100 for display
   const confidenceRaw = classification.confidence ?? 0;
-  const confidencePercent = Math.round(confidenceRaw * 100);
+  const confidencePercent = !isNaN(confidenceRaw) ? Math.round(confidenceRaw * 100) : 0;
 
   const getConfidenceColor = (score: number) => {
     if (score >= 0.85) return 'var(--color-success)';

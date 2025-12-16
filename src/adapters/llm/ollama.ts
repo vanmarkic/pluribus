@@ -145,22 +145,34 @@ export function createOllamaClassifier(
       const systemPrompt = buildSystemPrompt(tags);
       const userMessage = buildUserMessage(email, body, existingTags);
 
-      const response = await fetch(`${config.serverUrl}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: config.model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userMessage },
-          ],
-          stream: false,
-          options: { temperature: 0.2 },
-        }),
-      });
+      let response;
+      try {
+        response = await fetch(`${config.serverUrl}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: config.model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userMessage },
+            ],
+            stream: false,
+            options: { temperature: 0.2 },
+          }),
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.includes('ECONNREFUSED') || message.includes('fetch failed')) {
+          throw new Error("Ollama server is not running. Start it with 'ollama serve' or click 'Start Ollama Server' in settings.");
+        }
+        throw new Error(`Failed to connect to Ollama: ${message}`);
+      }
 
       if (!response.ok) {
-        throw new Error(`Ollama API error: ${response.status}`);
+        const statusText = response.status === 404
+          ? `Model '${config.model}' not found. Pull it with: ollama pull ${config.model}`
+          : `Server error (${response.status})`;
+        throw new Error(`Ollama API error: ${statusText}`);
       }
 
       const data = await response.json() as OllamaChatResponse;
@@ -211,10 +223,19 @@ export function resetOllamaDailyUsage(): void {
 }
 
 /**
+ * Reset email count (for testing)
+ */
+export function resetOllamaEmailCount(): void {
+  todayEmailCount = 0;
+}
+
+/**
  * Start the Ollama server if not already running.
  * Returns true if server is running (either started or already was running).
  */
 export async function startOllama(serverUrl = DEFAULT_SERVER_URL): Promise<{ started: boolean; error?: string }> {
+  console.log('[Ollama] Checking if server is running...');
+
   // First check if already running
   try {
     const response = await fetch(`${serverUrl}/api/tags`, {
@@ -222,11 +243,16 @@ export async function startOllama(serverUrl = DEFAULT_SERVER_URL): Promise<{ sta
       signal: AbortSignal.timeout(2000),
     });
     if (response.ok) {
+      console.log('[Ollama] Server is already running');
       return { started: true }; // Already running
     }
-  } catch {
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log('[Ollama] Server not responding:', message);
     // Not running, try to start
   }
+
+  console.log('[Ollama] Attempting to start Ollama server...');
 
   try {
     const { spawn } = await import('child_process');
@@ -238,6 +264,8 @@ export async function startOllama(serverUrl = DEFAULT_SERVER_URL): Promise<{ sta
     });
     child.unref(); // Don't wait for child process
 
+    console.log('[Ollama] Spawned ollama serve process, waiting for it to be ready...');
+
     // Wait for server to be ready (up to 10 seconds)
     for (let i = 0; i < 20; i++) {
       await new Promise(resolve => setTimeout(resolve, 500));
@@ -247,20 +275,28 @@ export async function startOllama(serverUrl = DEFAULT_SERVER_URL): Promise<{ sta
           signal: AbortSignal.timeout(1000),
         });
         if (response.ok) {
-          console.log('Ollama server started successfully');
+          console.log('[Ollama] Server started successfully');
           return { started: true };
         }
       } catch {
         // Still starting up, continue waiting
+        if (i % 4 === 0) {
+          console.log(`[Ollama] Still waiting... (${i / 2}s)`);
+        }
       }
     }
 
-    return { started: false, error: 'Ollama server did not start within 10 seconds' };
+    console.error('[Ollama] Server did not start within 10 seconds');
+    return { started: false, error: 'Ollama server did not start within 10 seconds. It may be starting in the background - try again in a moment.' };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    if (message.includes('ENOENT')) {
+    console.error('[Ollama] Failed to start:', message);
+
+    // Check for ENOENT (command not found)
+    if (message.includes('ENOENT') || (err as NodeJS.ErrnoException).code === 'ENOENT') {
       return { started: false, error: 'Ollama is not installed. Install from https://ollama.ai' };
     }
+
     return { started: false, error: `Failed to start Ollama: ${message}` };
   }
 }

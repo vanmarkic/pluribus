@@ -314,3 +314,20 @@ export type ClassificationStats = {
     low: number;
   };
 };
+
+// ============================================
+// License
+// ============================================
+
+export type LicenseStatus = 'active' | 'expired' | 'grace' | 'inactive';
+
+export type LicenseState = {
+  status: LicenseStatus;
+  licenseKey: string | null;
+  expiresAt: Date | null;
+  daysUntilExpiry: number | null;
+  isReadOnly: boolean;
+};
+
+/** Grace period after expiry before read-only mode (7 days) */
+export const LICENSE_GRACE_PERIOD_DAYS = 7;

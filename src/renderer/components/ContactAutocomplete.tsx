@@ -23,16 +23,14 @@ export function ContactAutocomplete({ value, onChange, placeholder, label }: Pro
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Get current input segment (after last comma)
-  const getCurrentSegment = (): string => {
-    const parts = value.split(',');
-    return parts[parts.length - 1].trim();
-  };
-
   // Load suggestions on focus or typing
-  const loadSuggestions = async () => {
+  const loadSuggestions = async (inputValue?: string) => {
     try {
-      const segment = getCurrentSegment();
+      // Use provided value or current value
+      const currentValue = inputValue ?? value;
+      const parts = currentValue.split(',');
+      const segment = parts[parts.length - 1].trim();
+
       const results = segment.length > 0
         ? await window.mailApi.contacts.search(segment, 5)
         : await window.mailApi.contacts.getRecent(5);
@@ -89,8 +87,9 @@ export function ContactAutocomplete({ value, onChange, placeholder, label }: Pro
         type="text"
         value={value}
         onChange={e => {
-          onChange(e.target.value);
-          loadSuggestions();
+          const newValue = e.target.value;
+          onChange(newValue);
+          loadSuggestions(newValue);
           setShowDropdown(true);
         }}
         onFocus={() => {
@@ -118,10 +117,11 @@ export function ContactAutocomplete({ value, onChange, placeholder, label }: Pro
               key={contact.address}
               type="button"
               onMouseDown={e => e.preventDefault()} // Prevent blur
+              onMouseEnter={() => setHighlightIndex(i)}
               onClick={() => selectContact(contact)}
               className={cn(
                 'w-full px-3 py-2 text-left text-sm hover:bg-zinc-50 transition-colors',
-                i === highlightIndex && 'bg-zinc-100'
+                i === highlightIndex && 'bg-blue-50 border-l-2 border-blue-500'
               )}
             >
               <div className="font-medium truncate">

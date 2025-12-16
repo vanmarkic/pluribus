@@ -5,7 +5,7 @@
  * This is dependency inversion without the ceremony.
  */
 
-import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, Folder, ListEmailsOptions, Classification, SyncProgress, SyncOptions, Draft, DraftInput, ListDraftsOptions, ClassificationState, ClassificationFeedback, ConfusedPattern, ClassificationStats, ClassificationStatus, RecentContact } from './domain';
+import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, Folder, ListEmailsOptions, Classification, SyncProgress, SyncOptions, Draft, DraftInput, ListDraftsOptions, ClassificationState, ClassificationFeedback, ConfusedPattern, ClassificationStats, ClassificationStatus, RecentContact, LicenseState } from './domain';
 
 // ============================================
 // Email Repository
@@ -43,6 +43,7 @@ export type TagRepo = {
   findAll: () => Promise<Tag[]>;
   findBySlug: (slug: string) => Promise<Tag | null>;
   findByEmailId: (emailId: number) => Promise<AppliedTag[]>;
+  getForEmails: (emailIds: number[]) => Promise<Record<number, AppliedTag[]>>;
   apply: (emailId: number, tagId: number, source: string, confidence?: number) => Promise<void>;
   remove: (emailId: number, tagId: number) => Promise<void>;
   create: (tag: Omit<Tag, 'id'>) => Promise<Tag>;
@@ -101,6 +102,9 @@ export type ContactRepo = {
 export type SyncResult = {
   newCount: number;
   newEmailIds: number[];
+  truncated?: boolean;
+  totalAvailable?: number;
+  synced?: number;
 };
 
 export type MailSync = {
@@ -302,6 +306,8 @@ export type ImageCache = {
   markImagesLoaded: (emailId: number) => Promise<void>;
   /** Delete cached images for an email (call on email delete) */
   clearCache: (emailId: number) => Promise<void>;
+  /** Delete only filesystem cache files for an email (DB cascade handles email_images_loaded) */
+  clearCacheFiles: (emailId: number) => Promise<void>;
   /** Delete all cached images and reset tracking */
   clearAllCache: () => Promise<void>;
 };
@@ -338,6 +344,42 @@ export type BackgroundTaskManager = {
 };
 
 // ============================================
+// Database Health & Recovery
+// ============================================
+
+export type IntegrityCheckResult = {
+  isHealthy: boolean;
+  errors: string[];
+};
+
+export type DatabaseHealth = {
+  checkIntegrity: (full?: boolean) => Promise<IntegrityCheckResult>;
+  createBackup: () => Promise<string>;
+};
+
+// ============================================
+// License Service
+// ============================================
+
+export type ActivationResult =
+  | { success: true; expiresAt: Date }
+  | { success: true; warning: 'device_changed'; message: string; expiresAt: Date }
+  | { success: false; error: string };
+
+export type LicenseService = {
+  /** Get current license state (cached, call frequently) */
+  getState: () => LicenseState;
+  /** Activate a license key (calls server) */
+  activate: (licenseKey: string) => Promise<ActivationResult>;
+  /** Validate with server (updates local cache) */
+  validate: () => Promise<ActivationResult>;
+  /** Clear local license data */
+  deactivate: () => Promise<void>;
+  /** Subscribe to license state changes */
+  onStateChange: (cb: (state: LicenseState) => void) => () => void;
+};
+
+// ============================================
 // All Dependencies (for DI)
 // ============================================
 
@@ -358,4 +400,6 @@ export type Deps = {
   imageCache: ImageCache;
   llmProvider: LLMProvider;
   backgroundTasks: BackgroundTaskManager;
+  databaseHealth: DatabaseHealth;
+  license: LicenseService;
 };

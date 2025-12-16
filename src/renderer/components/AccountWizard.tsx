@@ -330,6 +330,7 @@ export function AccountWizard({ editAccountId, onClose, onSuccess }: Props) {
                 </label>
                 <input
                   type="password"
+                  autoComplete="new-password"
                   value={form.password}
                   onChange={e => setForm(prev => ({ ...prev, password: e.target.value }))}
                   className="w-full px-3 py-2 border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
