@@ -233,6 +233,9 @@ export function TriageReviewView() {
       if (e.key === 'e' || e.key === 'E') {
         setShowFolderPicker(true);
       }
+      if (e.key === 'Escape') {
+        setShowFolderPicker(false);
+      }
       if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
         e.preventDefault();
         toggleSelectAll();
