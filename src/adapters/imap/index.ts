@@ -8,8 +8,9 @@
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import nodemailer from 'nodemailer';
-import type { MailSync, EmailRepo, AttachmentRepo, FolderRepo, SecureStorage, SentMessage } from '../../core/ports';
+import type { MailSync, EmailRepo, AttachmentRepo, FolderRepo, SecureStorage, SentMessage, ImapFolderOps } from '../../core/ports';
 import type { Account, Email, EmailBody, SyncProgress, SyncOptions } from '../../core/domain';
+import { TRIAGE_FOLDERS } from '../../core/domain';
 import { DEFAULT_SYNC_DAYS, MAX_SYNC_EMAILS } from '../../core/domain';
 
 type ProgressCallback = (p: SyncProgress) => void;
@@ -558,6 +559,99 @@ export function createMailSync(
       // Connect and append to Sent folder
       const client = await getConnection(account);
       await client.append(sentFolder, rawMessage, ['\\Seen']);
+    },
+  };
+}
+
+// ============================================
+// IMAP Folder Operations (for Triage)
+// ============================================
+
+export function createImapFolderOps(
+  secrets: SecureStorage
+): ImapFolderOps {
+  const connections = new Map<number, { client: ImapFlow; lastUsed: number }>();
+
+  async function getConnection(account: Account): Promise<ImapFlow> {
+    const existing = connections.get(account.id);
+    if (existing?.client?.usable) {
+      existing.lastUsed = Date.now();
+      return existing.client;
+    }
+
+    const password = await secrets.getPassword(account.email);
+    if (!password) throw new Error(`No password for account ${account.email}`);
+
+    const client = new ImapFlow({
+      host: account.imapHost,
+      port: account.imapPort,
+      secure: account.imapPort === 993,
+      auth: { user: account.username, pass: password },
+      logger: false,
+      greetingTimeout: 10000,
+      socketTimeout: 30000,
+    });
+
+    await client.connect();
+    connections.set(account.id, { client, lastUsed: Date.now() });
+    return client;
+  }
+
+  return {
+    async createFolder(account: Account, path: string): Promise<void> {
+      const client = await getConnection(account);
+      await client.mailboxCreate(path);
+    },
+
+    async deleteFolder(account: Account, path: string): Promise<void> {
+      const client = await getConnection(account);
+      await client.mailboxDelete(path);
+    },
+
+    async listFolders(account: Account): Promise<{ path: string; specialUse?: string }[]> {
+      const client = await getConnection(account);
+      const mailboxes = await client.list();
+      return mailboxes.map(m => ({
+        path: m.path,
+        specialUse: m.specialUse,
+      }));
+    },
+
+    async moveMessage(account: Account, emailUid: number, fromFolder: string, toFolder: string): Promise<void> {
+      const client = await getConnection(account);
+      const lock = await client.getMailboxLock(fromFolder);
+      try {
+        await client.messageMove(emailUid.toString(), toFolder, { uid: true });
+      } finally {
+        lock.release();
+      }
+    },
+
+    async ensureTriageFolders(account: Account): Promise<string[]> {
+      // Folders to create (excluding INBOX which always exists)
+      const foldersToCreate = TRIAGE_FOLDERS.filter(f => f !== 'INBOX');
+
+      // Also need parent folder Paper-Trail
+      const allFolders = ['Paper-Trail', ...foldersToCreate];
+
+      const client = await getConnection(account);
+      const existing = await client.list();
+      const existingPaths = new Set(existing.map(f => f.path));
+      const created: string[] = [];
+
+      for (const folder of allFolders) {
+        if (!existingPaths.has(folder)) {
+          try {
+            await client.mailboxCreate(folder);
+            created.push(folder);
+          } catch (e) {
+            // Folder might already exist or creation failed
+            console.warn(`Failed to create folder ${folder}:`, e);
+          }
+        }
+      }
+
+      return created;
     },
   };
 }

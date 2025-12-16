@@ -7,7 +7,7 @@
  */
 
 import type { Deps, AccountInput, SmtpConfig, EmailDraft, SendResult, SyncResult, CachedImage, RemoteImagesSetting, DraftRepo } from './ports';
-import type { Email, EmailBody, Tag, AppliedTag, Account, ListEmailsOptions, SyncOptions, Classification, ClassificationState, ClassificationStats, ClassificationFeedback, ConfusedPattern, Draft, DraftInput, ListDraftsOptions, RecentContact } from './domain';
+import type { Email, EmailBody, Tag, AppliedTag, Account, ListEmailsOptions, SyncOptions, Classification, ClassificationState, ClassificationStats, ClassificationFeedback, ConfusedPattern, Draft, DraftInput, ListDraftsOptions, RecentContact, TriageClassificationResult, TrainingExample, TriageFolder } from './domain';
 import { extractDomain, extractSubjectPattern, DEFAULT_SYNC_DAYS } from './domain';
 
 // ============================================
@@ -1198,6 +1198,219 @@ export const createDatabaseBackup = (deps: Pick<Deps, 'databaseHealth'>) =>
     deps.databaseHealth.createBackup();
 
 // ============================================
+// Email Triage Use Cases
+// ============================================
+
+export const triageEmail = (deps: Pick<Deps, 'emails' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog'>) =>
+  async (emailId: number): Promise<TriageClassificationResult> => {
+    const email = await deps.emails.findById(emailId);
+    if (!email) throw new Error('Email not found');
+
+    // Step 1: Pattern matching (fast, local)
+    const patternResult = deps.patternMatcher.match(email);
+
+    // Step 2: Get relevant training examples
+    const examples = await deps.trainingRepo.getRelevantExamples(email.accountId, email, 10);
+
+    // Step 3: LLM classification with pattern hint
+    const result = await deps.triageClassifier.classify(email, patternResult, examples);
+
+    // Step 4: Log the classification
+    await deps.triageLog.log({
+      emailId,
+      accountId: email.accountId,
+      patternHint: patternResult.folder,
+      llmFolder: result.folder,
+      llmConfidence: result.confidence,
+      patternAgreed: result.patternAgreed,
+      finalFolder: result.folder,
+      source: 'llm',
+      reasoning: result.reasoning,
+    });
+
+    return result;
+  };
+
+export const moveEmailToTriageFolder = (deps: Pick<Deps, 'emails' | 'accounts' | 'folders' | 'imapFolderOps' | 'triageLog'>) =>
+  async (emailId: number, folder: TriageFolder): Promise<void> => {
+    const email = await deps.emails.findById(emailId);
+    if (!email) throw new Error('Email not found');
+
+    const account = await deps.accounts.findById(email.accountId);
+    if (!account) throw new Error('Account not found');
+
+    const currentFolder = await deps.folders.findById(email.folderId);
+    if (!currentFolder) throw new Error('Folder not found');
+
+    // Move via IMAP
+    await deps.imapFolderOps.moveMessage(account, email.uid, currentFolder.path, folder);
+
+    // Log the move
+    await deps.triageLog.log({
+      emailId,
+      accountId: email.accountId,
+      patternHint: null,
+      llmFolder: null,
+      llmConfidence: null,
+      patternAgreed: null,
+      finalFolder: folder,
+      source: 'user-override',
+      reasoning: 'Manual move by user',
+    });
+  };
+
+export const learnFromTriageCorrection = (deps: Pick<Deps, 'emails' | 'trainingRepo' | 'senderRules'>) =>
+  async (emailId: number, aiSuggestion: string, userChoice: TriageFolder): Promise<void> => {
+    const email = await deps.emails.findById(emailId);
+    if (!email) throw new Error('Email not found');
+
+    const domain = extractDomain(email.from.address);
+    const wasCorrection = aiSuggestion !== userChoice;
+
+    // Save training example
+    await deps.trainingRepo.save({
+      accountId: email.accountId,
+      emailId: email.id,
+      fromAddress: email.from.address,
+      fromDomain: domain,
+      subject: email.subject,
+      aiSuggestion,
+      userChoice,
+      wasCorrection,
+      source: 'review_folder',
+    });
+
+    // Update or create sender rule
+    if (wasCorrection) {
+      const existingRule = await deps.senderRules.findByPattern(email.accountId, domain, 'domain');
+
+      if (existingRule) {
+        // Same correction? Increment count, might enable auto-apply
+        if (existingRule.targetFolder === userChoice) {
+          await deps.senderRules.incrementCount(existingRule.id);
+
+          // Auto-enable if 3+ corrections
+          if (existingRule.correctionCount >= 2) {
+            await deps.senderRules.upsert({
+              ...existingRule,
+              autoApply: true,
+              confidence: Math.min(0.95, existingRule.confidence + 0.05),
+              correctionCount: existingRule.correctionCount + 1,
+            });
+          }
+        } else {
+          // Different correction - update the rule
+          await deps.senderRules.upsert({
+            accountId: email.accountId,
+            pattern: domain,
+            patternType: 'domain',
+            targetFolder: userChoice,
+            confidence: 0.8,
+            correctionCount: 1,
+            autoApply: false,
+          });
+        }
+      } else {
+        // Create new rule
+        await deps.senderRules.upsert({
+          accountId: email.accountId,
+          pattern: domain,
+          patternType: 'domain',
+          targetFolder: userChoice,
+          confidence: 0.8,
+          correctionCount: 1,
+          autoApply: false,
+        });
+      }
+    }
+  };
+
+export const snoozeEmail = (deps: Pick<Deps, 'emails' | 'folders' | 'snoozes'>) =>
+  async (emailId: number, until: Date, reason: 'shipping' | 'waiting_reply' | 'manual'): Promise<void> => {
+    const email = await deps.emails.findById(emailId);
+    if (!email) throw new Error('Email not found');
+
+    const folder = await deps.folders.findById(email.folderId);
+
+    await deps.snoozes.create({
+      emailId,
+      snoozeUntil: until,
+      originalFolder: folder?.path || 'INBOX',
+      reason,
+    });
+  };
+
+export const unsnoozeEmail = (deps: Pick<Deps, 'snoozes'>) =>
+  async (emailId: number): Promise<void> => {
+    await deps.snoozes.delete(emailId);
+  };
+
+export const processSnoozedEmails = (deps: Pick<Deps, 'snoozes' | 'emails' | 'accounts' | 'folders' | 'imapFolderOps'>) =>
+  async (): Promise<number> => {
+    const dueSnoozes = await deps.snoozes.findDue();
+    let processed = 0;
+
+    for (const snooze of dueSnoozes) {
+      try {
+        const email = await deps.emails.findById(snooze.emailId);
+        if (!email) {
+          await deps.snoozes.delete(snooze.emailId);
+          continue;
+        }
+
+        const account = await deps.accounts.findById(email.accountId);
+        if (!account) continue;
+
+        const currentFolder = await deps.folders.findById(email.folderId);
+        if (!currentFolder) continue;
+
+        // Move back to original folder
+        await deps.imapFolderOps.moveMessage(
+          account,
+          email.uid,
+          currentFolder.path,
+          snooze.originalFolder
+        );
+
+        await deps.snoozes.delete(snooze.emailId);
+        processed++;
+      } catch (e) {
+        console.error(`Failed to unsnooze email ${snooze.emailId}:`, e);
+      }
+    }
+
+    return processed;
+  };
+
+export const saveTrainingExample = (deps: Pick<Deps, 'trainingRepo'>) =>
+  async (example: Omit<TrainingExample, 'id' | 'createdAt'>): Promise<TrainingExample> => {
+    return deps.trainingRepo.save(example);
+  };
+
+export const getTrainingExamples = (deps: Pick<Deps, 'trainingRepo'>) =>
+  async (accountId: number, limit?: number): Promise<TrainingExample[]> => {
+    return deps.trainingRepo.findByAccount(accountId, limit);
+  };
+
+export const ensureTriageFolders = (deps: Pick<Deps, 'accounts' | 'imapFolderOps'>) =>
+  async (accountId: number): Promise<string[]> => {
+    const account = await deps.accounts.findById(accountId);
+    if (!account) throw new Error('Account not found');
+
+    return deps.imapFolderOps.ensureTriageFolders(account);
+  };
+
+export const getSenderRules = (deps: Pick<Deps, 'senderRules'>) =>
+  async (accountId: number) => {
+    return deps.senderRules.findByAccount(accountId);
+  };
+
+export const getTriageLog = (deps: Pick<Deps, 'triageLog'>) =>
+  async (limit?: number, accountId?: number) => {
+    return deps.triageLog.findRecent(limit, accountId);
+  };
+
+// ============================================
 // Factory: Create all use cases with deps
 // ============================================
 
@@ -1299,6 +1512,19 @@ export function createUseCases(deps: Deps) {
     // Database Health
     checkDatabaseIntegrity: checkDatabaseIntegrity(deps),
     createDatabaseBackup: createDatabaseBackup(deps),
+
+    // Email Triage
+    triageEmail: triageEmail(deps),
+    moveEmailToTriageFolder: moveEmailToTriageFolder(deps),
+    learnFromTriageCorrection: learnFromTriageCorrection(deps),
+    snoozeEmail: snoozeEmail(deps),
+    unsnoozeEmail: unsnoozeEmail(deps),
+    processSnoozedEmails: processSnoozedEmails(deps),
+    saveTrainingExample: saveTrainingExample(deps),
+    getTrainingExamples: getTrainingExamples(deps),
+    ensureTriageFolders: ensureTriageFolders(deps),
+    getSenderRules: getSenderRules(deps),
+    getTriageLog: getTriageLog(deps),
   };
 }
 
