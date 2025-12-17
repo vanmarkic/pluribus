@@ -82,15 +82,25 @@ const EmailRow = ({ index, style, data }: ListChildComponentProps) => {
             <span className={`email-item-sender ${!email.isRead ? 'unread' : ''}`}>
               {displayName}
             </span>
-            <button
+            <span
+              role="button"
+              tabIndex={0}
               onClick={(e) => {
                 e.stopPropagation();
                 toggleStar(email.id);
               }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  toggleStar(email.id);
+                }
+              }}
               className={`star-icon ${email.isStarred ? 'starred' : ''}`}
+              aria-label={email.isStarred ? 'Remove star' : 'Add star'}
             >
               <IconFavorite className="w-4 h-4" />
-            </button>
+            </span>
           </div>
           <span className="email-item-date">{formatDate(email.date)}</span>
         </div>
