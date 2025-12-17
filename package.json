@@ -6,14 +6,16 @@
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "vite",
-    "dev:electron": "tsc -p tsconfig.main.json && mkdir -p dist/adapters/db && cp src/adapters/db/schema.sql dist/adapters/db/ && electron .",
+    "dev:electron": "npm run rebuild:electron && tsc -p tsconfig.main.json && mkdir -p dist/adapters/db && cp src/adapters/db/schema.sql dist/adapters/db/ && electron .",
     "build": "rm -f tsconfig.main.tsbuildinfo && tsc -p tsconfig.main.json && cp src/adapters/db/schema.sql dist/adapters/db/ && vite build",
-    "start": "electron .",
+    "start": "npm run rebuild:electron && electron .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "dist": "npm run build && electron-builder --mac",
-    "dist:dmg": "npm run build && electron-builder --mac dmg"
+    "test": "npm run rebuild:node && vitest run",
+    "test:watch": "npm run rebuild:node && vitest",
+    "dist": "npm run build && npm run rebuild:electron && electron-builder --mac",
+    "dist:dmg": "npm run build && npm run rebuild:electron && electron-builder --mac dmg",
+    "rebuild:electron": "electron-rebuild",
+    "rebuild:node": "npm rebuild better-sqlite3"
   },
   "build": {
     "appId": "com.pluribus.mailclient",
@@ -80,6 +82,7 @@
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "^3.7.2",
     "@tailwindcss/typography": "^0.5.15",
     "@tailwindcss/vite": "^4.0.0",
     "@types/better-sqlite3": "^7.6.11",
@@ -93,6 +96,7 @@
     "@vitest/coverage-v8": "^4.0.15",
     "electron": "^32.0.0",
     "electron-builder": "^26.0.12",
+    "fast-check": "^4.4.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "sharp": "^0.34.5",

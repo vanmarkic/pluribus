@@ -2,7 +2,9 @@
 
 ## Project Overview
 
-Privacy-focused Electron mail client with LLM-powered tagging. Uses Clean Architecture (functional style).
+Privacy-focused Electron mail client with LLM-powered email triage. Uses Clean Architecture (functional style).
+
+**Email Triage System:** Hybrid folder-based triage using pattern matching + LLM classification. Emails are automatically moved to IMAP folders (Inbox, Planning, Feed, Social, Promotions, Paper-Trail/*). See `docs/designs/2025-12-16-email-triage-system.md` for details.
 
 ## Tech Stack
 

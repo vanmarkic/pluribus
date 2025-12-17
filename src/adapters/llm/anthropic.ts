@@ -1,6 +1,6 @@
 /**
  * LLM Classifier Adapter
- * 
+ *
  * Uses Anthropic Claude for email classification.
  * Includes caching and budget management.
  * API key stored in OS keychain.
@@ -8,11 +8,11 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import * as crypto from 'crypto';
-import type { Classifier, TagRepo, SecureStorage, LLMProvider, LLMModel } from '../../core/ports';
-import type { Email, EmailBody, Classification, Tag } from '../../core/domain';
+import type { Classifier, SecureStorage, LLMProvider, LLMModel } from '../../core/ports';
+import type { Email, EmailBody, Classification, TriageFolder, TRIAGE_FOLDERS } from '../../core/domain';
 import { extractDomain } from '../../core/domain';
 
-const PROMPT_VERSION = '1.0';
+const PROMPT_VERSION = '2.0'; // Updated for folder-based classification
 
 type Config = {
   model: 'claude-sonnet-4-20250514' | 'claude-haiku-4-20250514';
@@ -26,6 +26,20 @@ let todayUsage = 0;
 let todayEmailCount = 0;
 const DEFAULT_DAILY_EMAIL_LIMIT = 200;
 
+// Triage folders for classification
+const TRIAGE_FOLDER_DESCRIPTIONS: Record<TriageFolder, string> = {
+  'INBOX': 'General inbox for emails that need attention',
+  'Planning': 'Emails requiring future action or planning (meetings, schedules, project planning)',
+  'Review': 'Emails that need review or decision-making',
+  'Paper-Trail/Invoices': 'Invoices, receipts, payment confirmations',
+  'Paper-Trail/Admin': 'Administrative documents, contracts, legal',
+  'Paper-Trail/Travel': 'Travel bookings, itineraries, confirmations',
+  'Feed': 'Newsletters, digests, informational content',
+  'Social': 'Social media notifications, friend updates, community',
+  'Promotions': 'Marketing, sales, promotional offers',
+  'Archive': 'Already processed or low-priority items',
+};
+
 function hashPattern(email: Email): string {
   const domain = extractDomain(email.from.address);
   const normalizedSubject = email.subject
@@ -33,59 +47,56 @@ function hashPattern(email: Email): string {
     .replace(/\d+/g, 'N')
     .toLowerCase()
     .trim();
-  
+
   return crypto
     .createHash('sha256')
-    .update(`${domain}|${normalizedSubject}`)
+    .update(`${domain}|${normalizedSubject}|v${PROMPT_VERSION}`)
     .digest('hex')
     .slice(0, 16);
 }
 
-function buildSystemPrompt(tags: Tag[]): string {
-  const tagList = tags
-    .filter(t => !t.isSystem)
-    .map(t => `- ${t.slug}: ${t.name}`)
+function buildSystemPrompt(): string {
+  const folderList = Object.entries(TRIAGE_FOLDER_DESCRIPTIONS)
+    .map(([folder, desc]) => `- ${folder}: ${desc}`)
     .join('\n');
 
-  return `You are an email sorting assistant. Analyze emails and suggest tags.
+  return `You are an email sorting assistant. Analyze emails and suggest the best folder.
 
-Available tags:
-${tagList}
+Available folders:
+${folderList}
 
 Rules:
-- Suggest 1-3 relevant tags from the available list
-- Be conservative: only suggest confident matches
+- Suggest exactly ONE folder from the available list
+- Be conservative: choose based on email content, not guesses
 - Consider sender domain and subject patterns
-- If no existing tag fits well, you may suggest ONE new tag (use lowercase slug format with hyphens, e.g. "project-updates")
-- Only create a new tag if it would be genuinely useful for categorizing future similar emails
+- Use INBOX if no other folder is a clear match
+- Invoices, receipts → Paper-Trail/Invoices
+- Meeting/scheduling → Planning
+- Newsletters → Feed
+- Marketing/sales → Promotions
 
 Respond with JSON only:
-{"tags":["slug"],"confidence":0.0-1.0,"reasoning":"brief","priority":"high"|"normal"|"low","newTag":{"slug":"new-tag-slug","name":"New Tag Name"}|null}`;
+{"folder":"FolderName","confidence":0.0-1.0,"reasoning":"brief","priority":"high"|"normal"|"low"}`;
 }
 
-function buildUserMessage(email: Email, body?: EmailBody, existingTags?: string[]): string {
+function buildUserMessage(email: Email, body?: EmailBody): string {
   const parts = [
     `From: ${email.from.name || ''} <${email.from.address}>`,
     `Subject: ${email.subject}`,
     `Date: ${email.date.toISOString()}`,
   ];
-  
-  if (existingTags?.length) {
-    parts.push(`Current tags: ${existingTags.join(', ')}`);
-  }
-  
+
   parts.push('', 'Content:', body?.text?.slice(0, 2000) || email.snippet || '(empty)');
-  
+
   return parts.join('\n');
 }
 
 export function createClassifier(
   config: Config,
-  tagRepo: TagRepo,
   secrets: SecureStorage
 ): Classifier {
   let client: Anthropic | null = null;
-  
+
   async function getClient(): Promise<Anthropic> {
     if (!client) {
       const apiKey = await secrets.getApiKey('anthropic');
@@ -96,13 +107,13 @@ export function createClassifier(
   }
 
   return {
-    async classify(email, body, existingTags) {
+    async classify(email: Email, body?: EmailBody): Promise<Classification> {
       // Check budget
       const budget = this.getBudget();
       if (!budget.allowed) {
         throw new Error(`Daily budget exceeded (${budget.used}/${budget.limit})`);
       }
-      
+
       // Check cache
       const hash = hashPattern(email);
       const cached = cache.get(hash);
@@ -110,54 +121,62 @@ export function createClassifier(
         console.log(`Cache hit for pattern ${hash}`);
         return cached;
       }
-      
-      // Get tags for prompt
-      const tags = await tagRepo.findAll();
-      
+
       // Call API
       const anthropic = await getClient();
       const response = await anthropic.messages.create({
         model: config.model,
         max_tokens: 512,
         temperature: 0.2,
-        system: buildSystemPrompt(tags),
-        messages: [{ role: 'user', content: buildUserMessage(email, body, existingTags) }],
+        system: buildSystemPrompt(),
+        messages: [{ role: 'user', content: buildUserMessage(email, body) }],
       });
-      
+
       // Track usage
       todayUsage += response.usage.input_tokens + response.usage.output_tokens;
       todayEmailCount++;
-      
+
       // Parse response
       const textContent = response.content.find(c => c.type === 'text');
       const content = textContent?.text || '';
-      
+
       let result: Classification;
       try {
         const parsed = JSON.parse(content);
-        result = {
-          suggestedTags: parsed.tags || [],
-          confidence: parsed.confidence || 0,
-          reasoning: parsed.reasoning || '',
-          priority: parsed.priority || 'normal',
-          newTag: parsed.newTag || null,
-        };
+        // Validate folder is a known triage folder
+        const folder = parsed.folder as TriageFolder;
+        const validFolders = Object.keys(TRIAGE_FOLDER_DESCRIPTIONS);
+        if (!validFolders.includes(folder)) {
+          console.warn(`Unknown folder "${folder}", defaulting to INBOX`);
+          result = {
+            suggestedFolder: 'INBOX',
+            confidence: 0.5,
+            reasoning: `Unknown folder "${folder}" in response`,
+            priority: 'normal',
+          };
+        } else {
+          result = {
+            suggestedFolder: folder,
+            confidence: parsed.confidence || 0,
+            reasoning: parsed.reasoning || '',
+            priority: parsed.priority || 'normal',
+          };
+        }
       } catch {
         console.error('Failed to parse LLM response:', content);
         result = {
-          suggestedTags: [],
+          suggestedFolder: 'INBOX',
           confidence: 0,
           reasoning: 'Parse error',
           priority: 'normal',
-          newTag: null,
         };
       }
-      
+
       // Cache if confident
       if (result.confidence > 0.5) {
         cache.set(hash, result);
       }
-      
+
       return result;
     },
 

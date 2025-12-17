@@ -8,9 +8,10 @@
 import { app } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, ChildProcess, execSync } from 'child_process';
 import { createWriteStream } from 'fs';
 import { pipeline } from 'stream/promises';
+import os from 'os';
 
 // Types
 export type DownloadProgress = {
@@ -42,7 +43,8 @@ export type OllamaManager = {
 };
 
 // Constants
-const OLLAMA_DOWNLOAD_URL = 'https://github.com/ollama/ollama/releases/latest/download/ollama-darwin';
+// Ollama releases provide darwin builds as .tgz archives
+const OLLAMA_DOWNLOAD_URL = 'https://github.com/ollama/ollama/releases/latest/download/ollama-darwin.tgz';
 const OLLAMA_PORT = 11435; // Different from default 11434 to avoid conflicts
 const SERVER_URL = `http://127.0.0.1:${OLLAMA_PORT}`;
 
@@ -119,7 +121,10 @@ export function createOllamaManager(): OllamaManager {
         throw new Error('Failed to get response body reader');
       }
 
-      const writeStream = createWriteStream(binPath);
+      // Download to temp file first (it's a .tgz archive)
+      const tempDir = os.tmpdir();
+      const tempFile = path.join(tempDir, 'ollama-darwin.tgz');
+      const writeStream = createWriteStream(tempFile);
 
       try {
         while (true) {
@@ -146,12 +151,28 @@ export function createOllamaManager(): OllamaManager {
           writeStream.on('error', reject);
         });
 
-        // Make executable
+        console.log('[OllamaManager] Archive downloaded, extracting...');
+
+        // Extract the .tgz archive
+        // The archive contains 'ollama' binary at the root
+        const extractDir = path.join(tempDir, 'ollama-extract');
+        await fs.mkdir(extractDir, { recursive: true });
+
+        execSync(`tar -xzf "${tempFile}" -C "${extractDir}"`, { stdio: 'pipe' });
+
+        // Find and move the ollama binary
+        const extractedBinary = path.join(extractDir, 'ollama');
+        await fs.copyFile(extractedBinary, binPath);
         await fs.chmod(binPath, 0o755);
 
-        console.log('[OllamaManager] Binary downloaded and made executable');
+        // Cleanup temp files
+        await fs.unlink(tempFile).catch(() => {});
+        await fs.rm(extractDir, { recursive: true, force: true }).catch(() => {});
+
+        console.log('[OllamaManager] Binary extracted and made executable');
       } catch (err) {
-        // Clean up partial download
+        // Clean up partial download and temp files
+        await fs.unlink(tempFile).catch(() => {});
         await fs.unlink(binPath).catch(() => {});
         throw err;
       }

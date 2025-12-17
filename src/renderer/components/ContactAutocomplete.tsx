@@ -6,7 +6,6 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
-import { cn } from './ui/utils';
 import type { RecentContact } from '../../core/domain';
 
 type Props = {

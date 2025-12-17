@@ -14,7 +14,7 @@ function mapState(row: any): ClassificationState {
     status: row.status,
     confidence: row.confidence,
     priority: row.priority,
-    suggestedTags: row.suggested_tags ? JSON.parse(row.suggested_tags) : [],
+    suggestedFolder: row.suggested_folder || null,
     reasoning: row.reasoning,
     errorMessage: row.error_message,
     classifiedAt: row.classified_at ? new Date(row.classified_at) : null,
@@ -39,8 +39,8 @@ function mapFeedback(row: any): ClassificationFeedback {
     id: row.id,
     emailId: row.email_id,
     action: row.action,
-    originalTags: row.original_tags ? JSON.parse(row.original_tags) : [],
-    finalTags: row.final_tags ? JSON.parse(row.final_tags) : null,
+    originalFolder: row.original_folder || null,
+    finalFolder: row.final_folder || null,
     accuracyScore: row.accuracy_score,
     createdAt: new Date(row.created_at),
   };
@@ -65,14 +65,14 @@ export function createClassificationStateRepo(getDb: () => Database.Database): C
 
       getDb().prepare(`
         INSERT INTO classification_state (
-          email_id, status, confidence, priority, suggested_tags, reasoning,
+          email_id, status, confidence, priority, suggested_folder, reasoning,
           error_message, classified_at, reviewed_at, dismissed_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(email_id) DO UPDATE SET
           status = excluded.status,
           confidence = excluded.confidence,
           priority = excluded.priority,
-          suggested_tags = excluded.suggested_tags,
+          suggested_folder = excluded.suggested_folder,
           reasoning = excluded.reasoning,
           error_message = excluded.error_message,
           classified_at = excluded.classified_at,
@@ -83,7 +83,7 @@ export function createClassificationStateRepo(getDb: () => Database.Database): C
         state.status,
         state.confidence,
         state.priority,
-        JSON.stringify(state.suggestedTags),
+        state.suggestedFolder ?? null,
         state.reasoning,
         state.errorMessage ?? null,
         state.classifiedAt?.toISOString() ?? null,
@@ -216,13 +216,13 @@ export function createClassificationStateRepo(getDb: () => Database.Database): C
     async logFeedback(feedback) {
       getDb().prepare(`
         INSERT INTO classification_feedback (
-          email_id, action, original_tags, final_tags, accuracy_score
+          email_id, action, original_folder, final_folder, accuracy_score
         ) VALUES (?, ?, ?, ?, ?)
       `).run(
         feedback.emailId,
         feedback.action,
-        JSON.stringify(feedback.originalTags),
-        feedback.finalTags ? JSON.stringify(feedback.finalTags) : null,
+        feedback.originalFolder ?? null,
+        feedback.finalFolder ?? null,
         feedback.accuracyScore
       );
     },
@@ -262,10 +262,11 @@ export function createClassificationStateRepo(getDb: () => Database.Database): C
           WHERE date(cs.classified_at) = date('now') AND e.account_id = ?
         `).get(accountId) as { count: number };
 
+        // Must match listPendingReview() criteria for UI consistency (Issue #52)
         pendingRow = db.prepare(`
           SELECT COUNT(*) as count FROM classification_state cs
           JOIN emails e ON cs.email_id = e.id
-          WHERE cs.status = 'pending_review' AND e.account_id = ?
+          WHERE cs.status IN ('pending_review', 'classified') AND e.account_id = ?
         `).get(accountId) as { count: number };
 
         priorityRows = db.prepare(`
@@ -280,9 +281,10 @@ export function createClassificationStateRepo(getDb: () => Database.Database): C
           WHERE date(classified_at) = date('now')
         `).get() as { count: number };
 
+        // Must match listPendingReview() criteria for UI consistency (Issue #52)
         pendingRow = db.prepare(`
           SELECT COUNT(*) as count FROM classification_state
-          WHERE status = 'pending_review'
+          WHERE status IN ('pending_review', 'classified')
         `).get() as { count: number };
 
         priorityRows = db.prepare(`

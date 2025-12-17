@@ -1,14 +1,15 @@
 import { useState, useEffect, useMemo } from 'react';
 import type { ReviewItem } from './types';
+import type { TriageFolder } from '../../../core/domain';
 import { Button } from '../ui/button';
 import { Checkbox } from '../ui/checkbox';
 import { Badge } from '../ui/badge';
 import { AIAnalysisPanel } from './AIAnalysisPanel';
-import { IconArrowLeft, IconArrowRight, IconCheck, IconClose, IconEdit, IconMenu, IconGrid, IconArrowDown, IconArrowUp } from 'obra-icons-react';
+import { IconArrowLeft, IconArrowRight, IconCheck, IconClose, IconEdit, IconMenu, IconGrid, IconArrowDown, IconArrowUp, IconFolder } from 'obra-icons-react';
 
 type ReviewQueueProps = {
   items: ReviewItem[];
-  onAccept: (id: number, tags: string[]) => void;
+  onAccept: (id: number, folder: TriageFolder) => void;
   onDismiss: (id: number) => void;
   onEdit: (id: number) => void;
   onRefresh: () => void;
@@ -16,6 +17,19 @@ type ReviewQueueProps = {
 
 type SortField = 'confidence' | 'date' | 'sender';
 type SortDirection = 'asc' | 'desc';
+
+const FOLDER_LABELS: Record<TriageFolder, string> = {
+  'INBOX': 'Inbox',
+  'Planning': 'Planning',
+  'Review': 'Review',
+  'Paper-Trail/Invoices': 'Invoices',
+  'Paper-Trail/Admin': 'Admin',
+  'Paper-Trail/Travel': 'Travel',
+  'Feed': 'Feed',
+  'Social': 'Social',
+  'Promotions': 'Promotions',
+  'Archive': 'Archive',
+};
 
 export function ReviewQueue({ items, onAccept, onDismiss, onEdit, onRefresh }: ReviewQueueProps) {
   const [mode, setMode] = useState<'list' | 'single'>('list');
@@ -80,8 +94,8 @@ export function ReviewQueue({ items, onAccept, onDismiss, onEdit, onRefresh }: R
   const handleBulkAccept = async () => {
     for (const emailId of selectedIds) {
       const item = items.find(i => i.emailId === emailId);
-      if (item) {
-        await onAccept(item.emailId, item.suggestedTags);
+      if (item && item.suggestedFolder) {
+        await onAccept(item.emailId, item.suggestedFolder);
       }
     }
     setSelectedIds(new Set());
@@ -108,8 +122,8 @@ export function ReviewQueue({ items, onAccept, onDismiss, onEdit, onRefresh }: R
   };
 
   const handleSingleAccept = () => {
-    if (!currentItem) return;
-    onAccept(currentItem.emailId, currentItem.suggestedTags);
+    if (!currentItem || !currentItem.suggestedFolder) return;
+    onAccept(currentItem.emailId, currentItem.suggestedFolder);
     onRefresh();
   };
 
@@ -259,7 +273,7 @@ export function ReviewQueue({ items, onAccept, onDismiss, onEdit, onRefresh }: R
                   >
                     Sender & Subject <SortIcon field="sender" />
                   </th>
-                  <th className="px-6 py-3">Suggested Tags</th>
+                  <th className="px-6 py-3">Suggested Folder</th>
                   <th className="px-6 py-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -284,7 +298,7 @@ export function ReviewQueue({ items, onAccept, onDismiss, onEdit, onRefresh }: R
                           color: 'white',
                         }}
                       >
-                        {item.status === 'classified' ? 'Tagged' : 'Review'}
+                        {item.status === 'classified' ? 'Sorted' : 'Review'}
                       </Badge>
                     </td>
                     <td className="px-6 py-4">
@@ -312,13 +326,12 @@ export function ReviewQueue({ items, onAccept, onDismiss, onEdit, onRefresh }: R
                       </div>
                     </td>
                     <td className="px-6 py-4">
-                      <div className="flex flex-wrap gap-1">
-                        {item.suggestedTags.map((tag: string) => (
-                          <Badge key={tag} variant="secondary" className="text-xs font-normal">
-                            #{tag}
-                          </Badge>
-                        ))}
-                      </div>
+                      {item.suggestedFolder && (
+                        <Badge variant="secondary" className="text-xs font-normal flex items-center gap-1 w-fit">
+                          <IconFolder className="w-3 h-3" />
+                          {FOLDER_LABELS[item.suggestedFolder] || item.suggestedFolder}
+                        </Badge>
+                      )}
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex justify-end gap-1">
@@ -328,9 +341,12 @@ export function ReviewQueue({ items, onAccept, onDismiss, onEdit, onRefresh }: R
                           className="h-8 w-8"
                           style={{ color: 'var(--color-success)' }}
                           onClick={() => {
-                            onAccept(item.emailId, item.suggestedTags);
-                            onRefresh();
+                            if (item.suggestedFolder) {
+                              onAccept(item.emailId, item.suggestedFolder);
+                              onRefresh();
+                            }
                           }}
+                          disabled={!item.suggestedFolder}
                           aria-label="Accept classification"
                         >
                           <IconCheck className="w-4 h-4" />
@@ -377,7 +393,7 @@ export function ReviewQueue({ items, onAccept, onDismiss, onEdit, onRefresh }: R
                           color: 'white',
                         }}
                       >
-                        {currentItem.status === 'classified' ? 'Tagged' : 'Review'}
+                        {currentItem.status === 'classified' ? 'Sorted' : 'Review'}
                       </Badge>
                     </div>
                     <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
@@ -451,7 +467,11 @@ export function ReviewQueue({ items, onAccept, onDismiss, onEdit, onRefresh }: R
                   >
                     <IconClose className="mr-2 h-4 w-4" /> Dismiss (D)
                   </Button>
-                  <Button className="w-full" onClick={handleSingleAccept}>
+                  <Button
+                    className="w-full"
+                    onClick={handleSingleAccept}
+                    disabled={!currentItem?.suggestedFolder}
+                  >
                     <IconCheck className="mr-2 h-4 w-4" /> Accept (A)
                   </Button>
                 </div>
@@ -462,7 +482,7 @@ export function ReviewQueue({ items, onAccept, onDismiss, onEdit, onRefresh }: R
                   style={{ color: 'var(--color-text-tertiary)' }}
                   onClick={() => currentItem && onEdit(currentItem.emailId)}
                 >
-                  <IconEdit className="mr-2 h-3 w-3" /> Edit Tags (E)
+                  <IconEdit className="mr-2 h-3 w-3" /> Edit Folder (E)
                 </Button>
               </div>
             </div>

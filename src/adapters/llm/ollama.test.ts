@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createOllamaProvider, createOllamaClassifier, startOllama, resetOllamaEmailCount } from './ollama';
-import type { Tag } from '../../core/domain';
 
 // Mock global fetch
 global.fetch = vi.fn();
@@ -141,14 +140,7 @@ describe('OllamaProvider', () => {
 });
 
 describe('OllamaClassifier', () => {
-  const mockTags: Tag[] = [
-    { id: 1, slug: 'work', name: 'Work', color: '#blue', isSystem: false, sortOrder: 0, createdAt: new Date() },
-    { id: 2, slug: 'personal', name: 'Personal', color: '#green', isSystem: false, sortOrder: 1, createdAt: new Date() },
-  ];
-
-  const mockTagRepo = {
-    findAll: vi.fn().mockResolvedValue(mockTags),
-  };
+  // Tags removed - using folders for organization (Issue #54)
 
   const mockEmail = {
     id: 1,
@@ -184,9 +176,9 @@ describe('OllamaClassifier', () => {
         dailyEmailLimit: 200,
       };
 
-      const classifier = createOllamaClassifier(config, mockTagRepo);
+      const classifier = createOllamaClassifier(config);
 
-      await expect(classifier.classify(mockEmail, undefined, [])).rejects.toThrow('Ollama server is not running');
+      await expect(classifier.classify(mockEmail)).rejects.toThrow('Ollama server is not running');
     });
 
     it('throws user-friendly error when server returns error status', async () => {
@@ -202,18 +194,17 @@ describe('OllamaClassifier', () => {
         dailyEmailLimit: 200,
       };
 
-      const classifier = createOllamaClassifier(config, mockTagRepo);
+      const classifier = createOllamaClassifier(config);
 
-      await expect(classifier.classify(mockEmail, undefined, [])).rejects.toThrow('503');
+      await expect(classifier.classify(mockEmail)).rejects.toThrow('503');
     });
 
     it('returns classification when server responds with valid JSON', async () => {
       const mockResponse = {
-        tags: ['work'],
+        folder: 'Planning',
         confidence: 0.9,
         reasoning: 'Email is work-related',
         priority: 'high',
-        newTag: null,
       };
 
       (global.fetch as any).mockResolvedValueOnce({
@@ -230,10 +221,10 @@ describe('OllamaClassifier', () => {
         dailyEmailLimit: 200,
       };
 
-      const classifier = createOllamaClassifier(config, mockTagRepo);
-      const result = await classifier.classify(mockEmail, undefined, []);
+      const classifier = createOllamaClassifier(config);
+      const result = await classifier.classify(mockEmail);
 
-      expect(result.suggestedTags).toEqual(['work']);
+      expect(result.suggestedFolder).toBe('Planning');
       expect(result.confidence).toBe(0.9);
       expect(result.reasoning).toBe('Email is work-related');
     });
@@ -253,36 +244,46 @@ describe('OllamaClassifier', () => {
         dailyEmailLimit: 200,
       };
 
-      const classifier = createOllamaClassifier(config, mockTagRepo);
-      const result = await classifier.classify(mockEmail, undefined, []);
+      const classifier = createOllamaClassifier(config);
+      const result = await classifier.classify(mockEmail);
 
-      expect(result.suggestedTags).toEqual([]);
+      expect(result.suggestedFolder).toBe('INBOX');
       expect(result.confidence).toBe(0);
       expect(result.reasoning).toBe('Parse error');
     });
 
-    it('respects daily email limit', async () => {
+    it('has no daily email limit (Ollama is free/local)', async () => {
       const config = {
         model: 'llama3.2',
         serverUrl: 'http://localhost:11434',
         dailyBudget: 100000,
-        dailyEmailLimit: 1,
+        dailyEmailLimit: 1, // This should be ignored for Ollama
       };
 
-      const classifier = createOllamaClassifier(config, mockTagRepo);
+      const classifier = createOllamaClassifier(config);
 
-      // First classification should work
-      (global.fetch as any).mockResolvedValueOnce({
+      // Mock successful responses for multiple classifications
+      const mockResponse = {
         ok: true,
         json: async () => ({
-          message: { content: JSON.stringify({ tags: [], confidence: 0.5, reasoning: 'test' }) },
+          message: { content: JSON.stringify({ folder: 'INBOX', confidence: 0.5, reasoning: 'test' }) },
         }),
-      });
+      };
+      (global.fetch as any)
+        .mockResolvedValueOnce(mockResponse)
+        .mockResolvedValueOnce(mockResponse)
+        .mockResolvedValueOnce(mockResponse);
 
-      await classifier.classify(mockEmail, undefined, []);
+      // All classifications should succeed - no limit for Ollama
+      await classifier.classify(mockEmail);
+      await classifier.classify(mockEmail);
+      await classifier.classify(mockEmail);
 
-      // Second should fail with budget error
-      await expect(classifier.classify(mockEmail, undefined, [])).rejects.toThrow('Daily budget exceeded');
+      // Budget should report unlimited (limit: 0, allowed: true)
+      const budget = classifier.getEmailBudget();
+      expect(budget.limit).toBe(0);
+      expect(budget.allowed).toBe(true);
+      expect(budget.used).toBe(3); // Still tracks usage for display
     });
   });
 });

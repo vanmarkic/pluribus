@@ -6,7 +6,7 @@
  */
 
 import type { LLMProvider, LLMModel, Classifier } from '../../core/ports';
-import type { Email, EmailBody, Classification, Tag } from '../../core/domain';
+import type { Email, EmailBody, Classification, TriageFolder } from '../../core/domain';
 
 const DEFAULT_SERVER_URL = 'http://localhost:11434';
 
@@ -75,38 +75,50 @@ export function createOllamaProvider(serverUrl = DEFAULT_SERVER_URL): LLMProvide
   };
 }
 
-function buildSystemPrompt(tags: Tag[]): string {
-  const tagList = tags
-    .filter(t => !t.isSystem)
-    .map(t => `- ${t.slug}: ${t.name}`)
+// Triage folders for classification
+const TRIAGE_FOLDER_DESCRIPTIONS: Record<TriageFolder, string> = {
+  'INBOX': 'General inbox for emails that need attention',
+  'Planning': 'Emails requiring future action or planning (meetings, schedules, project planning)',
+  'Review': 'Emails that need review or decision-making',
+  'Paper-Trail/Invoices': 'Invoices, receipts, payment confirmations',
+  'Paper-Trail/Admin': 'Administrative documents, contracts, legal',
+  'Paper-Trail/Travel': 'Travel bookings, itineraries, confirmations',
+  'Feed': 'Newsletters, digests, informational content',
+  'Social': 'Social media notifications, friend updates, community',
+  'Promotions': 'Marketing, sales, promotional offers',
+  'Archive': 'Already processed or low-priority items',
+};
+
+function buildSystemPrompt(): string {
+  const folderList = Object.entries(TRIAGE_FOLDER_DESCRIPTIONS)
+    .map(([folder, desc]) => `- ${folder}: ${desc}`)
     .join('\n');
 
-  return `You are an email sorting assistant. Analyze emails and suggest tags.
+  return `You are an email sorting assistant. Analyze emails and suggest the best folder.
 
-Available tags:
-${tagList}
+Available folders:
+${folderList}
 
 Rules:
-- Suggest 1-3 relevant tags from the available list
-- Be conservative: only suggest confident matches
+- Suggest exactly ONE folder from the available list
+- Be conservative: choose based on email content, not guesses
 - Consider sender domain and subject patterns
-- If no existing tag fits well, you may suggest ONE new tag (use lowercase slug format with hyphens, e.g. "project-updates")
-- Only create a new tag if it would be genuinely useful for categorizing future similar emails
+- Use INBOX if no other folder is a clear match
+- Invoices, receipts → Paper-Trail/Invoices
+- Meeting/scheduling → Planning
+- Newsletters → Feed
+- Marketing/sales → Promotions
 
 Respond with JSON only:
-{"tags":["slug"],"confidence":0.0-1.0,"reasoning":"brief","priority":"high"|"normal"|"low","newTag":{"slug":"new-tag-slug","name":"New Tag Name"}|null}`;
+{"folder":"FolderName","confidence":0.0-1.0,"reasoning":"brief","priority":"high"|"normal"|"low"}`;
 }
 
-function buildUserMessage(email: Email, body?: EmailBody, existingTags?: string[]): string {
+function buildUserMessage(email: Email, body?: EmailBody): string {
   const parts = [
     `From: ${email.from.name || ''} <${email.from.address}>`,
     `Subject: ${email.subject}`,
     `Date: ${email.date.toISOString()}`,
   ];
-
-  if (existingTags?.length) {
-    parts.push(`Current tags: ${existingTags.join(', ')}`);
-  }
 
   parts.push('', 'Content:', body?.text?.slice(0, 2000) || email.snippet || '(empty)');
 
@@ -126,24 +138,18 @@ type OllamaConfigSource = OllamaConfig | (() => OllamaConfig);
 let todayEmailCount = 0;
 
 export function createOllamaClassifier(
-  configSource: OllamaConfigSource,
-  tagRepo: { findAll: () => Promise<Tag[]> }
+  configSource: OllamaConfigSource
 ): Classifier {
   // Helper to get current config (supports both static and dynamic)
   const getConfig = (): OllamaConfig =>
     typeof configSource === 'function' ? configSource() : configSource;
 
   return {
-    async classify(email, body, existingTags) {
-      const budget = this.getEmailBudget();
-      if (!budget.allowed) {
-        throw new Error(`Daily budget exceeded (${budget.used}/${budget.limit})`);
-      }
-
+    async classify(email: Email, body?: EmailBody): Promise<Classification> {
+      // Ollama is free/local - no budget enforcement needed
       const config = getConfig();
-      const tags = await tagRepo.findAll();
-      const systemPrompt = buildSystemPrompt(tags);
-      const userMessage = buildUserMessage(email, body, existingTags);
+      const systemPrompt = buildSystemPrompt();
+      const userMessage = buildUserMessage(email, body);
 
       let response;
       try {
@@ -182,21 +188,31 @@ export function createOllamaClassifier(
 
       try {
         const parsed = JSON.parse(content);
+        // Validate folder is a known triage folder
+        const folder = parsed.folder as TriageFolder;
+        const validFolders = Object.keys(TRIAGE_FOLDER_DESCRIPTIONS);
+        if (!validFolders.includes(folder)) {
+          console.warn(`Unknown folder "${folder}", defaulting to INBOX`);
+          return {
+            suggestedFolder: 'INBOX',
+            confidence: 0.5,
+            reasoning: `Unknown folder "${folder}" in response`,
+            priority: 'normal',
+          };
+        }
         return {
-          suggestedTags: parsed.tags || [],
+          suggestedFolder: folder,
           confidence: parsed.confidence || 0,
           reasoning: parsed.reasoning || '',
           priority: parsed.priority || 'normal',
-          newTag: parsed.newTag || null,
         };
       } catch {
         console.error('Failed to parse Ollama response:', content);
         return {
-          suggestedTags: [],
+          suggestedFolder: 'INBOX',
           confidence: 0,
           reasoning: 'Parse error',
           priority: 'normal',
-          newTag: null,
         };
       }
     },
@@ -208,11 +224,12 @@ export function createOllamaClassifier(
     },
 
     getEmailBudget() {
-      const config = getConfig();
+      // Ollama is free/local - no limit enforcement, always allowed
+      // Still track count for UI display but limit=0 means unlimited
       return {
         used: todayEmailCount,
-        limit: config.dailyEmailLimit,
-        allowed: todayEmailCount < config.dailyEmailLimit,
+        limit: 0,
+        allowed: true,
       };
     },
   };

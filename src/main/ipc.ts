@@ -93,7 +93,7 @@ function assertListOptions(opts: unknown): Record<string, unknown> {
   const o = opts as Record<string, unknown>;
 
   if (o.accountId !== undefined) validated.accountId = assertPositiveInt(o.accountId, 'accountId');
-  if (o.tagId !== undefined) validated.tagId = assertPositiveInt(o.tagId, 'tagId');
+  // tagId removed - using folders for organization (Issue #54)
   if (o.folderId !== undefined) validated.folderId = assertPositiveInt(o.folderId, 'folderId');
   if (o.folderPath !== undefined) validated.folderPath = assertString(o.folderPath, 'folderPath', 200);
   if (o.unreadOnly !== undefined) validated.unreadOnly = assertBoolean(o.unreadOnly, 'unreadOnly');
@@ -159,6 +159,10 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
     return useCases.deleteEmail(assertPositiveInt(id, 'id'));
   });
 
+  ipcMain.handle('emails:trash', (_, id) => {
+    return useCases.trashEmail(assertPositiveInt(id, 'id'));
+  });
+
   // ==========================================
   // Attachments
   // ==========================================
@@ -204,51 +208,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
     }
   });
 
-  // ==========================================
-  // Tags
-  // ==========================================
-
-  ipcMain.handle('tags:list', () => useCases.listTags());
-
-  ipcMain.handle('tags:getForEmail', (_, emailId) => {
-    return useCases.getEmailTags(assertPositiveInt(emailId, 'emailId'));
-  });
-
-  ipcMain.handle('tags:apply', (_, emailId, tagId, source) => {
-    const validSources = ['manual', 'llm', 'rule'];
-    const s = source ? assertString(source, 'source', 20) : 'manual';
-    if (!validSources.includes(s)) throw new Error('Invalid source');
-    return useCases.applyTag(
-      assertPositiveInt(emailId, 'emailId'),
-      assertPositiveInt(tagId, 'tagId'),
-      s
-    );
-  });
-
-  ipcMain.handle('tags:remove', (_, emailId, tagId) => {
-    return useCases.removeTag(
-      assertPositiveInt(emailId, 'emailId'),
-      assertPositiveInt(tagId, 'tagId')
-    );
-  });
-
-  ipcMain.handle('tags:create', (_, tag) => {
-    if (!tag || typeof tag !== 'object') throw new Error('Invalid tag');
-    const t = tag as Record<string, unknown>;
-    return useCases.createTag({
-      name: assertString(t.name, 'name', 100),
-      slug: assertString(t.slug, 'slug', 50),
-      color: t.color ? assertString(t.color, 'color', 20) : '#6b7280',
-      isSystem: t.isSystem ? assertBoolean(t.isSystem, 'isSystem') : false,
-      sortOrder: t.sortOrder ? assertNonNegativeInt(t.sortOrder, 'sortOrder') : 0,
-    });
-  });
-
-  ipcMain.handle('tags:getForEmails', (_, emailIds) => {
-    if (!Array.isArray(emailIds)) throw new Error('emailIds must be an array');
-    const ids = emailIds.map((id, i) => assertPositiveInt(id, `emailIds[${i}]`));
-    return deps.tags.getForEmails(ids);
-  });
+  // Tags removed - using folders for organization (Issue #54)
 
   // ==========================================
   // Sync
@@ -452,13 +412,16 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
     return useCases.getFailedClassifications(validated);
   });
 
-  ipcMain.handle('aiSort:accept', (_, emailId, appliedTags) => {
+  // Updated for folder-based classification (Issue #54)
+  ipcMain.handle('aiSort:accept', (_, emailId, appliedFolder) => {
     const id = assertPositiveInt(emailId, 'emailId');
-
-    if (!Array.isArray(appliedTags)) throw new Error('Invalid appliedTags: must be an array');
-    const validatedTags = appliedTags.map((tag, i) => assertString(tag, `appliedTags[${i}]`, 100));
-
-    return useCases.acceptClassification(id, validatedTags);
+    const folder = assertString(appliedFolder, 'appliedFolder', 50);
+    // Import TRIAGE_FOLDERS for validation
+    const { TRIAGE_FOLDERS } = require('../core/domain');
+    if (!TRIAGE_FOLDERS.includes(folder)) {
+      throw new Error(`Invalid folder: ${folder}. Must be one of: ${TRIAGE_FOLDERS.join(', ')}`);
+    }
+    return useCases.acceptClassification(id, folder as import('../core/domain').TriageFolder);
   });
 
   ipcMain.handle('aiSort:dismiss', (_, emailId) => {
@@ -497,11 +460,16 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
     return useCases.bulkDismissClassifications(ids);
   });
 
-  ipcMain.handle('aiSort:bulkApplyTag', (_, emailIds, tagSlug) => {
+  // Updated for folder-based organization (Issue #54)
+  ipcMain.handle('aiSort:bulkMoveToFolder', (_, emailIds, folderPath) => {
     if (!Array.isArray(emailIds)) throw new Error('emailIds must be an array');
     const ids = emailIds.map((id, i) => assertPositiveInt(id, `emailIds[${i}]`));
-    const slug = assertString(tagSlug, 'tagSlug', 100);
-    return useCases.bulkApplyTag(ids, slug);
+    const folder = assertString(folderPath, 'folderPath', 100);
+    const { TRIAGE_FOLDERS } = require('../core/domain');
+    if (!TRIAGE_FOLDERS.includes(folder)) {
+      throw new Error(`Invalid folder: ${folder}. Must be one of: ${TRIAGE_FOLDERS.join(', ')}`);
+    }
+    return useCases.bulkMoveToFolder(ids, folder as import('../core/domain').TriageFolder);
   });
 
   ipcMain.handle('aiSort:classifyUnprocessed', async () => {
@@ -516,6 +484,19 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
     return result;
   });
 
+  // Issue #56: Reclassify email (re-run full triage on already-classified email)
+  ipcMain.handle('aiSort:reclassify', async (_, emailId) => {
+    checkRateLimit('aiSort:reclassify', 30);
+    const id = assertPositiveInt(emailId, 'emailId');
+    return useCases.reclassifyEmail(id);
+  });
+
+  // Issue #56: Get classification state for confirmation dialog
+  ipcMain.handle('aiSort:getClassificationState', (_, emailId) => {
+    const id = assertPositiveInt(emailId, 'emailId');
+    return useCases.getClassificationState(id);
+  });
+
   // ==========================================
   // Accounts
   // ==========================================
@@ -528,6 +509,12 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
 
   const ALLOWED_CONFIG_KEYS = ['llm', 'ollama'] as const;
   type AllowedConfigKey = (typeof ALLOWED_CONFIG_KEYS)[number];
+
+  // Expose triage folders to renderer (Clean Architecture: renderer shouldn't import from core)
+  ipcMain.handle('config:getTriageFolders', () => {
+    const { TRIAGE_FOLDERS } = require('../core/domain');
+    return TRIAGE_FOLDERS;
+  });
 
   ipcMain.handle('config:get', (_, key) => {
     const k = assertString(key, 'key', 50);
@@ -1008,6 +995,14 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
     return useCases.triageEmail(id);
   });
 
+  // Issue #53: Classify AND move email to triage folder in one operation
+  ipcMain.handle('triage:classifyAndMove', async (_, emailId, options) => {
+    checkRateLimit('triage:classifyAndMove', 30);
+    const id = assertPositiveInt(emailId, 'emailId');
+    const opts = options ? { confidenceThreshold: options.confidenceThreshold } : undefined;
+    return useCases.triageAndMoveEmail(id, opts);
+  });
+
   ipcMain.handle('triage:moveToFolder', async (_, emailId, folder) => {
     const id = assertPositiveInt(emailId, 'emailId');
     const f = assertString(folder, 'folder', 50);
@@ -1077,6 +1072,18 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
     const l = assertOptionalPositiveInt(limit, 'limit');
     const id = assertOptionalPositiveInt(accountId, 'accountId');
     return useCases.getTriageLog(l, id);
+  });
+
+  // Issue #55: Select diverse training emails for onboarding
+  ipcMain.handle('triage:selectDiverseTrainingEmails', async (_, accountId, options) => {
+    const id = assertPositiveInt(accountId, 'accountId');
+    const validated: { maxEmails?: number; poolSize?: number } = {};
+    if (options && typeof options === 'object') {
+      const o = options as Record<string, unknown>;
+      if (o.maxEmails !== undefined) validated.maxEmails = assertPositiveInt(o.maxEmails, 'maxEmails');
+      if (o.poolSize !== undefined) validated.poolSize = assertPositiveInt(o.poolSize, 'poolSize');
+    }
+    return useCases.selectDiverseTrainingEmails(id, validated);
   });
 
   // ==========================================

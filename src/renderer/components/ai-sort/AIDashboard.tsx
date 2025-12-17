@@ -78,6 +78,7 @@ export function AIDashboard({ onClassifyUnprocessed, onClearCache, accountId }: 
     );
   }
 
+  const isUnlimitedBudget = stats.budgetLimit === 0;
   const budgetPercent = stats.budgetLimit > 0 ? (stats.budgetUsed / stats.budgetLimit) * 100 : 0;
 
   return (
@@ -182,14 +183,25 @@ export function AIDashboard({ onClassifyUnprocessed, onClearCache, accountId }: 
               Daily Classification Budget
             </h3>
             <span className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
-              {stats.budgetUsed} / {stats.budgetLimit} tokens
+              {isUnlimitedBudget
+                ? `${stats.budgetUsed} emails (unlimited)`
+                : `${stats.budgetUsed} / ${stats.budgetLimit} tokens`
+              }
             </span>
           </div>
-          <Progress value={budgetPercent} className="h-2" />
-          <div className="flex justify-between mt-2 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-            <span>Resets at midnight</span>
-            <span>{Math.round(budgetPercent)}% used</span>
-          </div>
+          {isUnlimitedBudget ? (
+            <p className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+              Using local Ollama — no daily limit
+            </p>
+          ) : (
+            <>
+              <Progress value={budgetPercent} className="h-2" />
+              <div className="flex justify-between mt-2 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                <span>Resets at midnight</span>
+                <span>{Math.round(budgetPercent)}% used</span>
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
 

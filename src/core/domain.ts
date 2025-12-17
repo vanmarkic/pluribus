@@ -51,25 +51,7 @@ export type Attachment = {
   cid?: string;
 };
 
-// ============================================
-// Tags
-// ============================================
-
-export type Tag = {
-  id: number;
-  name: string;
-  slug: string;
-  color: string;
-  isSystem: boolean;
-  sortOrder: number;
-};
-
-export type TagSource = 'manual' | 'rule' | 'llm';
-
-export type AppliedTag = Tag & {
-  source: TagSource;
-  confidence: number | null;
-};
+// Tags removed - using folders for organization instead (Issue #54)
 
 // ============================================
 // Accounts
@@ -101,18 +83,11 @@ export type Folder = {
 // LLM Classification
 // ============================================
 
-export type NewTagSuggestion = {
-  slug: string;
-  name: string;
-};
-
 export type Classification = {
-  suggestedTags: string[];
+  suggestedFolder: TriageFolder;
   confidence: number;
   reasoning: string;
   priority: 'high' | 'normal' | 'low';
-  /** Optional new tag suggested by the classifier when no existing tag fits well */
-  newTag: NewTagSuggestion | null;
 };
 
 // ============================================
@@ -137,7 +112,6 @@ export type SyncProgress = {
 
 export type ListEmailsOptions = {
   accountId?: number;  // Filter by account for multi-account support
-  tagId?: number;
   folderId?: number;
   folderPath?: string;  // Filter by folder path pattern (e.g., 'Sent' matches 'Sent', 'Sent Items', etc.)
   unreadOnly?: boolean;
@@ -226,10 +200,6 @@ export type RecentContact = {
 // Business Logic (pure functions)
 // ============================================
 
-export function createTagSlug(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-}
-
 export function extractDomain(email: string): string {
   return email.split('@')[1] || 'unknown';
 }
@@ -273,7 +243,7 @@ export type ClassificationState = {
   status: ClassificationStatus;
   confidence: number | null;
   priority: 'high' | 'normal' | 'low' | null;
-  suggestedTags: string[];
+  suggestedFolder: TriageFolder | null;
   reasoning: string | null;
   errorMessage: string | null;
   classifiedAt: Date | null;
@@ -281,14 +251,14 @@ export type ClassificationState = {
   dismissedAt: Date | null;
 };
 
-export type FeedbackAction = 'accept' | 'accept_edit' | 'dismiss';
+export type FeedbackAction = 'accept' | 'accept_edit' | 'dismiss' | 'reclassify';
 
 export type ClassificationFeedback = {
   id: number;
   emailId: number;
   action: FeedbackAction;
-  originalTags: string[];
-  finalTags: string[] | null;
+  originalFolder: TriageFolder | null;
+  finalFolder: TriageFolder | null;
   accuracyScore: number;
   createdAt: Date;
 };

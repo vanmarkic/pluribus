@@ -1,10 +1,10 @@
-import type { Email, ClassificationState, ClassificationStats, ClassificationFeedback, ConfusedPattern, Tag, Classification } from '../../../core/domain';
+import type { Email, ClassificationState, ClassificationStats, ClassificationFeedback, ConfusedPattern, Classification } from '../../../core/domain';
 
 /**
  * ReviewItem type - matches backend PendingReviewItem exactly.
  *
  * Backend returns: ClassificationState & { email: Email }
- * - ClassificationState fields are at top level (emailId, status, confidence, suggestedTags, etc.)
+ * - ClassificationState fields are at top level (emailId, status, confidence, suggestedFolder, etc.)
  * - email property contains the full Email object
  *
  * Note: ClassificationState has NO `id` field - use `emailId` as the identifier.
@@ -14,4 +14,5 @@ export type ReviewItem = ClassificationState & {
 };
 
 // Re-export for convenience
-export type { ClassificationStats as AIStats, ClassificationFeedback, ConfusedPattern, Tag, Classification };
+// Tag removed - using folders for organization (Issue #54)
+export type { ClassificationStats as AIStats, ClassificationFeedback, ConfusedPattern, Classification };

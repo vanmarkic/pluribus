@@ -7,7 +7,7 @@
  */
 
 import type { Deps, AccountInput, SmtpConfig, EmailDraft, SendResult, SyncResult, CachedImage, RemoteImagesSetting, DraftRepo } from './ports';
-import type { Email, EmailBody, Tag, AppliedTag, Account, ListEmailsOptions, SyncOptions, Classification, ClassificationState, ClassificationStats, ClassificationFeedback, ConfusedPattern, Draft, DraftInput, ListDraftsOptions, RecentContact, TriageClassificationResult, TrainingExample, TriageFolder } from './domain';
+import type { Email, EmailBody, Account, ListEmailsOptions, SyncOptions, Classification, ClassificationState, ClassificationStats, ClassificationFeedback, ConfusedPattern, Draft, DraftInput, ListDraftsOptions, RecentContact, TriageClassificationResult, TrainingExample, TriageFolder } from './domain';
 import { extractDomain, extractSubjectPattern, DEFAULT_SYNC_DAYS } from './domain';
 
 // ============================================
@@ -56,22 +56,43 @@ export const starEmail = (deps: Pick<Deps, 'emails'>) =>
   (id: number, isStarred: boolean): Promise<void> =>
     deps.emails.setStar(id, isStarred);
 
-export const archiveEmail = (deps: Pick<Deps, 'tags'>) =>
+// Archive/unarchive now use folders (Issue #54)
+export const archiveEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'folders' | 'imapFolderOps'>) =>
   async (emailId: number): Promise<void> => {
-    const archiveTag = await deps.tags.findBySlug('archive');
-    const inboxTag = await deps.tags.findBySlug('inbox');
+    const email = await deps.emails.findById(emailId);
+    if (!email) throw new Error('Email not found');
 
-    if (archiveTag) await deps.tags.apply(emailId, archiveTag.id, 'manual');
-    if (inboxTag) await deps.tags.remove(emailId, inboxTag.id);
+    const currentFolder = await deps.folders.findById(email.folderId);
+    if (!currentFolder) throw new Error('Folder not found');
+
+    const account = await deps.accounts.findById(email.accountId);
+    if (!account) throw new Error('Account not found');
+
+    // Move to Archive folder via IMAP
+    await deps.imapFolderOps.moveMessage(account, email.uid, currentFolder.path, 'Archive');
+
+    // Update local DB
+    const archiveFolder = await deps.folders.getOrCreate(email.accountId, 'Archive', 'Archive');
+    await deps.emails.setFolderId(emailId, archiveFolder.id);
   };
 
-export const unarchiveEmail = (deps: Pick<Deps, 'tags'>) =>
+export const unarchiveEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'folders' | 'imapFolderOps'>) =>
   async (emailId: number): Promise<void> => {
-    const archiveTag = await deps.tags.findBySlug('archive');
-    const inboxTag = await deps.tags.findBySlug('inbox');
+    const email = await deps.emails.findById(emailId);
+    if (!email) throw new Error('Email not found');
 
-    if (archiveTag) await deps.tags.remove(emailId, archiveTag.id);
-    if (inboxTag) await deps.tags.apply(emailId, inboxTag.id, 'manual');
+    const currentFolder = await deps.folders.findById(email.folderId);
+    if (!currentFolder) throw new Error('Folder not found');
+
+    const account = await deps.accounts.findById(email.accountId);
+    if (!account) throw new Error('Account not found');
+
+    // Move back to INBOX via IMAP
+    await deps.imapFolderOps.moveMessage(account, email.uid, currentFolder.path, 'INBOX');
+
+    // Update local DB
+    const inboxFolder = await deps.folders.getOrCreate(email.accountId, 'INBOX', 'INBOX');
+    await deps.emails.setFolderId(emailId, inboxFolder.id);
   };
 
 export const deleteEmail = (deps: Pick<Deps, 'emails' | 'imageCache'>) =>
@@ -81,29 +102,26 @@ export const deleteEmail = (deps: Pick<Deps, 'emails' | 'imageCache'>) =>
     await deps.emails.delete(id);
   };
 
-// ============================================
-// Tag Use Cases
-// ============================================
+export const trashEmail = (deps: Pick<Deps, 'emails' | 'folders' | 'accounts' | 'imapFolderOps'>) =>
+  async (emailId: number): Promise<void> => {
+    const email = await deps.emails.findById(emailId);
+    if (!email) throw new Error('Email not found');
 
-export const listTags = (deps: Pick<Deps, 'tags'>) =>
-  (): Promise<Tag[]> =>
-    deps.tags.findAll();
+    const currentFolder = await deps.folders.findById(email.folderId);
+    if (!currentFolder) throw new Error('Folder not found');
 
-export const getEmailTags = (deps: Pick<Deps, 'tags'>) =>
-  (emailId: number): Promise<AppliedTag[]> =>
-    deps.tags.findByEmailId(emailId);
+    const account = await deps.accounts.findById(email.accountId);
+    if (!account) throw new Error('Account not found');
 
-export const applyTag = (deps: Pick<Deps, 'tags'>) =>
-  (emailId: number, tagId: number, source = 'manual', confidence?: number): Promise<void> =>
-    deps.tags.apply(emailId, tagId, source, confidence);
+    // Move to Trash via IMAP (returns the trash folder path used)
+    const trashPath = await deps.imapFolderOps.moveToTrash(account, email.uid, currentFolder.path);
 
-export const removeTag = (deps: Pick<Deps, 'tags'>) =>
-  (emailId: number, tagId: number): Promise<void> =>
-    deps.tags.remove(emailId, tagId);
+    // Update local DB to reflect the new folder
+    const trashFolder = await deps.folders.getOrCreate(email.accountId, trashPath, 'Trash');
+    await deps.emails.setFolderId(emailId, trashFolder.id);
+  };
 
-export const createTag = (deps: Pick<Deps, 'tags'>) =>
-  (tag: Omit<Tag, 'id'>): Promise<Tag> =>
-    deps.tags.create(tag);
+// Tag use cases removed - using folders for organization (Issue #54)
 
 // ============================================
 // Sync Use Cases
@@ -174,8 +192,8 @@ export const syncAllMailboxes = (deps: Pick<Deps, 'accounts' | 'sync'>) =>
     return { newCount: total, newEmailIds: allNewEmailIds };
   };
 
-export const syncWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails' | 'tags' | 'classifier' | 'classificationState' | 'config'>) =>
-  async (accountId: number, options: SyncOptions = {}): Promise<SyncResult & { classified?: number; skipped?: number }> => {
+export const syncWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails' | 'classifier' | 'classificationState' | 'config' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps'>) =>
+  async (accountId: number, options: SyncOptions = {}): Promise<SyncResult & { classified?: number; skipped?: number; triaged?: number }> => {
     // First, sync the mailbox
     const syncResult = await syncMailbox(deps)(accountId, options);
 
@@ -185,13 +203,24 @@ export const syncWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'ema
       return syncResult;
     }
 
-    // Classify new emails
+    // Ensure triage folders exist before classification (prevents moveMessage failures)
+    const account = await deps.accounts.findById(accountId);
+    if (account) {
+      try {
+        await deps.imapFolderOps.ensureTriageFolders(account);
+      } catch (e) {
+        console.warn('Failed to ensure triage folders:', e);
+        // Continue anyway - folders might already exist or user may not have training enabled
+      }
+    }
+
+    // Classify and triage new emails (Issue #53: also move to triage folders)
     try {
       const classifyResult = await classifyNewEmails(deps)(
         syncResult.newEmailIds,
         llmConfig.confidenceThreshold
       );
-      console.log(`Auto-classified ${classifyResult.classified} new emails, skipped ${classifyResult.skipped}`);
+      console.log(`Auto-classified ${classifyResult.classified} new emails, triaged ${classifyResult.triaged}, skipped ${classifyResult.skipped}`);
       return { ...syncResult, ...classifyResult };
     } catch (err) {
       console.error('Auto-classification failed:', err);
@@ -199,8 +228,8 @@ export const syncWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'ema
     }
   };
 
-export const syncAllWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails' | 'tags' | 'classifier' | 'classificationState' | 'config'>) =>
-  async (options: SyncOptions = {}): Promise<SyncResult & { classified?: number; skipped?: number }> => {
+export const syncAllWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails' | 'classifier' | 'classificationState' | 'config' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps'>) =>
+  async (options: SyncOptions = {}): Promise<SyncResult & { classified?: number; skipped?: number; triaged?: number }> => {
     // First, sync all mailboxes
     const syncResult = await syncAllMailboxes(deps)(options);
 
@@ -210,13 +239,24 @@ export const syncAllWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | '
       return syncResult;
     }
 
+    // Ensure triage folders exist for all accounts before classification
+    const allAccounts = await deps.accounts.findAll();
+    for (const account of allAccounts) {
+      try {
+        await deps.imapFolderOps.ensureTriageFolders(account);
+      } catch (e) {
+        console.warn(`Failed to ensure triage folders for account ${account.email}:`, e);
+        // Continue anyway - folders might already exist or user may not have training enabled
+      }
+    }
+
     // Classify new emails (runs in background conceptually, but we await for result tracking)
     try {
       const classifyResult = await classifyNewEmails(deps)(
         syncResult.newEmailIds,
         llmConfig.confidenceThreshold
       );
-      console.log(`Auto-classified ${classifyResult.classified} new emails, skipped ${classifyResult.skipped}`);
+      console.log(`Auto-classified ${classifyResult.classified} new emails, triaged ${classifyResult.triaged}, skipped ${classifyResult.skipped}`);
       return { ...syncResult, ...classifyResult };
     } catch (err) {
       console.error('Auto-classification failed:', err);
@@ -232,47 +272,20 @@ export const cancelSync = (deps: Pick<Deps, 'sync'>) =>
 // Classification Use Cases
 // ============================================
 
-export const classifyEmail = (deps: Pick<Deps, 'emails' | 'tags' | 'classifier'>) =>
+// Classification now uses folders instead of tags (Issue #54)
+export const classifyEmail = (deps: Pick<Deps, 'emails' | 'classifier'>) =>
   async (emailId: number): Promise<Classification> => {
     const email = await deps.emails.findById(emailId);
     if (!email) throw new Error('Email not found');
-    
+
     const body = await deps.emails.getBody(emailId);
-    const existingTags = await deps.tags.findByEmailId(emailId);
-    
-    return deps.classifier.classify(
-      email,
-      body || undefined,
-      existingTags.map(t => t.slug)
-    );
+
+    return deps.classifier.classify(email, body || undefined);
   };
 
-export const classifyAndApply = (deps: Pick<Deps, 'emails' | 'tags' | 'classifier' | 'classificationState'>) =>
+export const classifyAndApply = (deps: Pick<Deps, 'emails' | 'classifier' | 'classificationState'>) =>
   async (emailId: number, confidenceThreshold = 0.85): Promise<Classification> => {
     const result = await classifyEmail(deps)(emailId);
-
-    // If classifier suggested a new tag, create it and add to suggestedTags
-    let suggestedTags = [...result.suggestedTags];
-    if (result.newTag) {
-      // Check if tag doesn't already exist (in case LLM suggested duplicate)
-      const existingTags = await deps.tags.findAll();
-      const exists = existingTags.some(t => t.slug === result.newTag!.slug);
-
-      if (!exists) {
-        await deps.tags.create({
-          name: result.newTag.name,
-          slug: result.newTag.slug,
-          color: '#6b7280', // Default gray
-          isSystem: false,
-          sortOrder: 0,
-        });
-      }
-
-      // Add to suggested tags if not already there
-      if (!suggestedTags.includes(result.newTag.slug)) {
-        suggestedTags.push(result.newTag.slug);
-      }
-    }
 
     // Determine status based on confidence threshold
     const status = result.confidence >= confidenceThreshold ? 'classified' : 'pending_review';
@@ -283,36 +296,52 @@ export const classifyAndApply = (deps: Pick<Deps, 'emails' | 'tags' | 'classifie
       status,
       confidence: result.confidence,
       priority: result.priority,
-      suggestedTags: suggestedTags,
+      suggestedFolder: result.suggestedFolder,
       reasoning: result.reasoning,
       classifiedAt: new Date(),
       dismissedAt: null,  // Clear dismissed timestamp on re-classification
       errorMessage: null, // Clear any previous error
     });
 
-    // Only auto-apply tags if above threshold
-    if (result.confidence >= confidenceThreshold) {
-      const allTags = await deps.tags.findAll();
-
-      for (const tagSlug of suggestedTags) {
-        const tag = allTags.find(t => t.slug === tagSlug);
-        if (tag) {
-          await deps.tags.apply(emailId, tag.id, 'llm', result.confidence);
-        }
-      }
-    }
-
-    return { ...result, suggestedTags };
+    return result;
   };
 
-export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'tags' | 'classifier' | 'classificationState'>) =>
-  async (emailIds: number[], confidenceThreshold = 0.85): Promise<{ classified: number; skipped: number }> => {
-    const budget = deps.classifier.getEmailBudget();
-    const remainingBudget = budget.limit - budget.used;
+/**
+ * Classify and triage email (Issue #53, Issue #54)
+ *
+ * Folder-based classification and triage.
+ * After classification, emails are moved to appropriate triage folders.
+ */
+export const classifyAndTriage = (deps: Pick<Deps, 'emails' | 'classifier' | 'classificationState' | 'accounts' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps'>) =>
+  async (emailId: number, confidenceThreshold = 0.85): Promise<{ classification: Classification; triage: TriageClassificationResult }> => {
+    // Step 1: Classification (folder-based)
+    const classification = await classifyAndApply(deps)(emailId, confidenceThreshold);
 
-    if (remainingBudget <= 0) {
+    // Step 2: Folder-based triage
+    const triage = await triageAndMoveEmail(deps)(emailId, { confidenceThreshold: 0.7 });
+
+    return { classification, triage };
+  };
+
+/**
+ * Classify new emails using the unified triage system (Refactored - Issue #55/#56)
+ *
+ * BEFORE: Called both classifyAndApply() and triageAndMoveEmail() - two LLM calls per email
+ * AFTER: Uses only triageAndMoveEmail() and syncs state to classificationState
+ *
+ * This consolidation:
+ * - Halves LLM API costs
+ * - Uses pattern matching + training examples (triage system)
+ * - Keeps classificationState in sync for ReviewQueue UI
+ */
+export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'classifier' | 'classificationState' | 'accounts' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'config'>) =>
+  async (emailIds: number[], confidenceThreshold = 0.85): Promise<{ classified: number; skipped: number; triaged: number }> => {
+    const budget = deps.classifier.getEmailBudget();
+
+    // Check budget - limit=0 means unlimited (Ollama)
+    if (budget.limit > 0 && budget.used >= budget.limit) {
       console.log('Daily email classification budget exhausted');
-      return { classified: 0, skipped: emailIds.length };
+      return { classified: 0, skipped: emailIds.length, triaged: 0 };
     }
 
     // Fetch emails to sort by date (most recent first)
@@ -325,15 +354,40 @@ export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'tags' | 'classifi
       .filter((e): e is NonNullable<typeof e> => e !== null)
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-    // Limit to remaining budget (prioritizing most recent)
+    // Limit to remaining budget (prioritizing most recent), unlimited if limit=0
+    const remainingBudget = budget.limit > 0 ? budget.limit - budget.used : sortedEmails.length;
     const emailsToClassify = sortedEmails.slice(0, remainingBudget);
     const skipped = emailIds.length - emailsToClassify.length;
 
     let classified = 0;
+    let triaged = 0;
+
     for (const email of emailsToClassify) {
       try {
-        await classifyAndApply(deps)(email.id, confidenceThreshold);
+        // Use unified triage system (pattern matching + training + LLM + folder move)
+        // This replaces the old dual-call pattern
+        const triageResult = await triageAndMoveEmail(deps)(email.id, {
+          confidenceThreshold: Math.min(confidenceThreshold, 0.7), // Use lower of the two thresholds
+        });
+
+        // Sync triage result to classificationState for ReviewQueue UI
+        const status = triageResult.confidence >= confidenceThreshold
+          ? 'classified'
+          : 'pending_review';
+
+        await deps.classificationState.setState({
+          emailId: email.id,
+          status,
+          confidence: triageResult.confidence,
+          priority: triageResult.confidence >= 0.9 ? 'high' : triageResult.confidence >= 0.7 ? 'normal' : 'low',
+          suggestedFolder: triageResult.folder,
+          reasoning: triageResult.reasoning,
+          classifiedAt: new Date(),
+          errorMessage: null,
+        });
+
         classified++;
+        triaged++;
       } catch (error) {
         console.error(`Failed to classify email ${email.id}:`, error);
         // Record error state so user can retry
@@ -342,7 +396,7 @@ export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'tags' | 'classifi
           status: 'error',
           confidence: null,
           priority: null,
-          suggestedTags: [],
+          suggestedFolder: null,
           reasoning: null,
           errorMessage: error instanceof Error ? error.message : String(error),
           classifiedAt: new Date(),
@@ -350,7 +404,7 @@ export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'tags' | 'classifi
       }
     }
 
-    return { classified, skipped };
+    return { classified, skipped, triaged };
   };
 
 // ============================================
@@ -404,7 +458,7 @@ export const isLLMConfigured = (deps: Pick<Deps, 'llmProvider' | 'config' | 'sec
     return { configured: true };
   };
 
-export const startBackgroundClassification = (deps: Pick<Deps, 'backgroundTasks' | 'emails' | 'tags' | 'classifier' | 'classificationState' | 'config'>) =>
+export const startBackgroundClassification = (deps: Pick<Deps, 'backgroundTasks' | 'emails' | 'classifier' | 'classificationState' | 'config'>) =>
   (emailIds: number[]): { taskId: string; count: number } => {
     const taskId = crypto.randomUUID();
     const llmConfig = deps.config.getLLMConfig();
@@ -435,7 +489,7 @@ export const startBackgroundClassification = (deps: Pick<Deps, 'backgroundTasks'
             status: 'error',
             confidence: null,
             priority: null,
-            suggestedTags: [],
+            suggestedFolder: null,
             reasoning: null,
             errorMessage: error instanceof Error ? error.message : String(error),
             classifiedAt: new Date(),
@@ -558,17 +612,14 @@ export const getClassificationStats = (deps: Pick<Deps, 'classificationState' | 
     };
   };
 
-export const acceptClassification = (deps: Pick<Deps, 'classificationState' | 'tags'>) =>
-  async (emailId: number, appliedTags: string[]): Promise<void> => {
+// Accept classification now uses folders (Issue #54)
+export const acceptClassification = (deps: Pick<Deps, 'classificationState' | 'emails' | 'accounts' | 'folders' | 'imapFolderOps'>) =>
+  async (emailId: number, appliedFolder: TriageFolder): Promise<void> => {
     const state = await deps.classificationState.getState(emailId);
     if (!state) throw new Error('Classification state not found');
 
-    // Determine if tags were edited
-    const originalSet = new Set(state.suggestedTags);
-    const appliedSet = new Set(appliedTags);
-    const isExactMatch = originalSet.size === appliedSet.size &&
-      [...originalSet].every(tag => appliedSet.has(tag));
-
+    // Determine if folder was edited
+    const isExactMatch = state.suggestedFolder === appliedFolder;
     const action = isExactMatch ? 'accept' : 'accept_edit';
     const accuracyScore = isExactMatch ? 1.0 : 0.98;
 
@@ -576,8 +627,8 @@ export const acceptClassification = (deps: Pick<Deps, 'classificationState' | 't
     await deps.classificationState.logFeedback({
       emailId,
       action,
-      originalTags: state.suggestedTags,
-      finalTags: appliedTags,
+      originalFolder: state.suggestedFolder,
+      finalFolder: appliedFolder,
       accuracyScore,
     });
 
@@ -588,17 +639,18 @@ export const acceptClassification = (deps: Pick<Deps, 'classificationState' | 't
       reviewedAt: new Date(),
     });
 
-    // Apply tags to email, creating any missing tags
-    let allTags = await deps.tags.findAll();
-    for (const tagSlug of appliedTags) {
-      let tag = allTags.find(t => t.slug === tagSlug);
-      if (!tag) {
-        // Create the tag if it doesn't exist (user may have typed a new tag in TagManager)
-        const name = tagSlug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-        tag = await deps.tags.create({ name, slug: tagSlug, color: '#6b7280', isSystem: false, sortOrder: 0 });
-        allTags = [...allTags, tag];
+    // Move email to the applied folder
+    const email = await deps.emails.findById(emailId);
+    if (email) {
+      const currentFolder = await deps.folders.findById(email.folderId);
+      if (currentFolder && currentFolder.path !== appliedFolder) {
+        const account = await deps.accounts.findById(email.accountId);
+        if (account) {
+          await deps.imapFolderOps.moveMessage(account, email.uid, currentFolder.path, appliedFolder);
+          const newFolder = await deps.folders.getOrCreate(email.accountId, appliedFolder, appliedFolder);
+          await deps.emails.setFolderId(emailId, newFolder.id);
+        }
       }
-      await deps.tags.apply(emailId, tag.id, 'llm', state.confidence ?? undefined);
     }
   };
 
@@ -613,8 +665,8 @@ export const dismissClassification = (deps: Pick<Deps, 'classificationState' | '
     await deps.classificationState.logFeedback({
       emailId,
       action: 'dismiss',
-      originalTags: state.suggestedTags,
-      finalTags: null,
+      originalFolder: state.suggestedFolder,
+      finalFolder: null,
       accuracyScore: 0.0,
     });
 
@@ -647,7 +699,7 @@ export const dismissClassification = (deps: Pick<Deps, 'classificationState' | '
     }
   };
 
-export const retryClassification = (deps: Pick<Deps, 'emails' | 'tags' | 'classifier' | 'classificationState' | 'config'>) =>
+export const retryClassification = (deps: Pick<Deps, 'emails' | 'classifier' | 'classificationState' | 'config'>) =>
   async (emailId: number): Promise<Classification> => {
     const state = await deps.classificationState.getState(emailId);
     if (!state || state.status !== 'error') {
@@ -656,6 +708,106 @@ export const retryClassification = (deps: Pick<Deps, 'emails' | 'tags' | 'classi
 
     const llmConfig = deps.config.getLLMConfig();
     return classifyAndApply(deps)(emailId, llmConfig.confidenceThreshold);
+  };
+
+/**
+ * Reclassify an already-classified email (Issue #56)
+ *
+ * Uses the full triage system (pattern matching + training examples + LLM)
+ * and moves the email to the new folder. Works on any email regardless of
+ * current classification status.
+ *
+ * @param emailId - The email to reclassify
+ * @returns Previous and new classification info for confirmation UI
+ */
+export const reclassifyEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'folders' | 'classificationState' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'config' | 'classifier'>) =>
+  async (emailId: number): Promise<{
+    previousFolder: TriageFolder | null;
+    previousConfidence: number | null;
+    newFolder: TriageFolder;
+    newConfidence: number;
+    reasoning: string;
+  }> => {
+    const email = await deps.emails.findById(emailId);
+    if (!email) throw new Error('Email not found');
+
+    // Check budget before LLM call
+    const budget = deps.classifier.getEmailBudget();
+    if (budget.limit > 0 && budget.used >= budget.limit) {
+      throw new Error('Daily classification budget exhausted. Try again tomorrow.');
+    }
+
+    // Capture previous state for UI feedback
+    const previousState = await deps.classificationState.getState(emailId);
+    const previousFolder = previousState?.suggestedFolder ?? null;
+    const previousConfidence = previousState?.confidence ?? null;
+
+    // Clear existing state to allow fresh classification
+    // This resets dismissed_at so reclassified emails re-enter the review queue
+    if (previousState) {
+      await deps.classificationState.setState({
+        ...previousState,
+        status: 'unprocessed',
+        confidence: null,
+        priority: null,
+        suggestedFolder: null,
+        reasoning: null,
+        classifiedAt: null,
+        reviewedAt: null,
+        dismissedAt: null,
+        errorMessage: null,
+      });
+    }
+
+    // Run full triage classification (pattern + training + LLM + move)
+    const llmConfig = deps.config.getLLMConfig();
+    const triageResult = await triageAndMoveEmail(deps)(emailId, {
+      confidenceThreshold: llmConfig.confidenceThreshold,
+    });
+
+    // Update classification state with triage results
+    const newStatus = triageResult.confidence >= llmConfig.confidenceThreshold
+      ? 'classified'
+      : 'pending_review';
+
+    await deps.classificationState.setState({
+      emailId,
+      status: newStatus,
+      confidence: triageResult.confidence,
+      priority: triageResult.confidence >= 0.9 ? 'high' : triageResult.confidence >= 0.7 ? 'normal' : 'low',
+      suggestedFolder: triageResult.folder,
+      reasoning: triageResult.reasoning,
+      classifiedAt: new Date(),
+      dismissedAt: null,
+      errorMessage: null,
+    });
+
+    // Log feedback for learning (reclassification is implicit correction if folder changed)
+    if (previousFolder && previousFolder !== triageResult.folder) {
+      await deps.classificationState.logFeedback({
+        emailId,
+        action: 'reclassify',
+        originalFolder: previousFolder,
+        finalFolder: triageResult.folder,
+        accuracyScore: 0.5, // Reclassification = uncertain about previous
+      });
+    }
+
+    return {
+      previousFolder,
+      previousConfidence,
+      newFolder: triageResult.folder,
+      newConfidence: triageResult.confidence,
+      reasoning: triageResult.reasoning,
+    };
+  };
+
+/**
+ * Get classification state for an email (for confirmation dialog)
+ */
+export const getClassificationState = (deps: Pick<Deps, 'classificationState'>) =>
+  async (emailId: number): Promise<ClassificationState | null> => {
+    return deps.classificationState.getState(emailId);
   };
 
 export const getConfusedPatterns = (deps: Pick<Deps, 'classificationState'>) =>
@@ -670,16 +822,11 @@ export const getRecentActivity = (deps: Pick<Deps, 'classificationState'>) =>
   (limit = 10, accountId?: number): Promise<ClassificationFeedback[]> =>
     deps.classificationState.listRecentFeedback(limit, accountId);
 
-export const bulkApplyTag = (deps: Pick<Deps, 'classificationState' | 'tags'>) =>
-  async (emailIds: number[], tagSlug: string): Promise<{ applied: number; failed: number }> => {
+// Bulk move to folder (Issue #54 - replaces bulkApplyTag)
+export const bulkMoveToFolder = (deps: Pick<Deps, 'classificationState' | 'emails' | 'accounts' | 'folders' | 'imapFolderOps'>) =>
+  async (emailIds: number[], folder: TriageFolder): Promise<{ applied: number; failed: number }> => {
     let applied = 0;
     let failed = 0;
-
-    const allTags = await deps.tags.findAll();
-    const tag = allTags.find(t => t.slug === tagSlug);
-    if (!tag) {
-      return { applied: 0, failed: emailIds.length };
-    }
 
     for (const emailId of emailIds) {
       try {
@@ -689,12 +836,12 @@ export const bulkApplyTag = (deps: Pick<Deps, 'classificationState' | 'tags'>) =
           continue;
         }
 
-        // Log feedback as accept_edit (user chose different tag)
+        // Log feedback as accept_edit (user chose different folder)
         await deps.classificationState.logFeedback({
           emailId,
           action: 'accept_edit',
-          originalTags: state.suggestedTags,
-          finalTags: [tagSlug],
+          originalFolder: state.suggestedFolder,
+          finalFolder: folder,
           accuracyScore: 0.98,
         });
 
@@ -705,8 +852,19 @@ export const bulkApplyTag = (deps: Pick<Deps, 'classificationState' | 'tags'>) =
           reviewedAt: new Date(),
         });
 
-        // Apply the chosen tag
-        await deps.tags.apply(emailId, tag.id, 'llm', state.confidence ?? undefined);
+        // Move to the chosen folder
+        const email = await deps.emails.findById(emailId);
+        if (email) {
+          const currentFolder = await deps.folders.findById(email.folderId);
+          if (currentFolder && currentFolder.path !== folder) {
+            const account = await deps.accounts.findById(email.accountId);
+            if (account) {
+              await deps.imapFolderOps.moveMessage(account, email.uid, currentFolder.path, folder);
+              const newFolder = await deps.folders.getOrCreate(email.accountId, folder, folder);
+              await deps.emails.setFolderId(emailId, newFolder.id);
+            }
+          }
+        }
 
         applied++;
       } catch {
@@ -717,7 +875,7 @@ export const bulkApplyTag = (deps: Pick<Deps, 'classificationState' | 'tags'>) =
     return { applied, failed };
   };
 
-export const bulkAcceptClassifications = (deps: Pick<Deps, 'classificationState' | 'tags'>) =>
+export const bulkAcceptClassifications = (deps: Pick<Deps, 'classificationState' | 'emails' | 'accounts' | 'folders' | 'imapFolderOps'>) =>
   async (emailIds: number[]): Promise<{ accepted: number; failed: number }> => {
     let accepted = 0;
     let failed = 0;
@@ -734,8 +892,8 @@ export const bulkAcceptClassifications = (deps: Pick<Deps, 'classificationState'
         await deps.classificationState.logFeedback({
           emailId,
           action: 'accept',
-          originalTags: state.suggestedTags,
-          finalTags: state.suggestedTags,
+          originalFolder: state.suggestedFolder,
+          finalFolder: state.suggestedFolder,
           accuracyScore: 1.0,
         });
 
@@ -746,12 +904,19 @@ export const bulkAcceptClassifications = (deps: Pick<Deps, 'classificationState'
           reviewedAt: new Date(),
         });
 
-        // Apply tags
-        const allTags = await deps.tags.findAll();
-        for (const tagSlug of state.suggestedTags) {
-          const tag = allTags.find(t => t.slug === tagSlug);
-          if (tag) {
-            await deps.tags.apply(emailId, tag.id, 'llm', state.confidence ?? undefined);
+        // Move to the suggested folder
+        if (state.suggestedFolder) {
+          const email = await deps.emails.findById(emailId);
+          if (email) {
+            const currentFolder = await deps.folders.findById(email.folderId);
+            if (currentFolder && currentFolder.path !== state.suggestedFolder) {
+              const account = await deps.accounts.findById(email.accountId);
+              if (account) {
+                await deps.imapFolderOps.moveMessage(account, email.uid, currentFolder.path, state.suggestedFolder);
+                const newFolder = await deps.folders.getOrCreate(email.accountId, state.suggestedFolder, state.suggestedFolder);
+                await deps.emails.setFolderId(emailId, newFolder.id);
+              }
+            }
           }
         }
 
@@ -779,12 +944,12 @@ export const bulkDismissClassifications = (deps: Pick<Deps, 'classificationState
 
         const email = await deps.emails.findById(emailId);
 
-        // Log feedback
+        // Log feedback (using folders now - Issue #54)
         await deps.classificationState.logFeedback({
           emailId,
           action: 'dismiss',
-          originalTags: state.suggestedTags,
-          finalTags: null,
+          originalFolder: state.suggestedFolder,
+          finalFolder: null,
           accuracyScore: 0.0,
         });
 
@@ -831,7 +996,7 @@ export const getPendingReviewCount = (deps: Pick<Deps, 'classificationState'>) =
     return counts.pending_review;
   };
 
-export const classifyUnprocessed = (deps: Pick<Deps, 'emails' | 'tags' | 'classifier' | 'classificationState' | 'config'>) =>
+export const classifyUnprocessed = (deps: Pick<Deps, 'emails' | 'classifier' | 'classificationState' | 'config' | 'accounts' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps'>) =>
   async (): Promise<{ classified: number; skipped: number }> => {
     const llmConfig = deps.config.getLLMConfig();
 
@@ -1231,21 +1396,86 @@ export const triageEmail = (deps: Pick<Deps, 'emails' | 'patternMatcher' | 'tria
     return result;
   };
 
+/**
+ * Triage and move email to folder (Issue #53)
+ *
+ * This use case combines classification and IMAP folder movement.
+ * If confidence is above threshold, the email is moved to the classified folder.
+ * If below threshold, classification still happens but email stays in place.
+ */
+export const triageAndMoveEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps'>) =>
+  async (emailId: number, options: { confidenceThreshold?: number } = {}): Promise<TriageClassificationResult> => {
+    const { confidenceThreshold = 0.7 } = options;
+
+    const email = await deps.emails.findById(emailId);
+    if (!email) throw new Error('Email not found');
+
+    // Step 1: Pattern matching (fast, local)
+    const patternResult = deps.patternMatcher.match(email);
+
+    // Step 2: Get relevant training examples
+    const examples = await deps.trainingRepo.getRelevantExamples(email.accountId, email, 10);
+
+    // Step 3: LLM classification with pattern hint
+    const result = await deps.triageClassifier.classify(email, patternResult, examples);
+
+    // Step 4: Log the classification
+    await deps.triageLog.log({
+      emailId,
+      accountId: email.accountId,
+      patternHint: patternResult.folder,
+      llmFolder: result.folder,
+      llmConfidence: result.confidence,
+      patternAgreed: result.patternAgreed,
+      finalFolder: result.folder,
+      source: 'llm',
+      reasoning: result.reasoning,
+    });
+
+    // Step 5: Move to folder if confidence is above threshold
+    if (result.confidence >= confidenceThreshold) {
+      const currentFolder = await deps.folders.findById(email.folderId);
+      if (!currentFolder) throw new Error('Folder not found');
+
+      // Skip if already in the target folder
+      if (currentFolder.path !== result.folder) {
+        const account = await deps.accounts.findById(email.accountId);
+        if (!account) throw new Error('Account not found');
+
+        // Move via IMAP
+        await deps.imapFolderOps.moveMessage(account, email.uid, currentFolder.path, result.folder);
+
+        // Update local DB to reflect the new folder (Issue #53)
+        const newFolder = await deps.folders.getOrCreate(email.accountId, result.folder, result.folder);
+        await deps.emails.setFolderId(emailId, newFolder.id);
+      }
+    }
+
+    return result;
+  };
+
 export const moveEmailToTriageFolder = (deps: Pick<Deps, 'emails' | 'accounts' | 'folders' | 'imapFolderOps' | 'triageLog'>) =>
   async (emailId: number, folder: TriageFolder): Promise<void> => {
     const email = await deps.emails.findById(emailId);
     if (!email) throw new Error('Email not found');
 
-    const account = await deps.accounts.findById(email.accountId);
-    if (!account) throw new Error('Account not found');
-
     const currentFolder = await deps.folders.findById(email.folderId);
     if (!currentFolder) throw new Error('Folder not found');
 
-    // Move via IMAP
-    await deps.imapFolderOps.moveMessage(account, email.uid, currentFolder.path, folder);
+    // Skip IMAP move if already in the target folder
+    if (currentFolder.path !== folder) {
+      const account = await deps.accounts.findById(email.accountId);
+      if (!account) throw new Error('Account not found');
 
-    // Log the move
+      // Move via IMAP
+      await deps.imapFolderOps.moveMessage(account, email.uid, currentFolder.path, folder);
+
+      // Update local DB to reflect the new folder (Issue #53)
+      const newFolder = await deps.folders.getOrCreate(email.accountId, folder, folder);
+      await deps.emails.setFolderId(emailId, newFolder.id);
+    }
+
+    // Log the move (even if no actual move happened, for audit trail)
     await deps.triageLog.log({
       emailId,
       accountId: email.accountId,
@@ -1372,6 +1602,10 @@ export const processSnoozedEmails = (deps: Pick<Deps, 'snoozes' | 'emails' | 'ac
           snooze.originalFolder
         );
 
+        // Update local DB to reflect the new folder (Issue #53)
+        const newFolder = await deps.folders.getOrCreate(email.accountId, snooze.originalFolder, snooze.originalFolder);
+        await deps.emails.setFolderId(snooze.emailId, newFolder.id);
+
         await deps.snoozes.delete(snooze.emailId);
         processed++;
       } catch (e) {
@@ -1410,6 +1644,106 @@ export const getTriageLog = (deps: Pick<Deps, 'triageLog'>) =>
     return deps.triageLog.findRecent(limit, accountId);
   };
 
+/**
+ * Select diverse training emails for onboarding (Issue #55)
+ *
+ * Fetches a pool of candidate emails, runs silent AI classification,
+ * then selects up to `maxEmails` diverse samples by:
+ * - Limiting to max 2 per sender domain
+ * - Ensuring variety across predicted categories
+ * - Prioritizing emails with clear classification signals
+ *
+ * The AI predictions are NOT shown to the user - they classify from scratch.
+ * This just ensures we present a diverse set for training.
+ */
+export const selectDiverseTrainingEmails = (deps: Pick<Deps, 'emails' | 'patternMatcher'>) =>
+  async (accountId: number, options: { maxEmails?: number; poolSize?: number } = {}): Promise<Email[]> => {
+    const { maxEmails = 12, poolSize = 50 } = options;
+
+    // Step 1: Fetch candidate pool
+    const candidates = await deps.emails.list({
+      accountId,
+      limit: poolSize,
+    });
+
+    if (candidates.length === 0) {
+      return [];
+    }
+
+    // Step 2: Run silent pattern matching (fast, no LLM cost)
+    // We use pattern matching instead of full LLM to keep onboarding fast
+    const classified = candidates.map(email => ({
+      email,
+      prediction: deps.patternMatcher.match(email),
+      domain: extractDomain(email.from.address),
+    }));
+
+    // Step 3: Group by predicted folder
+    const byFolder = new Map<string, typeof classified>();
+    for (const item of classified) {
+      const folder = item.prediction.folder;
+      if (!byFolder.has(folder)) {
+        byFolder.set(folder, []);
+      }
+      byFolder.get(folder)!.push(item);
+    }
+
+    // Step 4: Select diverse emails
+    const selected: Email[] = [];
+    const domainCount = new Map<string, number>();
+
+    // Helper to check domain limit
+    const canSelectDomain = (domain: string) => (domainCount.get(domain) || 0) < 2;
+    const recordDomain = (domain: string) => domainCount.set(domain, (domainCount.get(domain) || 0) + 1);
+
+    // Priority 1: One from each detected category (ensure variety)
+    const folders = Array.from(byFolder.keys());
+    for (const folder of folders) {
+      if (selected.length >= maxEmails) break;
+
+      const items = byFolder.get(folder)!;
+      // Find item with unique domain if possible
+      for (const item of items) {
+        if (canSelectDomain(item.domain)) {
+          selected.push(item.email);
+          recordDomain(item.domain);
+          // Remove from pool (check idx to avoid splice(-1) removing last element)
+          const idx = items.indexOf(item);
+          if (idx !== -1) {
+            items.splice(idx, 1);
+          }
+          break;
+        }
+      }
+    }
+
+    // Priority 2: Fill remaining slots with high-confidence predictions
+    // Sort remaining by confidence descending
+    const remaining = classified
+      .filter(item => !selected.includes(item.email))
+      .sort((a, b) => b.prediction.confidence - a.prediction.confidence);
+
+    for (const item of remaining) {
+      if (selected.length >= maxEmails) break;
+      if (!canSelectDomain(item.domain)) continue;
+
+      selected.push(item.email);
+      recordDomain(item.domain);
+    }
+
+    // Priority 3: If still not enough, relax domain constraint
+    if (selected.length < maxEmails) {
+      for (const item of remaining) {
+        if (selected.length >= maxEmails) break;
+        if (selected.includes(item.email)) continue;
+
+        selected.push(item.email);
+      }
+    }
+
+    return selected;
+  };
+
 // ============================================
 // Factory: Create all use cases with deps
 // ============================================
@@ -1426,14 +1760,10 @@ export function createUseCases(deps: Deps) {
     archiveEmail: archiveEmail(deps),
     unarchiveEmail: unarchiveEmail(deps),
     deleteEmail: deleteEmail(deps),
+    trashEmail: trashEmail(deps),
 
-    // Tags
-    listTags: listTags(deps),
-    getEmailTags: getEmailTags(deps),
-    applyTag: applyTag(deps),
-    removeTag: removeTag(deps),
-    createTag: createTag(deps),
-    
+    // Tags removed - using folders for organization (Issue #54)
+
     // Sync
     syncMailbox: syncMailbox(deps),
     syncAllMailboxes: syncAllMailboxes(deps),
@@ -1444,6 +1774,7 @@ export function createUseCases(deps: Deps) {
     // Classification
     classifyEmail: classifyEmail(deps),
     classifyAndApply: classifyAndApply(deps),
+    classifyAndTriage: classifyAndTriage(deps),
     classifyNewEmails: classifyNewEmails(deps),
 
     // LLM Provider
@@ -1465,12 +1796,14 @@ export function createUseCases(deps: Deps) {
     acceptClassification: acceptClassification(deps),
     dismissClassification: dismissClassification(deps),
     retryClassification: retryClassification(deps),
+    reclassifyEmail: reclassifyEmail(deps),
+    getClassificationState: getClassificationState(deps),
     getConfusedPatterns: getConfusedPatterns(deps),
     clearConfusedPatterns: clearConfusedPatterns(deps),
     getRecentActivity: getRecentActivity(deps),
     bulkAcceptClassifications: bulkAcceptClassifications(deps),
     bulkDismissClassifications: bulkDismissClassifications(deps),
-    bulkApplyTag: bulkApplyTag(deps),
+    bulkMoveToFolder: bulkMoveToFolder(deps),
     getPendingReviewCount: getPendingReviewCount(deps),
     classifyUnprocessed: classifyUnprocessed(deps),
 
@@ -1515,6 +1848,7 @@ export function createUseCases(deps: Deps) {
 
     // Email Triage
     triageEmail: triageEmail(deps),
+    triageAndMoveEmail: triageAndMoveEmail(deps),
     moveEmailToTriageFolder: moveEmailToTriageFolder(deps),
     learnFromTriageCorrection: learnFromTriageCorrection(deps),
     snoozeEmail: snoozeEmail(deps),
@@ -1525,6 +1859,7 @@ export function createUseCases(deps: Deps) {
     ensureTriageFolders: ensureTriageFolders(deps),
     getSenderRules: getSenderRules(deps),
     getTriageLog: getTriageLog(deps),
+    selectDiverseTrainingEmails: selectDiverseTrainingEmails(deps),
   };
 }
 

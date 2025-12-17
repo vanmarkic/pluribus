@@ -9,7 +9,8 @@
 import { useRef, useEffect, useState } from 'react';
 import { FixedSizeList, ListChildComponentProps } from 'react-window';
 import { IconFavorite } from 'obra-icons-react';
-import { useEmailStore, useUIStore, useTagStore, useAccountStore } from '../stores';
+// useTagStore removed - using folders for organization (Issue #54)
+import { useEmailStore, useUIStore, useAccountStore } from '../stores';
 import { formatSender, isRecent } from '../../core/domain';
 import type { Email } from '../../core/domain';
 
@@ -55,12 +56,18 @@ interface EmailRowData {
   selectedId: number | null;
   selectEmail: (id: number) => void;
   toggleStar: (id: number) => void;
+  isSentFolder: boolean;
 }
 
 // Virtualized email row component
 const EmailRow = ({ index, style, data }: ListChildComponentProps) => {
-  const { emails, selectedId, selectEmail, toggleStar } = data;
+  const { emails, selectedId, selectEmail, toggleStar, isSentFolder } = data;
   const email = emails[index];
+
+  // In Sent folder, show recipients instead of sender
+  const displayName = isSentFolder && email.to.length > 0
+    ? `To: ${email.to.join(', ')}`
+    : formatSender(email.from);
 
   return (
     <div style={{ ...style, overflow: 'hidden' }}>
@@ -69,11 +76,11 @@ const EmailRow = ({ index, style, data }: ListChildComponentProps) => {
         className={`email-item ${selectedId === email.id ? 'selected' : ''} ${!email.isRead ? 'unread' : ''}`}
         style={{ height: '100%', boxSizing: 'border-box' }}
       >
-        {/* Header row: Sender + Star + Date */}
+        {/* Header row: Sender/Recipient + Star + Date */}
         <div className="email-item-header">
           <div className="flex items-center gap-2">
             <span className={`email-item-sender ${!email.isRead ? 'unread' : ''}`}>
-              {formatSender(email.from)}
+              {displayName}
             </span>
             <button
               onClick={(e) => {
@@ -116,7 +123,7 @@ export function EmailList() {
     filter,
   } = useEmailStore();
   const { view } = useUIStore();
-  const { tags } = useTagStore();
+  // useTagStore removed - using folders (Issue #54)
   const { selectedAccountId } = useAccountStore();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -145,15 +152,10 @@ export function EmailList() {
     'paper-trail/travel': 'Travel',
   };
 
-  // Determine title based on filter state
+  // Determine title based on filter state (tagId removed - Issue #54)
   let title = viewTitles[view] || view.charAt(0).toUpperCase() + view.slice(1);
   if (filter.searchQuery) {
     title = 'Search Results';
-  } else if (filter.tagId) {
-    const selectedTag = tags.find(t => t.id === filter.tagId);
-    if (selectedTag) {
-      title = selectedTag.name;
-    }
   }
 
   // Measure container height for virtualized list
@@ -182,12 +184,16 @@ export function EmailList() {
     }
   }, [selectedId, emails]);
 
+  // Determine if viewing Sent folder to show recipients instead of sender
+  const isSentFolder = filter.folderPath?.toLowerCase().includes('sent') ?? false;
+
   // Prepare data for virtualized rows
   const itemData: EmailRowData = {
     emails,
     selectedId,
     selectEmail,
     toggleStar,
+    isSentFolder,
   };
 
   return (

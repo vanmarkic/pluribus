@@ -13,7 +13,8 @@ import Store from 'electron-store';
 import { createUseCases, type UseCases, type Deps } from '../core';
 
 // Adapters
-import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createTagRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup } from '../adapters/db';
+// Tags removed - using folders for organization (Issue #54)
+import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup } from '../adapters/db';
 import { createMailSync, createImapFolderOps } from '../adapters/imap';
 import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier } from '../adapters/llm';
 import { createPatternMatcher, createTrainingRepo, createSenderRulesRepo, createSnoozeRepo, createTriageLogRepo, createTriageClassifier } from '../adapters/triage';
@@ -115,7 +116,7 @@ export function createContainer(): Container {
   // Create repositories
   const emails = createEmailRepo();
   const attachments = createAttachmentRepo();
-  const tags = createTagRepo();
+  // Tags removed - using folders for organization (Issue #54)
   const accounts = createAccountRepo();
   const folders = createFolderRepo();
   const drafts = createDraftRepo();
@@ -130,7 +131,7 @@ export function createContainer(): Container {
   const ollamaProvider = createOllamaProvider(configStore.get('llm').ollamaServerUrl);
   const anthropicProvider = createAnthropicProvider(secrets);
 
-  // Create classifiers for both providers
+  // Create classifiers for both providers (updated for folder-based classification - Issue #54)
   const ollamaClassifier = createOllamaClassifier(
     () => {
       const cfg = configStore.get('llm');
@@ -140,16 +141,15 @@ export function createContainer(): Container {
         dailyBudget: cfg.dailyBudget,
         dailyEmailLimit: cfg.dailyEmailLimit,
       };
-    },
-    tags
+    }
   );
 
   // Dynamic classifier that delegates based on current provider setting
   const classifier: import('../core/ports').Classifier = {
-    async classify(email, body, existingTags) {
+    async classify(email, body) {
       const cfg = configStore.get('llm');
       if (cfg.provider === 'ollama') {
-        return ollamaClassifier.classify(email, body, existingTags);
+        return ollamaClassifier.classify(email, body);
       } else {
         // Create fresh Anthropic classifier with current config
         const anthClassifier = createClassifier(
@@ -158,10 +158,9 @@ export function createContainer(): Container {
             dailyBudget: cfg.dailyBudget,
             dailyEmailLimit: cfg.dailyEmailLimit,
           },
-          tags,
           secrets
         );
-        return anthClassifier.classify(email, body, existingTags);
+        return anthClassifier.classify(email, body);
       }
     },
     getBudget() {
@@ -176,7 +175,6 @@ export function createContainer(): Container {
           dailyBudget: cfg.dailyBudget,
           dailyEmailLimit: cfg.dailyEmailLimit,
         },
-        tags,
         secrets
       );
       return anthClassifier.getBudget();
@@ -192,7 +190,6 @@ export function createContainer(): Container {
           dailyBudget: cfg.dailyBudget,
           dailyEmailLimit: cfg.dailyEmailLimit,
         },
-        tags,
         secrets
       );
       return anthClassifier.getEmailBudget();
@@ -303,7 +300,7 @@ export function createContainer(): Container {
   const deps: Deps = {
     emails,
     attachments,
-    tags,
+    // tags removed - using folders for organization (Issue #54)
     accounts,
     folders,
     drafts,

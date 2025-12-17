@@ -1,12 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AIDashboard } from './AIDashboard';
-import { ReviewQueue } from './ReviewQueue';
-import { TagManager } from './TagManager';
+import { FolderPicker } from './FolderPicker';
 import { useAccountStore } from '../../stores';
 import type { ReviewItem } from './types';
+import type { TriageFolder } from '../../../core/domain';
 
 export function AISortView() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'review'>('dashboard');
   const [reviewItems, setReviewItems] = useState<ReviewItem[]>([]);
   const [editingItemId, setEditingItemId] = useState<number | null>(null);
   const { selectedAccountId } = useAccountStore();
@@ -29,52 +28,13 @@ export function AISortView() {
 
   const editingItem = reviewItems.find(i => i.emailId === editingItemId);
 
-  const handleAccept = async (emailId: number, tags: string[]) => {
-    try {
-      await window.mailApi.aiSort.accept(emailId, tags);
-      await loadReviewItems();
-    } catch (err) {
-      console.error('Failed to accept:', err);
-    }
-  };
-
-  const handleDismiss = async (emailId: number) => {
-    try {
-      await window.mailApi.aiSort.dismiss(emailId);
-      await loadReviewItems();
-    } catch (err) {
-      console.error('Failed to dismiss:', err);
-    }
-  };
-
-  const handleEdit = (id: number) => {
-    setEditingItemId(id);
-  };
-
-  const handleAddTag = (tag: string) => {
+  const handleSelectFolder = async (folder: TriageFolder) => {
     if (!editingItem) return;
-    // Update local state - the actual tag application happens on accept
+    // Update local state
     setReviewItems(items =>
       items.map(item =>
         item.emailId === editingItemId
-          ? {
-              ...item,
-              suggestedTags: [...item.suggestedTags, tag],
-            }
-          : item
-      )
-    );
-  };
-
-  const handleRemoveTag = (tag: string) => {
-    if (!editingItem) return;
-    setReviewItems(items =>
-      items.map(item =>
-        item.emailId === editingItemId
-          ? {
-              ...item,
-              suggestedTags: item.suggestedTags.filter((t: string) => t !== tag),
-            }
+          ? { ...item, suggestedFolder: folder }
           : item
       )
     );
@@ -115,12 +75,11 @@ export function AISortView() {
         </div>
       </div>
 
-      {/* Tag Manager Modal */}
+      {/* Folder Picker Modal */}
       {editingItem && (
-        <TagManager
-          currentTags={editingItem.suggestedTags}
-          onAddTag={handleAddTag}
-          onRemoveTag={handleRemoveTag}
+        <FolderPicker
+          currentFolder={editingItem.suggestedFolder}
+          onSelectFolder={handleSelectFolder}
           onClose={() => setEditingItemId(null)}
         />
       )}

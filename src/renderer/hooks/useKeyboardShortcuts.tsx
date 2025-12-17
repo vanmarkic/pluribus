@@ -169,7 +169,8 @@ export function useKeyboardShortcuts(handlers: {
       e.preventDefault();
       setView('inbox');
       if (selectedAccountId) {
-        setFilter({ folderPath: 'INBOX', tagId: undefined, unreadOnly: false, starredOnly: false, searchQuery: undefined }, selectedAccountId);
+        // tagId removed - using folders (Issue #54)
+        setFilter({ folderPath: 'INBOX', unreadOnly: false, starredOnly: false, searchQuery: undefined }, selectedAccountId);
       }
       return;
     }

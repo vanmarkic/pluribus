@@ -28,12 +28,7 @@ const mockAccounts = [
   },
 ];
 
-const mockTags = [
-  { id: 1, name: 'Work', slug: 'work', color: '#3b82f6', icon: 'briefcase', isSystem: false, sortOrder: 0 },
-  { id: 2, name: 'Personal', slug: 'personal', color: '#ef4444', icon: 'user', isSystem: false, sortOrder: 1 },
-  { id: 3, name: 'Finance', slug: 'finance', color: '#22c55e', icon: 'dollar', isSystem: false, sortOrder: 2 },
-  { id: 4, name: 'Travel', slug: 'travel', color: '#f59e0b', icon: 'plane', isSystem: false, sortOrder: 3 },
-];
+// Tags removed - using folders for organization (Issue #54)
 
 const mockEmails = [
   {
@@ -134,13 +129,9 @@ const mockEmailBodies: Record<number, { text: string; html: string }> = {
   },
 };
 
+// Using type assertion to allow extra mock properties not yet in compiled MailAPI
 export function createMockApi(): MailAPI {
-  // Email to tag mapping (mirrors getForEmail logic)
-  const emailTagMap: Record<number, number[]> = {
-    1: [1], // Work
-    3: [3], // Finance
-    5: [4], // Travel
-  };
+  // Tags removed - using folders for organization (Issue #54)
 
   // AI sort pending review items (mutable for accept/dismiss)
   const pendingReviewItems = [
@@ -149,7 +140,7 @@ export function createMockApi(): MailAPI {
       status: 'pending' as const,
       confidence: 0.78,
       priority: 'normal' as const,
-      suggestedTags: ['work', 'meeting'],
+      suggestedFolder: 'Planning' as const,
       reasoning: 'Email discusses a work meeting with quarterly reports',
       errorMessage: null,
       classifiedAt: new Date(),
@@ -162,7 +153,7 @@ export function createMockApi(): MailAPI {
       status: 'pending' as const,
       confidence: 0.65,
       priority: 'low' as const,
-      suggestedTags: ['work'],
+      suggestedFolder: 'Review' as const,
       reasoning: 'Project update discussion',
       errorMessage: null,
       classifiedAt: new Date(),
@@ -174,13 +165,8 @@ export function createMockApi(): MailAPI {
 
   return {
     emails: {
-      list: async (options?: { tagId?: number; starredOnly?: boolean; folderPath?: string }) => {
+      list: async (options?: { starredOnly?: boolean; folderPath?: string }) => {
         let filtered = mockEmails;
-
-        // Filter by tag
-        if (options?.tagId) {
-          filtered = filtered.filter((e) => emailTagMap[e.id]?.includes(options.tagId!));
-        }
 
         // Filter by starred
         if (options?.starredOnly) {
@@ -206,6 +192,7 @@ export function createMockApi(): MailAPI {
       archive: async (_id: number) => {},
       unarchive: async (_id: number) => {},
       delete: async (_id: number) => {},
+      trash: async (_id: number) => {},
     },
 
     attachments: {
@@ -213,42 +200,7 @@ export function createMockApi(): MailAPI {
       download: async () => {},
     },
 
-    tags: {
-      list: async () => mockTags,
-      getForEmail: async (emailId) => {
-        // Return some tags for some emails
-        if (emailId === 1) return [{ ...mockTags[0], source: 'llm' as const, confidence: 0.85 }]; // Work
-        if (emailId === 3) return [{ ...mockTags[2], source: 'llm' as const, confidence: 0.92 }]; // Finance
-        if (emailId === 5) return [{ ...mockTags[3], source: 'manual' as const, confidence: null }]; // Travel
-        return [];
-      },
-      getForEmails: async (emailIds: number[]) => {
-        const result: Record<number, any[]> = {};
-        emailIds.forEach((id: number) => {
-          if (id === 1) result[id] = [{ ...mockTags[0], source: 'llm' as const, confidence: 0.85 }]; // Work
-          else if (id === 3) result[id] = [{ ...mockTags[2], source: 'llm' as const, confidence: 0.92 }]; // Finance
-          else if (id === 5) result[id] = [{ ...mockTags[3], source: 'manual' as const, confidence: null }]; // Travel
-          else result[id] = [];
-        });
-        return result;
-      },
-      apply: async (emailId, tagId) => {
-        // Update internal mapping for consistency
-        if (!emailTagMap[emailId]) {
-          emailTagMap[emailId] = [];
-        }
-        if (!emailTagMap[emailId].includes(tagId)) {
-          emailTagMap[emailId].push(tagId);
-        }
-      },
-      remove: async (emailId, tagId) => {
-        // Update internal mapping for consistency
-        if (emailTagMap[emailId]) {
-          emailTagMap[emailId] = emailTagMap[emailId].filter((id) => id !== tagId);
-        }
-      },
-      create: async (tag) => ({ id: mockTags.length + 1, ...tag }),
-    },
+    // Tags removed - using folders for organization (Issue #54)
 
     sync: {
       start: async (accountId) => {
@@ -279,8 +231,8 @@ export function createMockApi(): MailAPI {
     },
 
     llm: {
-      classify: async () => ({ tags: ['work'], priority: 'normal', confidence: 0.85 }),
-      classifyAndApply: async () => ({ tags: ['work'], priority: 'normal', confidence: 0.85, applied: true }),
+      classify: async () => ({ suggestedFolder: 'Planning' as const, priority: 'normal' as const, confidence: 0.85, reasoning: 'Mock classification' }),
+      classifyAndApply: async () => ({ suggestedFolder: 'Planning' as const, priority: 'normal' as const, confidence: 0.85, reasoning: 'Mock classification' }),
       getBudget: async () => ({ used: 0.05, limit: 1.0, allowed: true }),
       getEmailBudget: async () => ({ used: 5, limit: 100, allowed: true }),
       validate: async () => ({ valid: true }),
@@ -310,21 +262,12 @@ export function createMockApi(): MailAPI {
         priorityBreakdown: { high: 2, normal: 8, low: 2 },
       }),
       getPendingCount: async () => pendingReviewItems.filter(item => item.status === 'pending').length,
-      accept: async (emailId, appliedTags) => {
+      accept: async (emailId: number, appliedFolder: string) => {
         const item = pendingReviewItems.find(i => i.emailId === emailId);
         if (item) {
           (item as any).status = 'accepted';
           (item as any).reviewedAt = new Date();
-          // Apply the tags to the email
-          appliedTags.forEach(tagSlug => {
-            const tag = mockTags.find(t => t.slug === tagSlug);
-            if (tag && !emailTagMap[emailId]) {
-              emailTagMap[emailId] = [];
-            }
-            if (tag && !emailTagMap[emailId].includes(tag.id)) {
-              emailTagMap[emailId].push(tag.id);
-            }
-          });
+          (item as any).suggestedFolder = appliedFolder;
         }
       },
       dismiss: async (emailId) => {
@@ -340,8 +283,25 @@ export function createMockApi(): MailAPI {
       getRecentActivity: async () => [],
       bulkAccept: async () => {},
       bulkDismiss: async () => {},
-      bulkApplyTag: async () => {},
+      bulkMoveToFolder: async () => {},
       classifyUnprocessed: async () => ({ taskId: 'task-1', count: 0 }),
+      // Issue #56: Reclassify email
+      reclassify: async (_emailId: number) => ({
+        previousFolder: 'INBOX' as const,
+        previousConfidence: 0.75,
+        newFolder: 'Planning' as const,
+        newConfidence: 0.88,
+        reasoning: 'Mock reclassification result',
+      }),
+      getClassificationState: async (emailId: number) => ({
+        emailId,
+        status: 'classified',
+        confidence: 0.85,
+        priority: 'normal',
+        suggestedFolder: 'INBOX',
+        reasoning: 'Mock classification state',
+        classifiedAt: new Date().toISOString(),
+      }),
     },
 
     accounts: {
@@ -378,6 +338,10 @@ export function createMockApi(): MailAPI {
         return defaults[key];
       },
       set: async () => {},
+      getTriageFolders: async () => [
+        'INBOX', 'Planning', 'Review', 'Paper-Trail/Invoices', 'Paper-Trail/Admin',
+        'Paper-Trail/Travel', 'Feed', 'Social', 'Promotions', 'Archive'
+      ],
     },
 
     credentials: {
@@ -496,7 +460,8 @@ export function createMockApi(): MailAPI {
     },
 
     triage: {
-      classify: async () => ({ folder: 'INBOX', tags: [], confidence: 0.9, reasoning: 'Mock classification' }),
+      classify: async () => ({ folder: 'INBOX' as const, confidence: 0.9, reasoning: 'Mock classification' }),
+      classifyAndMove: async () => ({ folder: 'INBOX' as const, confidence: 0.9, patternAgreed: true, reasoning: 'Mock classification' }),
       moveToFolder: async () => {},
       learnFromCorrection: async () => {},
       snooze: async () => {},
@@ -507,6 +472,8 @@ export function createMockApi(): MailAPI {
       ensureFolders: async () => ['INBOX', 'Planning', 'Review', 'Feed', 'Social', 'Promotions'],
       getSenderRules: async () => [],
       getLog: async () => [],
+      // Issue #55: Select diverse training emails
+      selectDiverseTrainingEmails: async () => mockEmails.slice(0, 12),
     },
 
     on: (channel, callback) => {
@@ -517,7 +484,7 @@ export function createMockApi(): MailAPI {
     off: (channel, callback) => {
       listeners.get(channel)?.delete(callback);
     },
-  };
+  } as MailAPI; // Type assertion since source types may differ from compiled
 }
 
 // Auto-inject mock if not in Electron

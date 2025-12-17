@@ -95,28 +95,8 @@ CREATE TRIGGER IF NOT EXISTS emails_ad AFTER DELETE ON emails BEGIN
   VALUES ('delete', old.id, old.subject, old.from_address, old.from_name, old.snippet);
 END;
 
--- Tags
-CREATE TABLE IF NOT EXISTS tags (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  slug TEXT UNIQUE NOT NULL,
-  color TEXT DEFAULT '#6b7280',
-  is_system INTEGER NOT NULL DEFAULT 0,
-  sort_order INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- Email Tags Junction
-CREATE TABLE IF NOT EXISTS email_tags (
-  email_id INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
-  tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
-  source TEXT NOT NULL DEFAULT 'manual',
-  confidence REAL,
-  applied_at TEXT NOT NULL DEFAULT (datetime('now')),
-  PRIMARY KEY (email_id, tag_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_email_tags_tag ON email_tags(tag_id);
+-- Tags table removed - using folders for organization instead
+-- See Issue #54: Email organization is now folder-based only
 
 -- Drafts (local email drafts)
 CREATE TABLE IF NOT EXISTS drafts (
@@ -160,25 +140,13 @@ CREATE TABLE IF NOT EXISTS llm_usage (
   UNIQUE(date, model)
 );
 
--- Default Tags
-INSERT OR IGNORE INTO tags (slug, name, color, is_system, sort_order) VALUES
-  ('inbox', 'Inbox', '#3b82f6', 1, 0),
-  ('sent', 'Sent', '#10b981', 1, 1),
-  ('archive', 'Archive', '#6b7280', 1, 2),
-  ('trash', 'Trash', '#ef4444', 1, 3);
-
-INSERT OR IGNORE INTO tags (slug, name, color, sort_order) VALUES
-  ('work', 'Work', '#8b5cf6', 10),
-  ('personal', 'Personal', '#ec4899', 11),
-  ('finance', 'Finance', '#14b8a6', 12);
-
 -- Classification State (tracks each email's AI classification status)
 CREATE TABLE IF NOT EXISTS classification_state (
   email_id INTEGER PRIMARY KEY REFERENCES emails(id) ON DELETE CASCADE,
   status TEXT NOT NULL DEFAULT 'unprocessed',  -- unprocessed, classified, pending_review, accepted, dismissed, error
   confidence REAL,
   priority TEXT,  -- high, normal, low
-  suggested_tags TEXT,  -- JSON array of tag slugs
+  suggested_folder TEXT,  -- Target triage folder
   reasoning TEXT,
   error_message TEXT,  -- Error message if classification failed
   classified_at TEXT,
@@ -194,8 +162,8 @@ CREATE TABLE IF NOT EXISTS classification_feedback (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   email_id INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
   action TEXT NOT NULL,  -- accept, accept_edit, dismiss
-  original_tags TEXT,    -- JSON array: what AI suggested
-  final_tags TEXT,       -- JSON array: what user applied (null if dismissed)
+  original_folder TEXT,  -- What AI suggested
+  final_folder TEXT,     -- What user applied (null if dismissed)
   accuracy_score REAL,   -- 1.0 for accept, 0.98 for accept_edit, 0.0 for dismiss
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

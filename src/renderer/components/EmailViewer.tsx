@@ -8,11 +8,13 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import DOMPurify from 'dompurify';
 import {
-  IconFavorite, IconTag, IconArchiveBox, IconDelete, IconCircleBack, IconCircleForward,
+  IconFavorite, IconArchiveBox, IconDelete, IconCircleBack, IconCircleForward,
   IconAttachment, IconOptionsHorizontal, IconSparkles, IconImage, IconSpinnerBall
 } from 'obra-icons-react';
-import { useEmailStore, useUIStore, useTagStore } from '../stores';
+// useTagStore removed - using folders for organization (Issue #54)
+import { useEmailStore, useUIStore } from '../stores';
 import { formatSender } from '../../core/domain';
+import { ReclassifyConfirmModal } from './ReclassifyConfirmModal';
 
 // Configure DOMPurify for email HTML
 const purifyConfig: DOMPurify.Config = {
@@ -83,7 +85,7 @@ export function EmailViewer() {
   const {
     selectedEmail: email,
     selectedBody: body,
-    selectedTags,
+    // selectedTags removed - using folders (Issue #54)
     selectedAttachments,
     loadingBody,
     toggleStar,
@@ -91,22 +93,19 @@ export function EmailViewer() {
     unarchive,
     deleteEmail,
     downloadAttachment,
+    filter,
   } = useEmailStore();
 
-  // Check if email is archived
-  const isArchived = selectedTags.some(t => t.slug === 'archive');
+  // Determine if viewing Sent folder to show recipients instead of sender
+  const isSentFolder = filter.folderPath?.toLowerCase().includes('sent');
 
-  const { tags, applyTag, removeTag } = useTagStore();
+  // isArchived check removed - using folders (Issue #54)
+  const isArchived = filter.folderPath?.toLowerCase() === 'archive';
+
+  // Tags removed - using folders for organization (Issue #54)
   const { openCompose } = useUIStore();
-  const { refreshSelectedTags } = useEmailStore();
 
-  // Tag dropdown state
-  const [showTagDropdown, setShowTagDropdown] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
-  // Tag feedback state
-  const [tagFeedback, setTagFeedback] = useState<string | null>(null);
-  const tagFeedbackTimeoutRef = useRef<NodeJS.Timeout>();
+  // Tag dropdown/feedback state removed - using folders (Issue #54)
 
   // AI classification state
   const [isClassifying, setIsClassifying] = useState(false);
@@ -118,68 +117,73 @@ export function EmailViewer() {
   const [loadingImages, setLoadingImages] = useState(false);
   const bodyContainerRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown when clicking outside
+  // Reclassify modal state (Issue #56)
+  const [showReclassifyModal, setShowReclassifyModal] = useState(false);
+  const [classificationState, setClassificationState] = useState<{
+    emailId: number;
+    status: string;
+    confidence: number | null;
+    priority: string | null;
+    suggestedFolder: string | null;
+    reasoning: string | null;
+    classifiedAt: string | null;
+  } | null>(null);
+
+  // Tag dropdown click-outside handler removed (Issue #54)
+
+  // Load classification state when email changes (Issue #56)
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setShowTagDropdown(false);
+    if (!email) {
+      setClassificationState(null);
+      return;
+    }
+
+    const loadClassificationState = async () => {
+      try {
+        const state = await window.mailApi.aiSort.getClassificationState(email.id);
+        setClassificationState(state);
+      } catch (err) {
+        console.error('Failed to load classification state:', err);
+        setClassificationState(null);
       }
     };
-    if (showTagDropdown) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showTagDropdown]);
+
+    loadClassificationState();
+  }, [email?.id]);
 
   // Cleanup timeouts on unmount or email change
   useEffect(() => {
     return () => {
-      if (tagFeedbackTimeoutRef.current) {
-        clearTimeout(tagFeedbackTimeoutRef.current);
-      }
       if (classificationFeedbackTimeoutRef.current) {
         clearTimeout(classificationFeedbackTimeoutRef.current);
       }
     };
   }, [email?.id]);
 
-  // Get tags not yet applied to this email
-  const availableTags = tags.filter(
-    t => !t.isSystem && !selectedTags.some(st => st.id === t.id)
-  );
-
-  // Handle applying a tag
-  const handleApplyTag = async (tagId: number) => {
+  // Handle opening reclassify modal (Issue #56)
+  const handleOpenReclassify = useCallback(() => {
     if (!email) return;
+    setShowReclassifyModal(true);
+  }, [email]);
 
-    // Find the tag name for feedback
-    const tag = tags.find(t => t.id === tagId);
-    const tagName = tag?.name || 'Tag';
+  // Handle reclassify confirmation (Issue #56)
+  const handleReclassify = useCallback(async () => {
+    if (!email) throw new Error('No email selected');
+    const result = await window.mailApi.aiSort.reclassify(email.id);
+    // Update local classification state
+    setClassificationState({
+      emailId: email.id,
+      status: result.newConfidence >= 0.85 ? 'classified' : 'pending_review',
+      confidence: result.newConfidence,
+      priority: result.newConfidence >= 0.85 ? 'normal' : 'low',
+      suggestedFolder: result.newFolder,
+      reasoning: result.reasoning,
+      classifiedAt: new Date().toISOString(),
+    });
+    return result;
+  }, [email]);
 
-    await applyTag(email.id, tagId);
-    await refreshSelectedTags();
-    setShowTagDropdown(false);
-
-    // Show feedback message
-    setTagFeedback(`${tagName} added`);
-
-    // Clear any existing timeout
-    if (tagFeedbackTimeoutRef.current) {
-      clearTimeout(tagFeedbackTimeoutRef.current);
-    }
-
-    // Auto-hide after 2 seconds
-    tagFeedbackTimeoutRef.current = setTimeout(() => {
-      setTagFeedback(null);
-    }, 2000);
-  };
-
-  // Handle removing a tag
-  const handleRemoveTag = async (tagId: number) => {
-    if (!email) return;
-    await removeTag(email.id, tagId);
-    await refreshSelectedTags();
-  };
+  // Tag functions removed - using folders (Issue #54)
 
   // Handle AI classification
   const handleClassify = async () => {
@@ -189,7 +193,6 @@ export function EmailViewer() {
 
     try {
       await window.mailApi.llm.classifyAndApply(email.id);
-      await refreshSelectedTags();
 
       // Show success feedback
       setClassificationFeedback({ type: 'success', message: 'Classified!' });
@@ -383,19 +386,7 @@ export function EmailViewer() {
     });
   };
 
-  // Get tag class for styling
-  const getTagClass = (tagSlug: string) => {
-    const slug = tagSlug.toLowerCase();
-    if (slug.includes('work')) return 'tag-work';
-    if (slug.includes('personal')) return 'tag-personal';
-    if (slug.includes('design')) return 'tag-design';
-    if (slug.includes('github')) return 'tag-github';
-    if (slug.includes('development') || slug.includes('dev')) return 'tag-development';
-    if (slug.includes('marketing')) return 'tag-marketing';
-    if (slug.includes('social')) return 'tag-social';
-    if (slug.includes('linkedin')) return 'tag-linkedin';
-    return 'tag-work';
-  };
+  // getTagClass removed - using folders (Issue #54)
 
   return (
     <div className="email-viewer">
@@ -414,25 +405,36 @@ export function EmailViewer() {
             >
               <IconFavorite className="w-5 h-5" />
             </button>
-            <button
-              onClick={handleClassify}
-              disabled={isClassifying}
-              className="btn btn-icon btn-ghost"
-              title={isClassifying ? 'Classifying...' : 'Classify with AI'}
-            >
-              {isClassifying ? (
-                <IconSpinnerBall className="w-5 h-5 animate-spin" />
-              ) : (
+            {/* Show Classify for unclassified, Reclassify for already classified (Issue #56) */}
+            {classificationState?.suggestedFolder ? (
+              <button
+                onClick={handleOpenReclassify}
+                disabled={isClassifying}
+                className="btn btn-icon btn-ghost"
+                title="Reclassify with AI"
+                style={{ position: 'relative' }}
+              >
                 <IconSparkles className="w-5 h-5" />
-              )}
-            </button>
-            <button
-              onClick={() => setShowTagDropdown(!showTagDropdown)}
-              className="btn btn-icon btn-ghost"
-              title="Add tag"
-            >
-              <IconTag className="w-5 h-5" />
-            </button>
+                {/* Small indicator that this is a re-classify action */}
+                <span
+                  className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full"
+                  style={{ background: 'var(--color-accent)', border: '2px solid var(--color-bg)' }}
+                />
+              </button>
+            ) : (
+              <button
+                onClick={handleClassify}
+                disabled={isClassifying}
+                className="btn btn-icon btn-ghost"
+                title={isClassifying ? 'Classifying...' : 'Classify with AI'}
+              >
+                {isClassifying ? (
+                  <IconSpinnerBall className="w-5 h-5 animate-spin" />
+                ) : (
+                  <IconSparkles className="w-5 h-5" />
+                )}
+              </button>
+            )}
             <button
               onClick={() => isArchived ? unarchive(email.id) : archive(email.id)}
               className="btn btn-icon btn-ghost"
@@ -453,37 +455,11 @@ export function EmailViewer() {
           </div>
         </div>
 
-        {/* Important Badge + Tags */}
+        {/* Badges and Feedback */}
         <div className="flex items-center gap-2 mb-4">
-          {/* Example important badge - would be based on classification */}
+          {/* Important badge - based on starred status */}
           {email.isStarred && (
             <span className="badge-important">Important</span>
-          )}
-
-          {/* Tags (click to remove) */}
-          {selectedTags.length > 0 && selectedTags.map(tag => (
-            <button
-              key={tag.id}
-              onClick={() => handleRemoveTag(tag.id)}
-              className={`tag ${getTagClass(tag.slug)} cursor-pointer hover:opacity-80`}
-              title="Click to remove"
-            >
-              {tag.name}
-              <span className="ml-1 opacity-60">×</span>
-            </button>
-          ))}
-
-          {/* Tag feedback message */}
-          {tagFeedback && (
-            <span
-              className="text-sm px-2 py-1 rounded-md animate-fade-in"
-              style={{
-                background: 'var(--color-success-bg)',
-                color: 'var(--color-success-text)',
-              }}
-            >
-              {tagFeedback}
-            </span>
           )}
 
           {/* Classification feedback message */}
@@ -503,77 +479,42 @@ export function EmailViewer() {
               {classificationFeedback.message}
             </span>
           )}
-
-          {/* Add tag button with dropdown */}
-          <div className="relative" ref={dropdownRef}>
-            <button
-              onClick={() => setShowTagDropdown(!showTagDropdown)}
-              className="tag flex items-center gap-1"
-              style={{
-                background: 'var(--color-bg-tertiary)',
-                color: 'var(--color-text-tertiary)',
-                border: '1px dashed var(--color-border)'
-              }}
-            >
-              <IconTag className="w-3 h-3" />
-              Add tag
-            </button>
-
-            {/* Tag dropdown */}
-            {showTagDropdown && (
-              <div
-                className="absolute top-full left-0 mt-1 py-1 rounded-lg shadow-lg z-50"
-                style={{
-                  background: 'var(--color-bg)',
-                  border: '1px solid var(--color-border)',
-                  minWidth: '160px'
-                }}
-              >
-                {availableTags.length === 0 ? (
-                  <div
-                    className="px-3 py-2 text-sm"
-                    style={{ color: 'var(--color-text-muted)' }}
-                  >
-                    No tags available
-                  </div>
-                ) : (
-                  availableTags.map(tag => (
-                    <button
-                      key={tag.id}
-                      onClick={() => handleApplyTag(tag.id)}
-                      className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-[var(--color-bg-secondary)] text-[var(--color-text)]"
-                    >
-                      <span
-                        className="w-2 h-2 rounded-full"
-                        style={{ backgroundColor: tag.color }}
-                      />
-                      {tag.name}
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
         </div>
 
-        {/* Sender Info */}
+        {/* Sender/Recipient Info */}
         <div className="email-viewer-meta">
           <div
             className="email-viewer-avatar"
             style={{ background: email.isStarred ? '#f59e0b' : 'var(--color-accent)' }}
           >
-            {(email.from.name || email.from.address)[0].toUpperCase()}
+            {isSentFolder && email.to.length > 0
+              ? email.to[0][0].toUpperCase()
+              : (email.from.name || email.from.address)[0].toUpperCase()}
           </div>
           <div className="flex-1">
-            <div className="email-viewer-from">
-              {formatSender(email.from)}
-              <span className="email-viewer-email ml-2">
-                &lt;{email.from.address}&gt;
-              </span>
-            </div>
-            <div className="email-viewer-date">
-              {formatDate(email.date)}
-            </div>
+            {isSentFolder && email.to.length > 0 ? (
+              <>
+                <div className="email-viewer-from">
+                  <span className="email-viewer-label">To: </span>
+                  {email.to.join(', ')}
+                </div>
+                <div className="email-viewer-date">
+                  {formatDate(email.date)}
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="email-viewer-from">
+                  {formatSender(email.from)}
+                  <span className="email-viewer-email ml-2">
+                    &lt;{email.from.address}&gt;
+                  </span>
+                </div>
+                <div className="email-viewer-date">
+                  {formatDate(email.date)}
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -675,6 +616,17 @@ export function EmailViewer() {
           Forward
         </button>
       </div>
+
+      {/* Reclassify Confirmation Modal (Issue #56) */}
+      {showReclassifyModal && email && (
+        <ReclassifyConfirmModal
+          emailId={email.id}
+          emailSubject={email.subject || '(no subject)'}
+          classification={classificationState}
+          onConfirm={handleReclassify}
+          onClose={() => setShowReclassifyModal(false)}
+        />
+      )}
     </div>
   );
 }

@@ -5,7 +5,7 @@
  * This is dependency inversion without the ceremony.
  */
 
-import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, Folder, ListEmailsOptions, Classification, SyncProgress, SyncOptions, Draft, DraftInput, ListDraftsOptions, ClassificationState, ClassificationFeedback, ConfusedPattern, ClassificationStats, ClassificationStatus, RecentContact, LicenseState, TriageClassificationResult, TrainingExample, SenderRule, EmailSnooze, TriageLogEntry, TriageFolder } from './domain';
+import type { Email, EmailBody, Attachment, Account, Folder, ListEmailsOptions, Classification, SyncProgress, SyncOptions, Draft, DraftInput, ListDraftsOptions, ClassificationState, ClassificationFeedback, ConfusedPattern, ClassificationStats, ClassificationStatus, RecentContact, LicenseState, TriageClassificationResult, TrainingExample, SenderRule, EmailSnooze, TriageLogEntry, TriageFolder } from './domain';
 
 // ============================================
 // Email Repository
@@ -21,6 +21,7 @@ export type EmailRepo = {
   insertBatch: (emails: Omit<Email, 'id'>[]) => Promise<{ count: number; ids: number[] }>;
   markRead: (id: number, isRead: boolean) => Promise<void>;
   setStar: (id: number, isStarred: boolean) => Promise<void>;
+  setFolderId: (id: number, folderId: number) => Promise<void>;
   delete: (id: number) => Promise<void>;
 };
 
@@ -35,19 +36,7 @@ export type AttachmentRepo = {
   getContent: (id: number) => Promise<Buffer | null>;
 };
 
-// ============================================
-// Tag Repository
-// ============================================
-
-export type TagRepo = {
-  findAll: () => Promise<Tag[]>;
-  findBySlug: (slug: string) => Promise<Tag | null>;
-  findByEmailId: (emailId: number) => Promise<AppliedTag[]>;
-  getForEmails: (emailIds: number[]) => Promise<Record<number, AppliedTag[]>>;
-  apply: (emailId: number, tagId: number, source: string, confidence?: number) => Promise<void>;
-  remove: (emailId: number, tagId: number) => Promise<void>;
-  create: (tag: Omit<Tag, 'id'>) => Promise<Tag>;
-};
+// Tag Repository removed - using folders for organization (Issue #54)
 
 // ============================================
 // Account Repository
@@ -124,7 +113,7 @@ export type MailSync = {
 // ============================================
 
 export type Classifier = {
-  classify: (email: Email, body?: EmailBody, existingTags?: string[]) => Promise<Classification>;
+  classify: (email: Email, body?: EmailBody) => Promise<Classification>;
   getBudget: () => { used: number; limit: number; allowed: boolean };
   getEmailBudget: () => { used: number; limit: number; allowed: boolean };
 };
@@ -441,6 +430,7 @@ export type ImapFolderOps = {
   deleteFolder: (account: Account, path: string) => Promise<void>;
   listFolders: (account: Account) => Promise<{ path: string; specialUse?: string }[]>;
   moveMessage: (account: Account, emailUid: number, fromFolder: string, toFolder: string) => Promise<void>;
+  moveToTrash: (account: Account, emailUid: number, fromFolder: string) => Promise<string>;
   ensureTriageFolders: (account: Account) => Promise<string[]>;
 };
 
@@ -460,7 +450,6 @@ export type EmailTriageService = {
 export type Deps = {
   emails: EmailRepo;
   attachments: AttachmentRepo;
-  tags: TagRepo;
   accounts: AccountRepo;
   folders: FolderRepo;
   drafts: DraftRepo;

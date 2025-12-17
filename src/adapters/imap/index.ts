@@ -627,6 +627,21 @@ export function createImapFolderOps(
       }
     },
 
+    async moveToTrash(account: Account, emailUid: number, fromFolder: string): Promise<string> {
+      const folders = getProviderFolders(account.imapHost);
+      const trashPath = folders.trash;
+
+      const client = await getConnection(account);
+      const lock = await client.getMailboxLock(fromFolder);
+      try {
+        await client.messageMove(emailUid.toString(), trashPath, { uid: true });
+      } finally {
+        lock.release();
+      }
+
+      return trashPath;
+    },
+
     async ensureTriageFolders(account: Account): Promise<string[]> {
       // Folders to create (excluding INBOX which always exists)
       const foldersToCreate = TRIAGE_FOLDERS.filter(f => f !== 'INBOX');

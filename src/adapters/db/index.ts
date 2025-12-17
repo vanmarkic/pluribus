@@ -8,8 +8,8 @@
 import Database from 'better-sqlite3';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { EmailRepo, AttachmentRepo, TagRepo, AccountRepo, FolderRepo, DraftRepo, ContactRepo } from '../../core/ports';
-import type { Email, EmailBody, Attachment, Tag, AppliedTag, Account, Folder, ListEmailsOptions, Draft, DraftInput, DraftAttachment, DraftAttachmentInput, ListDraftsOptions, RecentContact } from '../../core/domain';
+import type { EmailRepo, AttachmentRepo, AccountRepo, FolderRepo, DraftRepo, ContactRepo } from '../../core/ports';
+import type { Email, EmailBody, Attachment, Account, Folder, ListEmailsOptions, Draft, DraftInput, DraftAttachment, DraftAttachmentInput, ListDraftsOptions, RecentContact } from '../../core/domain';
 
 export { createClassificationStateRepo } from './classification-state';
 
@@ -44,7 +44,7 @@ export function initDb(dbPath: string, schemaPath?: string, options?: InitDbOpti
   // Poka-yoke: Verify critical tables exist after schema load
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[];
   const tableNames = tables.map(t => t.name);
-  const requiredTables = ['accounts', 'folders', 'emails', 'tags'];
+  const requiredTables = ['accounts', 'folders', 'emails'];
   const missing = requiredTables.filter(t => !tableNames.includes(t));
   if (missing.length > 0) {
     throw new Error(`Database schema incomplete - missing tables: ${missing.join(', ')}`);
@@ -207,16 +207,7 @@ function mapEmail(row: any): Email {
   };
 }
 
-function mapTag(row: any): Tag {
-  return {
-    id: row.id,
-    name: row.name,
-    slug: row.slug,
-    color: row.color,
-    isSystem: Boolean(row.is_system),
-    sortOrder: row.sort_order,
-  };
-}
+// Tag mapper removed - using folders for organization (Issue #54)
 
 function mapAccount(row: any): Account {
   return {
@@ -305,7 +296,8 @@ export function createEmailRepo(): EmailRepo {
     },
 
     async list(options: ListEmailsOptions = {}) {
-      const { accountId, tagId, folderId, folderPath, unreadOnly, starredOnly, limit = 100, offset = 0 } = options;
+      // tagId removed - using folders for organization (Issue #54)
+      const { accountId, folderId, folderPath, unreadOnly, starredOnly, limit = 100, offset = 0 } = options;
 
       const conditions: string[] = [];
       const params: any[] = [];
@@ -314,10 +306,6 @@ export function createEmailRepo(): EmailRepo {
       if (accountId) {
         conditions.push('e.account_id = ?');
         params.push(accountId);
-      }
-      if (tagId) {
-        conditions.push('EXISTS (SELECT 1 FROM email_tags WHERE email_id = e.id AND tag_id = ?)');
-        params.push(tagId);
       }
       if (folderId) {
         conditions.push('e.folder_id = ?');
@@ -442,6 +430,10 @@ export function createEmailRepo(): EmailRepo {
       getDb().prepare('UPDATE emails SET is_starred = ? WHERE id = ?').run(isStarred ? 1 : 0, id);
     },
 
+    async setFolderId(id, folderId) {
+      getDb().prepare('UPDATE emails SET folder_id = ? WHERE id = ?').run(folderId, id);
+    },
+
     async delete(id) {
       // Use transaction to ensure atomicity with CASCADE deletes
       const db = getDb();
@@ -523,84 +515,7 @@ export function createAttachmentRepo(): AttachmentRepo {
 // Tag Repository
 // ============================================
 
-export function createTagRepo(): TagRepo {
-  return {
-    async findAll() {
-      return getDb().prepare('SELECT * FROM tags ORDER BY sort_order, name').all().map(mapTag);
-    },
-
-    async findBySlug(slug) {
-      const row = getDb().prepare('SELECT * FROM tags WHERE slug = ?').get(slug);
-      return row ? mapTag(row) : null;
-    },
-
-    async findByEmailId(emailId) {
-      const rows = getDb().prepare(`
-        SELECT t.*, et.source, et.confidence
-        FROM tags t
-        JOIN email_tags et ON t.id = et.tag_id
-        WHERE et.email_id = ?
-        ORDER BY t.sort_order
-      `).all(emailId);
-
-      return rows.map(row => ({
-        ...mapTag(row),
-        source: (row as any).source,
-        confidence: (row as any).confidence,
-      }));
-    },
-
-    async getForEmails(emailIds) {
-      if (emailIds.length === 0) return {};
-
-      const placeholders = emailIds.map(() => '?').join(',');
-      const rows = getDb().prepare(`
-        SELECT et.email_id, t.id, t.name, t.slug, t.color, t.is_system, t.sort_order, et.source, et.confidence
-        FROM email_tags et
-        JOIN tags t ON et.tag_id = t.id
-        WHERE et.email_id IN (${placeholders})
-        ORDER BY t.sort_order, t.name
-      `).all(...emailIds) as any[];
-
-      const result: Record<number, AppliedTag[]> = {};
-      emailIds.forEach(id => result[id] = []);
-
-      for (const row of rows) {
-        result[row.email_id].push({
-          id: row.id,
-          name: row.name,
-          slug: row.slug,
-          color: row.color,
-          isSystem: Boolean(row.is_system),
-          sortOrder: row.sort_order,
-          source: row.source,
-          confidence: row.confidence,
-        });
-      }
-
-      return result;
-    },
-
-    async apply(emailId, tagId, source, confidence) {
-      getDb().prepare(`
-        INSERT OR REPLACE INTO email_tags (email_id, tag_id, source, confidence)
-        VALUES (?, ?, ?, ?)
-      `).run(emailId, tagId, source, confidence ?? null);
-    },
-
-    async remove(emailId, tagId) {
-      getDb().prepare('DELETE FROM email_tags WHERE email_id = ? AND tag_id = ?').run(emailId, tagId);
-    },
-
-    async create(tag) {
-      const result = getDb().prepare(`
-        INSERT INTO tags (name, slug, color, is_system, sort_order)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(tag.name, tag.slug, tag.color, tag.isSystem ? 1 : 0, tag.sortOrder);
-      return { ...tag, id: result.lastInsertRowid as number };
-    },
-  };
-}
+// TagRepo removed - using folders for organization (Issue #54)
 
 // ============================================
 // Account Repository

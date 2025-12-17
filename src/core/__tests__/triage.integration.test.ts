@@ -115,6 +115,7 @@ const createMockEmailRepo = (): EmailRepo => ({
   delete: vi.fn().mockResolvedValue(undefined),
   markRead: vi.fn().mockResolvedValue(undefined),
   setStar: vi.fn().mockResolvedValue(undefined),
+  setFolderId: vi.fn().mockResolvedValue(undefined),
   saveBody: vi.fn().mockResolvedValue(undefined),
   getBody: vi.fn().mockResolvedValue(null),
 });
@@ -159,6 +160,7 @@ const createMockImapFolderOps = (): ImapFolderOps => ({
   deleteFolder: vi.fn().mockResolvedValue(undefined),
   listFolders: vi.fn().mockResolvedValue(['INBOX', 'Sent']),
   moveMessage: vi.fn().mockResolvedValue(undefined),
+  moveToTrash: vi.fn().mockResolvedValue('Trash'),
   ensureTriageFolders: vi.fn().mockResolvedValue([
     'INBOX', 'Planning', 'Review', 'Feed', 'Social', 'Promotions',
     'Paper-Trail/Invoices', 'Paper-Trail/Admin', 'Paper-Trail/Travel',
@@ -422,6 +424,133 @@ describe('Triage Integration', () => {
       expect(result).toHaveLength(2);
       expect(result[0].llmFolder).toBe('INBOX');
       expect(result[1].llmFolder).toBe('Planning');
+    });
+  });
+
+  describe('triageAndMoveEmail (Issue #53)', () => {
+    it('classifies email and moves it to the triage folder via IMAP', async () => {
+      const patternMatcher = createMockPatternMatcher({
+        folder: 'Paper-Trail/Invoices',
+        confidence: 0.9,
+        tags: ['invoice'],
+      });
+      const triageClassifier = createMockTriageClassifier({
+        folder: 'Paper-Trail/Invoices',
+        confidence: 0.92,
+        patternAgreed: true,
+      });
+      const trainingRepo = createMockTrainingRepo();
+      const triageLog = createMockTriageLogRepo();
+      const emails = createMockEmailRepo();
+      const accounts = createMockAccountRepo();
+      const folders = createMockFolderRepo();
+      const imapFolderOps = createMockImapFolderOps();
+
+      // Import the use case (will fail until implemented)
+      const { triageAndMoveEmail } = await import('../usecases');
+
+      const deps = {
+        patternMatcher,
+        triageClassifier,
+        trainingRepo,
+        triageLog,
+        emails,
+        accounts,
+        folders,
+        imapFolderOps,
+      };
+
+      const result = await triageAndMoveEmail(deps)(2);
+
+      expect(result.folder).toBe('Paper-Trail/Invoices');
+      expect(result.confidence).toBeGreaterThanOrEqual(0.7);
+      // CRITICAL: This verifies the email was actually moved to the folder
+      expect(imapFolderOps.moveMessage).toHaveBeenCalledWith(
+        expect.anything(), // account
+        invoiceEmail.uid,
+        'INBOX',
+        'Paper-Trail/Invoices'
+      );
+    });
+
+    it('does not move email when confidence is below threshold', async () => {
+      const patternMatcher = createMockPatternMatcher({
+        folder: 'Feed',
+        confidence: 0.4, // Low confidence
+      });
+      const triageClassifier = createMockTriageClassifier({
+        folder: 'Feed',
+        confidence: 0.5, // Below threshold
+        patternAgreed: true,
+      });
+      const trainingRepo = createMockTrainingRepo();
+      const triageLog = createMockTriageLogRepo();
+      const emails = createMockEmailRepo();
+      const accounts = createMockAccountRepo();
+      const folders = createMockFolderRepo();
+      const imapFolderOps = createMockImapFolderOps();
+
+      const { triageAndMoveEmail } = await import('../usecases');
+
+      const deps = {
+        patternMatcher,
+        triageClassifier,
+        trainingRepo,
+        triageLog,
+        emails,
+        accounts,
+        folders,
+        imapFolderOps,
+      };
+
+      const result = await triageAndMoveEmail(deps)(3, { confidenceThreshold: 0.7 });
+
+      expect(result.folder).toBe('Feed');
+      // Email should NOT be moved when confidence is below threshold
+      expect(imapFolderOps.moveMessage).not.toHaveBeenCalled();
+    });
+
+    it('routes email to Review folder for user review when uncertain', async () => {
+      const patternMatcher = createMockPatternMatcher({
+        folder: 'INBOX',
+        confidence: 0.3,
+      });
+      const triageClassifier = createMockTriageClassifier({
+        folder: 'Review', // Uncertain, needs user review
+        confidence: 0.6,
+        patternAgreed: false,
+        reasoning: 'Unclear categorization, needs human review',
+      });
+      const trainingRepo = createMockTrainingRepo();
+      const triageLog = createMockTriageLogRepo();
+      const emails = createMockEmailRepo();
+      const accounts = createMockAccountRepo();
+      const folders = createMockFolderRepo();
+      const imapFolderOps = createMockImapFolderOps();
+
+      const { triageAndMoveEmail } = await import('../usecases');
+
+      const deps = {
+        patternMatcher,
+        triageClassifier,
+        trainingRepo,
+        triageLog,
+        emails,
+        accounts,
+        folders,
+        imapFolderOps,
+      };
+
+      const result = await triageAndMoveEmail(deps)(1, { confidenceThreshold: 0.5 });
+
+      expect(result.folder).toBe('Review');
+      // Still moved since above threshold, but to Review folder
+      expect(imapFolderOps.moveMessage).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.any(Number),
+        'INBOX',
+        'Review'
+      );
     });
   });
 });

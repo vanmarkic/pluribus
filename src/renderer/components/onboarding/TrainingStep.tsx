@@ -2,7 +2,8 @@
  * Training Step Component
  *
  * Onboarding step where users classify sample emails to train the triage AI.
- * Shows 5 emails, user selects destination folder for each.
+ * Shows 12 diverse emails selected via AI-assisted diversity algorithm (Issue #55).
+ * User selects destination folder for each to create training examples.
  */
 
 import { useState, useEffect } from 'react';
@@ -18,6 +19,7 @@ const TRIAGE_FOLDERS = [
   { id: 'Feed', label: 'Feed', description: 'Newsletters, curated content' },
   { id: 'Social', label: 'Social', description: 'Social media notifications' },
   { id: 'Promotions', label: 'Promotions', description: 'Marketing, sales, discounts' },
+  { id: 'Archive', label: 'Archive', description: 'Done, no action needed' },
 ];
 
 type TrainingItem = {
@@ -38,37 +40,18 @@ export function TrainingStep({ accountId, onComplete, onSkip }: TrainingStepProp
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load sample emails
+  // Load sample emails using AI-assisted diversity selection (Issue #55)
   useEffect(() => {
     const loadSamples = async () => {
       try {
-        // Get recent emails for training (varied senders)
-        const emails = await window.mailApi.emails.list({
-          accountId,
-          limit: 20,
+        // Use the diverse training email selection API
+        // This uses pattern matching to select emails from different predicted categories
+        const selected = await window.mailApi.triage.selectDiverseTrainingEmails(accountId, {
+          maxEmails: 12, // Show 12 diverse emails instead of just 5
+          poolSize: 50,  // Sample from larger pool for better diversity
         });
 
-        // Select 5 diverse emails (different senders/domains)
-        const seenDomains = new Set<string>();
-        const selected: Email[] = [];
-
-        for (const email of emails) {
-          const domain = email.from.address.split('@')[1];
-          if (!seenDomains.has(domain) && selected.length < 5) {
-            seenDomains.add(domain);
-            selected.push(email);
-          }
-        }
-
-        // If we couldn't get 5 unique domains, fill with remaining
-        for (const email of emails) {
-          if (selected.length >= 5) break;
-          if (!selected.includes(email)) {
-            selected.push(email);
-          }
-        }
-
-        setItems(selected.map(email => ({ email, selectedFolder: null })));
+        setItems(selected.map((email: Email) => ({ email, selectedFolder: null })));
         setLoading(false);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load emails');
@@ -104,6 +87,10 @@ export function TrainingStep({ accountId, onComplete, onSkip }: TrainingStepProp
     setError(null);
 
     try {
+      // Ensure triage folders exist on IMAP server before saving training
+      // This prevents moveMessage failures when AI tries to classify emails
+      await window.mailApi.triage.ensureFolders(accountId);
+
       // Save each classified email as a training example
       for (const item of items) {
         if (item.selectedFolder) {
@@ -129,7 +116,7 @@ export function TrainingStep({ accountId, onComplete, onSkip }: TrainingStepProp
   };
 
   const completedCount = items.filter(i => i.selectedFolder).length;
-  const canComplete = completedCount >= 3; // Require at least 3 classifications
+  const canComplete = completedCount >= Math.min(6, Math.ceil(items.length / 2)); // Require at least half (min 6 of 12)
   const currentItem = items[currentIndex];
 
   if (loading) {

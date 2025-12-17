@@ -20,7 +20,8 @@ import { TriageReviewView } from './components/TriageReviewView';
 import { TrainingStep } from './components/onboarding/TrainingStep';
 import { useKeyboardShortcuts, KeyboardShortcutsHelp } from './hooks/useKeyboardShortcuts';
 import { useTheme } from './hooks/useTheme';
-import { useUIStore, useSyncStore, useAccountStore, useTagStore, useEmailStore, useLicenseStore } from './stores';
+// useTagStore removed - using folders for organization (Issue #54)
+import { useUIStore, useSyncStore, useAccountStore, useEmailStore, useLicenseStore } from './stores';
 import { IconSun, IconMoon, IconComputerMonitor, IconSearch, IconClose } from 'obra-icons-react';
 import { debounce } from './utils/debounce';
 import type { SyncProgress } from '../core/domain';
@@ -29,7 +30,7 @@ export function App() {
   const { view, showAccountWizard, editAccountId, composeMode, composeEmailId, composeDraftId, closeAccountWizard, closeCompose, openCompose, classificationTaskId, classificationProgress, updateClassificationProgress, clearClassificationTask } = useUIStore();
   const { startSync, truncationInfo, dismissTruncationInfo } = useSyncStore();
   const { loadAccounts, selectedAccountId } = useAccountStore();
-  const { loadTags } = useTagStore();
+  // loadTags removed - using folders (Issue #54)
   const { selectedEmail, selectedBody, loadEmails, search, clearFilter } = useEmailStore();
   const { loadState: loadLicenseState } = useLicenseStore();
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
@@ -77,7 +78,7 @@ export function App() {
   // Initial data load
   useEffect(() => {
     loadAccounts();
-    loadTags();
+    // loadTags removed - using folders (Issue #54)
     loadLicenseState();
   }, []);
 

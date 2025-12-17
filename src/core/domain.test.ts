@@ -1,33 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { createTagSlug, extractDomain, extractSubjectPattern, formatSender, isRecent } from './domain';
+import { extractDomain, extractSubjectPattern, formatSender, isRecent } from './domain';
 
-describe('createTagSlug', () => {
-  it('converts name to lowercase kebab-case', () => {
-    expect(createTagSlug('Work Projects')).toBe('work-projects');
-  });
-
-  it('removes special characters', () => {
-    expect(createTagSlug('Important!')).toBe('important');
-    expect(createTagSlug('$$$Money$$$')).toBe('money');
-  });
-
-  it('collapses multiple separators into one', () => {
-    expect(createTagSlug('Too   Many   Spaces')).toBe('too-many-spaces');
-    expect(createTagSlug('Mixed---Separators')).toBe('mixed-separators');
-  });
-
-  it('trims leading and trailing dashes', () => {
-    expect(createTagSlug('---leading')).toBe('leading');
-    expect(createTagSlug('trailing---')).toBe('trailing');
-    expect(createTagSlug('---both---')).toBe('both');
-  });
-
-  it('handles edge cases', () => {
-    expect(createTagSlug('')).toBe('');
-    expect(createTagSlug('a')).toBe('a');
-    expect(createTagSlug('ABC123')).toBe('abc123');
-  });
-});
+// createTagSlug tests removed - tagging system removed (Issue #54)
 
 describe('extractDomain', () => {
   it('extracts domain from email address', () => {

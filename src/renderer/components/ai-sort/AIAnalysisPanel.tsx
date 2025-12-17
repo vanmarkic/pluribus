@@ -1,12 +1,29 @@
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Badge } from '../ui/badge';
-import type { ClassificationState } from '../../../core/domain';
-import { IconSparkles, IconCircleInfo } from 'obra-icons-react';
+import type { ClassificationState, TriageFolder } from '../../../core/domain';
+import { IconSparkles, IconCircleInfo, IconFolder } from 'obra-icons-react';
 
 type AIAnalysisPanelProps = {
   classification: ClassificationState;
   className?: string;
 };
+
+const FOLDER_LABELS: Record<TriageFolder, string> = {
+  'INBOX': 'Inbox',
+  'Planning': 'Planning',
+  'Review': 'Review',
+  'Paper-Trail/Invoices': 'Invoices',
+  'Paper-Trail/Admin': 'Admin',
+  'Paper-Trail/Travel': 'Travel',
+  'Feed': 'Feed',
+  'Social': 'Social',
+  'Promotions': 'Promotions',
+  'Archive': 'Archive',
+};
+
+function getFolderLabel(folder: TriageFolder): string {
+  return FOLDER_LABELS[folder] || folder;
+}
 
 export function AIAnalysisPanel({ classification, className }: AIAnalysisPanelProps) {
   // Confidence is stored as 0.0-1.0, convert to 0-100 for display
@@ -81,27 +98,25 @@ export function AIAnalysisPanel({ classification, className }: AIAnalysisPanelPr
           </div>
         )}
 
-        {/* Suggested Tags */}
-        {classification.suggestedTags.length > 0 && (
+        {/* Suggested Folder */}
+        {classification.suggestedFolder && (
           <div className="space-y-2">
             <span className="text-xs font-medium" style={{ color: 'var(--color-text-secondary)' }}>
-              Suggested Tags
+              Suggested Folder
             </span>
             <div className="flex flex-wrap gap-1.5">
-              {classification.suggestedTags.map(tag => (
-                <Badge
-                  key={tag}
-                  variant="secondary"
-                  className="border"
-                  style={{
-                    background: 'var(--color-bg)',
-                    borderColor: 'var(--color-border)',
-                    color: 'var(--color-text-secondary)',
-                  }}
-                >
-                  #{tag}
-                </Badge>
-              ))}
+              <Badge
+                variant="secondary"
+                className="border flex items-center gap-1"
+                style={{
+                  background: 'var(--color-bg)',
+                  borderColor: 'var(--color-border)',
+                  color: 'var(--color-text-secondary)',
+                }}
+              >
+                <IconFolder className="w-3 h-3" />
+                {getFolderLabel(classification.suggestedFolder)}
+              </Badge>
             </div>
           </div>
         )}

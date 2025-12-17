@@ -396,6 +396,12 @@ body {
   color: var(--color-text-muted);
 }
 
+.email-viewer-label {
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+  font-weight: 400;
+}
+
 .email-viewer-date {
   font-size: 13px;
   color: var(--color-text-muted);

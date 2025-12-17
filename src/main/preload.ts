@@ -30,6 +30,7 @@ const api = {
     archive: (id: number) => ipcRenderer.invoke('emails:archive', id),
     unarchive: (id: number) => ipcRenderer.invoke('emails:unarchive', id),
     delete: (id: number) => ipcRenderer.invoke('emails:delete', id),
+    trash: (id: number) => ipcRenderer.invoke('emails:trash', id),
   },
 
   attachments: {
@@ -38,16 +39,7 @@ const api = {
       ipcRenderer.invoke('attachments:download', attachmentId, action),
   },
 
-  tags: {
-    list: () => ipcRenderer.invoke('tags:list'),
-    getForEmail: (emailId: number) => ipcRenderer.invoke('tags:getForEmail', emailId),
-    getForEmails: (emailIds: number[]) => ipcRenderer.invoke('tags:getForEmails', emailIds),
-    apply: (emailId: number, tagId: number, source = 'manual') =>
-      ipcRenderer.invoke('tags:apply', emailId, tagId, source),
-    remove: (emailId: number, tagId: number) =>
-      ipcRenderer.invoke('tags:remove', emailId, tagId),
-    create: (tag: any) => ipcRenderer.invoke('tags:create', tag),
-  },
+  // Tags removed - using folders for organization (Issue #54)
 
   sync: {
     start: (accountId: number, opts = {}) => ipcRenderer.invoke('sync:start', accountId, opts),
@@ -82,8 +74,9 @@ const api = {
       ipcRenderer.invoke('aiSort:getFailed', opts),
     getStats: (accountId?: number) => ipcRenderer.invoke('aiSort:getStats', accountId),
     getPendingCount: () => ipcRenderer.invoke('aiSort:getPendingCount'),
-    accept: (emailId: number, appliedTags: string[]) =>
-      ipcRenderer.invoke('aiSort:accept', emailId, appliedTags),
+    // Updated for folder-based classification (Issue #54)
+    accept: (emailId: number, appliedFolder: string) =>
+      ipcRenderer.invoke('aiSort:accept', emailId, appliedFolder),
     dismiss: (emailId: number) => ipcRenderer.invoke('aiSort:dismiss', emailId),
     retry: (emailId: number) => ipcRenderer.invoke('aiSort:retry', emailId),
     getConfusedPatterns: (limit?: number, accountId?: number) => ipcRenderer.invoke('aiSort:getConfusedPatterns', limit, accountId),
@@ -91,9 +84,27 @@ const api = {
     getRecentActivity: (limit?: number, accountId?: number) => ipcRenderer.invoke('aiSort:getRecentActivity', limit, accountId),
     bulkAccept: (emailIds: number[]) => ipcRenderer.invoke('aiSort:bulkAccept', emailIds),
     bulkDismiss: (emailIds: number[]) => ipcRenderer.invoke('aiSort:bulkDismiss', emailIds),
-    bulkApplyTag: (emailIds: number[], tagSlug: string) =>
-      ipcRenderer.invoke('aiSort:bulkApplyTag', emailIds, tagSlug),
+    // Updated for folder-based organization (Issue #54)
+    bulkMoveToFolder: (emailIds: number[], folderPath: string) =>
+      ipcRenderer.invoke('aiSort:bulkMoveToFolder', emailIds, folderPath),
     classifyUnprocessed: () => ipcRenderer.invoke('aiSort:classifyUnprocessed'),
+    // Issue #56: Reclassify email
+    reclassify: (emailId: number) => ipcRenderer.invoke('aiSort:reclassify', emailId) as Promise<{
+      previousFolder: string | null;
+      previousConfidence: number | null;
+      newFolder: string;
+      newConfidence: number;
+      reasoning: string;
+    }>,
+    getClassificationState: (emailId: number) => ipcRenderer.invoke('aiSort:getClassificationState', emailId) as Promise<{
+      emailId: number;
+      status: string;
+      confidence: number | null;
+      priority: string | null;
+      suggestedFolder: string | null;
+      reasoning: string | null;
+      classifiedAt: string | null;
+    } | null>,
   },
 
   accounts: {
@@ -121,6 +132,7 @@ const api = {
   config: {
     get: (key: string) => ipcRenderer.invoke('config:get', key),
     set: (key: string, value: any) => ipcRenderer.invoke('config:set', key, value),
+    getTriageFolders: () => ipcRenderer.invoke('config:getTriageFolders') as Promise<string[]>,
   },
 
   credentials: {
@@ -213,6 +225,8 @@ const api = {
 
   triage: {
     classify: (emailId: number) => ipcRenderer.invoke('triage:classify', emailId),
+    classifyAndMove: (emailId: number, options?: { confidenceThreshold?: number }) =>
+      ipcRenderer.invoke('triage:classifyAndMove', emailId, options),
     moveToFolder: (emailId: number, folder: string, accountId: number) =>
       ipcRenderer.invoke('triage:moveToFolder', emailId, folder, accountId),
     learnFromCorrection: (emailId: number, oldFolder: string, newFolder: string, accountId: number) =>
@@ -230,6 +244,9 @@ const api = {
     getSenderRules: (accountId: number) =>
       ipcRenderer.invoke('triage:getSenderRules', accountId),
     getLog: (emailId: number) => ipcRenderer.invoke('triage:getLog', emailId),
+    // Issue #55: Select diverse training emails for onboarding
+    selectDiverseTrainingEmails: (accountId: number, options?: { maxEmails?: number; poolSize?: number }) =>
+      ipcRenderer.invoke('triage:selectDiverseTrainingEmails', accountId, options),
   },
 
   on: (channel: string, callback: Callback) => {
