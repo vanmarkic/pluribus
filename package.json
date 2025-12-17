@@ -94,7 +94,7 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.0",
     "@vitest/coverage-v8": "^4.0.15",
-    "electron": "^32.0.0",
+    "electron": "^35.7.5",
     "electron-builder": "^26.0.12",
     "fast-check": "^4.4.0",
     "react": "^18.3.0",
