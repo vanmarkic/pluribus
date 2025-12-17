@@ -28,3 +28,6 @@ export * from './database-usecases';
 
 // Triage use cases
 export * from './triage-usecases';
+
+// Factory (createUseCases, UseCases type)
+export * from './factory';

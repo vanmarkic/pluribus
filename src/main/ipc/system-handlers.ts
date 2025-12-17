@@ -4,6 +4,7 @@
 
 import { ipcMain, BrowserWindow } from 'electron';
 import type { Container } from '../container';
+import type { LicenseState } from '../../core/domain';
 import {
   assertBoolean,
   assertString,
@@ -15,8 +16,8 @@ import {
 // ==========================================
 
 export function setupSystemHandlers(container: Container): void {
-  const { useCases, deps } = container;
-  const { ollamaManager, license } = container;
+  const { useCases, deps, ollamaManager } = container;
+  const { license } = deps;
 
   // ==========================================
   // Database Health & Recovery
@@ -101,7 +102,7 @@ export function setupSystemHandlers(container: Container): void {
   });
 
   // Forward license state changes to renderer
-  license.onStateChange((state) => {
+  license.onStateChange((state: LicenseState) => {
     BrowserWindow.getAllWindows().forEach((win) => {
       win.webContents.send('license:state-changed', state);
     });

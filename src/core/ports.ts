@@ -7,6 +7,9 @@
 
 import type { Email, EmailBody, Attachment, Account, Folder, ListEmailsOptions, Classification, SyncProgress, SyncOptions, Draft, DraftInput, ListDraftsOptions, ClassificationState, ClassificationFeedback, ConfusedPattern, ClassificationStats, ClassificationStatus, RecentContact, LicenseState, TriageClassificationResult, TrainingExample, SenderRule, EmailSnooze, TriageLogEntry, TriageFolder } from './domain';
 
+// Re-export types needed by adapters
+export type { ListEmailsOptions, ListDraftsOptions };
+
 // ============================================
 // Email Repository
 // ============================================

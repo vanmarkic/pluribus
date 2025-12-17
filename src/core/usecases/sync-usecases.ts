@@ -7,8 +7,8 @@
  * - Canceling sync
  */
 
-import type { Deps } from '../ports';
-import type { SyncOptions, SyncResult } from '../domain';
+import type { Deps, SyncResult } from '../ports';
+import type { SyncOptions } from '../domain';
 
 // Need to import classifyNewEmails from classification module (will be resolved after barrel export)
 import { classifyNewEmails } from './classification-usecases';
