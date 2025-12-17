@@ -48,9 +48,12 @@ function cleanupTempFiles(): void {
 }
 
 // Content Security Policy
+// In development, allow unsafe-inline and localhost for Vite HMR
+const isDev = process.env.NODE_ENV === 'development';
 const CSP = [
   "default-src 'self'",
-  "script-src 'self'",
+  // Vite HMR requires unsafe-inline scripts in development
+  isDev ? "script-src 'self' 'unsafe-inline' http://localhost:5173" : "script-src 'self'",
   // Note: 'unsafe-inline' required for React inline styles (style={}) used extensively for:
   // - Dynamic values (progress bars, tag colors from database)
   // - CSS custom properties (var(--color-*) for theming)
@@ -60,7 +63,8 @@ const CSP = [
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' https: data: file:",  // Allow local images, HTTPS external images, and data URIs
   "font-src 'self'",
-  "connect-src 'self' https://api.anthropic.com",  // LLM API
+  // In development, allow localhost for Vite WebSocket HMR
+  isDev ? "connect-src 'self' https://api.anthropic.com http://localhost:5173 ws://localhost:5173" : "connect-src 'self' https://api.anthropic.com",
   "frame-src 'none'",
   "object-src 'none'",
   "base-uri 'self'",
