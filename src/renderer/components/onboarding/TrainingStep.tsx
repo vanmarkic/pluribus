@@ -269,6 +269,17 @@ export function TrainingStep({ accountId, onComplete, onSkip }: TrainingStepProp
             >
               {currentItem.email.subject}
             </div>
+            {/* Email body preview */}
+            <div
+              className="mt-3 text-sm overflow-y-auto"
+              style={{
+                color: 'var(--color-text-secondary)',
+                maxHeight: '120px',
+                lineHeight: '1.5',
+              }}
+            >
+              {currentItem.email.snippet || '(No preview available)'}
+            </div>
           </div>
 
           {/* Folder selection grid */}
