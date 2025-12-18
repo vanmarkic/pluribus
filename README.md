@@ -5,7 +5,7 @@ A privacy-focused Electron mail client with LLM-powered email triage and intelli
 ## 🌟 Features
 
 - **Privacy-First Design** - Your emails stay on your device with encrypted credential storage
-- **Intelligent Email Triage** - Automatic classification using Claude AI and pattern matching
+- **Intelligent Email Triage** - Automatic classification using local LLM
 - **Smart Folder Organization** - Emails automatically sorted into Inbox, Planning, Feed, Social, Promotions, and Paper-Trail
 - **Native Experience** - Built with Electron for seamless macOS integration
 - **Secure Credential Management** - OS-level encryption with Touch ID/biometric support
@@ -16,7 +16,7 @@ A privacy-focused Electron mail client with LLM-powered email triage and intelli
 This project follows a **functional clean architecture** pattern with three distinct layers:
 
 - **Core** (`src/core/`) - Pure business logic with zero external dependencies
-- **Adapters** (`src/adapters/`) - External integrations (SQLite, IMAP, SMTP, Claude AI)
+- **Adapters** (`src/adapters/`) - External integrations (SQLite, IMAP, SMTP, LLM)
 - **Main** (`src/main/`) - Electron process coordination and IPC handling
 - **Renderer** (`src/renderer/`) - React-based user interface
 
