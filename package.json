@@ -74,7 +74,7 @@
     "imapflow": "^1.0.164",
     "mailparser": "^3.7.1",
     "node-machine-id": "^1.1.12",
-    "nodemailer": "^6.9.15",
+    "nodemailer": "^7.0.11",
     "obra-icons-react": "^1.23.1",
     "react-window": "^1.8.10",
     "sanitize-filename": "^1.6.3",
