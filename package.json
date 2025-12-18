@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Privacy-focused mail client with LLM-powered tagging",
   "author": "Pluribus",
+  "license": "PROPRIETARY",
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "vite",
