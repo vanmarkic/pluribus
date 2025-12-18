@@ -29,7 +29,7 @@ For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
 | **Runtime** | Electron 32, Node.js |
 | **Frontend** | React 18, Zustand, Tailwind CSS 4 |
 | **Backend** | SQLite (better-sqlite3), IMAP (imapflow), SMTP (nodemailer) |
-| **AI/LLM** | Anthropic Claude SDK |
+| **AI/LLM** | Local Ollama with model of choice, tested with Mistral 7b |
 | **Build** | Vite, TypeScript, Electron Builder |
 
 ## 🔐 Security Features
@@ -55,7 +55,7 @@ Multi-layered security architecture protects your credentials:
 Hybrid classification system combining pattern matching with LLM intelligence:
 
 - **Pattern Matching** - Fast rule-based sorting for common patterns
-- **LLM Classification** - Claude AI analyzes email content and context
+- **LLM Classification** - Local LLM analyzes email content and context
 - **Folder Mapping** - Automatic IMAP folder synchronization
 - **Smart Categories** - Inbox, Planning, Feed, Social, Promotions, Paper-Trail
 
@@ -67,7 +67,7 @@ Learn more in [docs/designs/2025-12-16-email-triage-system.md](docs/designs/2025
 
 - Node.js 18+ and npm
 - macOS (currently supported platform)
-- Anthropic API key for LLM features
+- 8gb of RAM for local Mistral 7B
 
 ### Installation
 
