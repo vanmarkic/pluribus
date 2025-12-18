@@ -136,7 +136,18 @@ See [CLAUDE.md](CLAUDE.md) for detailed development guidelines.
 
 ## 📝 License
 
-Copyright © 2024 Pluribus
+**PROPRIETARY SOFTWARE**
+
+Copyright © 2024-2025 Media XP SRL (BE1004822703). All rights reserved.
+
+This software is proprietary and confidential. It may not be used, copied, modified, 
+or distributed without the express written consent of Media XP SRL.
+
+If you have been granted access to this repository while it is private, you are 
+invited for a preview only. This does not grant you any license or right to use 
+the software.
+
+For licensing inquiries, please contact Media XP SRL.
 
 ## 🔗 Links
 
