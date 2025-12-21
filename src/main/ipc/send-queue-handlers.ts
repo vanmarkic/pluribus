@@ -5,28 +5,11 @@
  * - send:queue - Queue an email for delayed sending
  * - send:cancel - Cancel a queued email
  * - send:status - Get status of a queued email
- *
- * NOTE: Requires send-queue adapter to be wired in container.
- * This handler file is ready for when the adapter is implemented.
  */
 
 import { ipcMain } from 'electron';
 import { assertPositiveInt, assertString } from './validation';
-
-// Send queue type (to be moved to ports when adapter is implemented)
-export type QueuedEmail = {
-  id: string;
-  accountId: number;
-  draft: any;
-  expiresAt: Date;
-  status: 'pending' | 'sent' | 'cancelled';
-};
-
-export type SendQueue = {
-  queue: (accountId: number, draft: any) => QueuedEmail;
-  cancel: (id: string) => boolean;
-  getStatus: (id: string) => QueuedEmail | null;
-};
+import type { SendQueue } from '../../adapters/send-queue';
 
 export function setupSendQueueHandlers(sendQueue: SendQueue): void {
   // Queue an email for delayed sending

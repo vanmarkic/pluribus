@@ -361,8 +361,18 @@ export function createContainer(): Container {
   const sendQueue = createSendQueue({
     delayMs: 10000,
     onSend: async (accountId, draft) => {
+      // Look up account to get email and SMTP config
+      const account = await accounts.findById(accountId);
+      if (!account) throw new Error(`Account ${accountId} not found`);
+
+      const smtpConfig = {
+        host: account.smtpHost,
+        port: account.smtpPort,
+        secure: account.smtpPort === 465,
+      };
+
       // Use the mail sender to actually send
-      const result = await sender.send(accountId, {
+      const result = await sender.send(account.email, smtpConfig, {
         to: draft.to,
         cc: draft.cc,
         bcc: draft.bcc,
