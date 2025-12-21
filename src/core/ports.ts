@@ -447,6 +447,23 @@ export type EmailTriageService = {
 };
 
 // ============================================
+// Awaiting Reply Ports
+// ============================================
+
+export type AwaitingRepo = {
+  markAwaiting: (emailId: number) => Promise<void>;
+  clearAwaiting: (emailId: number) => Promise<void>;
+  clearByReply: (inReplyToMessageId: string) => Promise<number | null>;
+  getAwaitingList: (accountId: number) => Promise<Email[]>;
+  toggleAwaiting: (emailId: number) => Promise<boolean>;
+};
+
+export type LLMGenerator = {
+  generate: (prompt: string) => Promise<string>;
+  isAvailable: () => Promise<boolean>;
+};
+
+// ============================================
 // All Dependencies (for DI)
 // ============================================
 
@@ -476,4 +493,7 @@ export type Deps = {
   snoozes: SnoozeRepo;
   triageLog: TriageLogRepo;
   imapFolderOps: ImapFolderOps;
+  // Awaiting reply
+  awaiting: AwaitingRepo;
+  llmGenerator: LLMGenerator;
 };

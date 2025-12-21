@@ -9,6 +9,7 @@
  * - clearAwaiting: Clears the awaiting_reply flag
  * - clearByReply: Auto-clear when a reply is received (matched by message_id)
  * - getAwaitingList: Virtual folder query for "Awaiting Reply" view
+ * - toggleAwaiting: Toggle awaiting status and return new state
  */
 
 import { getDb } from './connection';
@@ -20,6 +21,7 @@ export type AwaitingRepo = {
   clearAwaiting(emailId: number): Promise<void>;
   clearByReply(inReplyToMessageId: string): Promise<number | null>;
   getAwaitingList(accountId: number): Promise<Email[]>;
+  toggleAwaiting(emailId: number): Promise<boolean>;
 };
 
 export function createAwaitingRepo(): AwaitingRepo {
@@ -65,6 +67,37 @@ export function createAwaitingRepo(): AwaitingRepo {
       `).all(accountId);
 
       return rows.map(mapEmail);
+    },
+
+    async toggleAwaiting(emailId: number): Promise<boolean> {
+      const db = getDb();
+
+      // Get current state
+      const current = db.prepare(
+        'SELECT awaiting_reply FROM emails WHERE id = ?'
+      ).get(emailId) as { awaiting_reply: number } | undefined;
+
+      if (!current) {
+        throw new Error(`Email not found: ${emailId}`);
+      }
+
+      const newState = current.awaiting_reply === 0;
+
+      if (newState) {
+        db.prepare(`
+          UPDATE emails
+          SET awaiting_reply = 1, awaiting_reply_since = datetime('now')
+          WHERE id = ?
+        `).run(emailId);
+      } else {
+        db.prepare(`
+          UPDATE emails
+          SET awaiting_reply = 0, awaiting_reply_since = NULL
+          WHERE id = ?
+        `).run(emailId);
+      }
+
+      return newState;
     },
   };
 }

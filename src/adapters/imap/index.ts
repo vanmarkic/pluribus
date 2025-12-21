@@ -125,16 +125,13 @@ function mapImapToEmail(
     isStarred: msg.flags?.has('\\Flagged') || false,
     hasAttachments,
     bodyFetched: false,
-
     // Threading
     inReplyTo,
     references,
     threadId,
-
     // Awaiting reply (default values, will be updated later if needed)
     awaitingReply: false,
     awaitingReplySince: null,
-
     // Unsubscribe
     listUnsubscribe,
     listUnsubscribePost,

@@ -25,18 +25,13 @@ export function mapEmail(row: any): Email {
     isStarred: Boolean(row.is_starred),
     hasAttachments: Boolean(row.has_attachments),
     bodyFetched: Boolean(row.body_fetched),
-
     // Threading
     inReplyTo: row.in_reply_to || null,
     references: row.references || null,
     threadId: row.thread_id || null,
-
     // Awaiting reply
-    awaitingReply: row.awaiting_reply === 1,
-    awaitingReplySince: row.awaiting_reply_since
-      ? new Date(row.awaiting_reply_since)
-      : null,
-
+    awaitingReply: Boolean(row.awaiting_reply),
+    awaitingReplySince: row.awaiting_reply_since ? new Date(row.awaiting_reply_since) : null,
     // Unsubscribe
     listUnsubscribe: row.list_unsubscribe || null,
     listUnsubscribePost: row.list_unsubscribe_post || null,

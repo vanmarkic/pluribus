@@ -19,3 +19,6 @@ export { createContactRepo } from './contact-repo';
 
 // Classification state (separate complex module)
 export { createClassificationStateRepo } from './classification-state';
+
+// Awaiting reply
+export { createAwaitingRepo } from './awaiting-repo';

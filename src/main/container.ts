@@ -14,7 +14,7 @@ import { createUseCases, type UseCases, type Deps } from '../core';
 
 // Adapters
 // Tags removed - using folders for organization (Issue #54)
-import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup } from '../adapters/db';
+import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup, createAwaitingRepo } from '../adapters/db';
 import { createMailSync, createImapFolderOps } from '../adapters/imap';
 import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier } from '../adapters/llm';
 import { createPatternMatcher, createTrainingRepo, createSenderRulesRepo, createSnoozeRepo, createTriageLogRepo, createTriageClassifier } from '../adapters/triage';
@@ -23,6 +23,7 @@ import { createMailSender } from '../adapters/smtp';
 import { createImageCache } from '../adapters/image-cache';
 import { createBackgroundTaskManager } from '../adapters/background';
 import { createOllamaManager, type OllamaManager } from '../adapters/ollama-manager';
+import { createOllamaTextGenerator } from '../adapters/ollama';
 import { createLicenseService } from '../adapters/license';
 import type { RemoteImagesSetting, DatabaseHealth } from '../core/ports';
 
@@ -296,6 +297,20 @@ export function createContainer(): Container {
   };
   const triageClassifier = createTriageClassifier(triageLlmClient);
 
+  // Awaiting reply adapters
+  const awaiting = createAwaitingRepo(getDb);
+
+  // LLM text generator for awaiting classification (uses qwen2.5:1.5b by default)
+  const llmGenerator = createOllamaTextGenerator(() => {
+    const cfg = configStore.get('llm');
+    return {
+      serverUrl: cfg.ollamaServerUrl,
+      // Use smaller model for awaiting classification (faster, efficient)
+      model: 'qwen2.5:1.5b',
+      timeoutMs: 15000,
+    };
+  });
+
   // Assemble dependencies
   const deps: Deps = {
     emails,
@@ -324,6 +339,9 @@ export function createContainer(): Container {
     snoozes,
     triageLog,
     imapFolderOps,
+    // Awaiting reply
+    awaiting,
+    llmGenerator,
   };
   
   // Create use cases

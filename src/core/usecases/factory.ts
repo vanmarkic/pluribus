@@ -16,6 +16,7 @@ import * as draftUseCases from './draft-usecases';
 import * as contactUseCases from './contact-usecases';
 import * as databaseUseCases from './database-usecases';
 import * as triageUseCases from './triage-usecases';
+import * as awaitingUseCases from './awaiting';
 
 /**
  * Create all use cases with dependencies
@@ -130,6 +131,14 @@ export function createUseCases(deps: Deps) {
     getSenderRules: triageUseCases.getSenderRules(deps),
     getTriageLog: triageUseCases.getTriageLog(deps),
     selectDiverseTrainingEmails: triageUseCases.selectDiverseTrainingEmails(deps),
+
+    // Awaiting Reply
+    shouldTrackAwaiting: awaitingUseCases.shouldTrackAwaiting({ llm: deps.llmGenerator }),
+    markAwaiting: awaitingUseCases.markAwaiting(deps),
+    clearAwaiting: awaitingUseCases.clearAwaiting(deps),
+    clearAwaitingByReply: awaitingUseCases.clearAwaitingByReply(deps),
+    getAwaitingList: awaitingUseCases.getAwaitingList(deps),
+    toggleAwaiting: awaitingUseCases.toggleAwaiting(deps),
   };
 }
 

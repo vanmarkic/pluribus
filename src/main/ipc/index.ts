@@ -18,6 +18,7 @@ import { setupConfigHandlers } from './config-handlers';
 import { setupContentHandlers } from './content-handlers';
 import { setupSystemHandlers } from './system-handlers';
 import { setupTriageHandlers } from './triage-handlers';
+import { setupAwaitingHandlers } from './awaiting-handlers';
 
 // Re-export for external use
 export { getTempFiles };
@@ -46,6 +47,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   setupContentHandlers(container);
   setupSystemHandlers(container);
   setupTriageHandlers(container);
+  setupAwaitingHandlers(container);
 }
 
 // Re-export validation helpers for testing

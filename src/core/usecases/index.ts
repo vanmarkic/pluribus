@@ -32,5 +32,8 @@ export * from './triage-usecases';
 // Thread use cases
 export * from './thread-usecases';
 
+// Awaiting reply use cases
+export * from './awaiting';
+
 // Factory (createUseCases, UseCases type)
 export * from './factory';
