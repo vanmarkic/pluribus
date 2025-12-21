@@ -106,7 +106,7 @@ export function createEmailRepo(): EmailRepo {
           message_id, account_id, folder_id, uid, subject,
           from_address, from_name, to_addresses, date, snippet,
           size_bytes, is_read, is_starred, has_attachments, body_fetched,
-          in_reply_to, references, thread_id, list_unsubscribe, list_unsubscribe_post
+          in_reply_to, "references", thread_id, list_unsubscribe, list_unsubscribe_post
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         email.messageId, email.accountId, email.folderId, email.uid, email.subject,
@@ -126,7 +126,7 @@ export function createEmailRepo(): EmailRepo {
           message_id, account_id, folder_id, uid, subject,
           from_address, from_name, to_addresses, date, snippet,
           size_bytes, is_read, is_starred, has_attachments, body_fetched,
-          in_reply_to, references, thread_id, list_unsubscribe, list_unsubscribe_post
+          in_reply_to, "references", thread_id, list_unsubscribe, list_unsubscribe_post
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
