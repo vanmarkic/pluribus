@@ -35,6 +35,19 @@ export type Email = {
   isStarred: boolean;
   hasAttachments: boolean;
   bodyFetched: boolean;
+
+  // Threading
+  inReplyTo: string | null;
+  references: string | null;
+  threadId: string | null;
+
+  // Awaiting reply
+  awaitingReply: boolean;
+  awaitingReplySince: Date | null;
+
+  // Unsubscribe
+  listUnsubscribe: string | null;
+  listUnsubscribePost: string | null;
 };
 
 export type EmailBody = {
@@ -49,6 +62,24 @@ export type Attachment = {
   contentType: string;
   size: number;
   cid?: string;
+};
+
+export type ThreadSummary = {
+  threadId: string;
+  subject: string;
+  snippet: string;
+  participants: { address: string; name: string | null }[];
+  messageCount: number;
+  unreadCount: number;
+  latestDate: Date;
+  isLatestUnread: boolean;
+  emails: Email[]; // For expanded view
+};
+
+export type UnsubscribeInfo = {
+  mailto: string | null;
+  https: string | null;
+  oneClick: boolean;
 };
 
 // Tags removed - using folders for organization instead (Issue #54)
