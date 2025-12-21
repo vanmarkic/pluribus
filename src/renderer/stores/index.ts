@@ -222,6 +222,10 @@ type EmailStore = {
   loadingMore: boolean;
   error: string | null;
 
+  // Multiselect state
+  selectedIds: Set<number>;
+  focusedId: number | null;  // Keyboard focus (different from selectedId which opens email)
+
   // Pagination
   offset: number;
   hasMore: boolean;
@@ -249,6 +253,18 @@ type EmailStore = {
   clearFilter: (accountId: number) => void;
   downloadAttachment: (attachmentId: number, action?: 'open' | 'save') => Promise<void>;
   // refreshSelectedTags and getEmailTags removed - using folders (Issue #54)
+
+  // Multiselect actions
+  toggleSelect: (id: number) => void;
+  selectRange: (fromId: number, toId: number) => void;
+  selectAll: () => void;
+  clearSelection: () => void;
+  setFocusedId: (id: number | null) => void;
+
+  // Bulk actions
+  bulkArchive: () => Promise<void>;
+  bulkTrash: () => Promise<void>;
+  bulkMarkRead: (isRead: boolean) => Promise<void>;
 };
 
 export const useEmailStore = create<EmailStore>((set, get) => ({
@@ -263,6 +279,8 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   loadingBody: false,
   loadingMore: false,
   error: null,
+  selectedIds: new Set(),
+  focusedId: null,
   offset: 0,
   hasMore: true,
   filter: {},
@@ -505,6 +523,92 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
   },
 
   // refreshSelectedTags and getEmailTags removed - using folders (Issue #54)
+
+  toggleSelect: (id) => {
+    set(state => {
+      const newSelected = new Set(state.selectedIds);
+      if (newSelected.has(id)) {
+        newSelected.delete(id);
+      } else {
+        newSelected.add(id);
+      }
+      return { selectedIds: newSelected };
+    });
+  },
+
+  selectRange: (fromId, toId) => {
+    const { emails } = get();
+    const fromIndex = emails.findIndex(e => e.id === fromId);
+    const toIndex = emails.findIndex(e => e.id === toId);
+    if (fromIndex === -1 || toIndex === -1) return;
+
+    const start = Math.min(fromIndex, toIndex);
+    const end = Math.max(fromIndex, toIndex);
+    const rangeIds = emails.slice(start, end + 1).map(e => e.id);
+
+    set(state => ({
+      selectedIds: new Set([...state.selectedIds, ...rangeIds]),
+    }));
+  },
+
+  selectAll: () => {
+    const { emails } = get();
+    set({ selectedIds: new Set(emails.map(e => e.id)) });
+  },
+
+  clearSelection: () => {
+    set({ selectedIds: new Set() });
+  },
+
+  setFocusedId: (id) => {
+    set({ focusedId: id });
+  },
+
+  bulkArchive: async () => {
+    const { selectedIds, emails } = get();
+    const ids = Array.from(selectedIds);
+
+    // Archive all selected
+    await Promise.all(ids.map(id => window.mailApi.emails.archive(id)));
+
+    // Remove from list and clear selection
+    set({
+      emails: emails.filter(e => !selectedIds.has(e.id)),
+      selectedIds: new Set(),
+      selectedId: null,
+      selectedEmail: null,
+    });
+  },
+
+  bulkTrash: async () => {
+    const { selectedIds, emails } = get();
+    const ids = Array.from(selectedIds);
+
+    // Trash all selected
+    await Promise.all(ids.map(id => window.mailApi.emails.trash(id)));
+
+    // Remove from list and clear selection
+    set({
+      emails: emails.filter(e => !selectedIds.has(e.id)),
+      selectedIds: new Set(),
+      selectedId: null,
+      selectedEmail: null,
+    });
+  },
+
+  bulkMarkRead: async (isRead) => {
+    const { selectedIds, emails } = get();
+    const ids = Array.from(selectedIds);
+
+    // Mark all selected
+    await Promise.all(ids.map(id => window.mailApi.emails.markRead(id, isRead)));
+
+    // Update local state
+    set({
+      emails: emails.map(e => selectedIds.has(e.id) ? { ...e, isRead } : e),
+      selectedIds: new Set(),
+    });
+  },
 }));
 
 // ============================================
