@@ -10,7 +10,7 @@ import {
   assertString,
 } from './validation';
 
-const ALLOWED_CONFIG_KEYS = ['llm', 'ollama'] as const;
+const ALLOWED_CONFIG_KEYS = ['llm'] as const;
 type AllowedConfigKey = (typeof ALLOWED_CONFIG_KEYS)[number];
 
 // ==========================================
