@@ -13,12 +13,11 @@ export type OllamaRunner = {
 
 export type OllamaConfig = {
   provider: 'ollama' | 'anthropic';
-  setupComplete: boolean;
 };
 
 export type StartOllamaResult =
   | { started: true }
-  | { started: false; reason: 'provider-not-ollama' | 'setup-incomplete' | 'not-installed' | 'already-running' }
+  | { started: false; reason: 'provider-not-ollama' | 'not-installed' | 'already-running' }
   | { started: false; reason: 'start-failed'; error: string };
 
 export type StartOllamaOnLaunchDeps = {
@@ -26,17 +25,20 @@ export type StartOllamaOnLaunchDeps = {
   config: OllamaConfig;
 };
 
+/**
+ * Start Ollama server on app launch if conditions are met.
+ *
+ * Starts automatically when:
+ * - Provider is set to 'ollama'
+ * - Binary is installed
+ * - Not already running
+ */
 export async function startOllamaOnLaunch(deps: StartOllamaOnLaunchDeps): Promise<StartOllamaResult> {
   const { runner, config } = deps;
 
   // Check provider
   if (config.provider !== 'ollama') {
     return { started: false, reason: 'provider-not-ollama' };
-  }
-
-  // Check setup complete
-  if (!config.setupComplete) {
-    return { started: false, reason: 'setup-incomplete' };
   }
 
   // Check binary installed

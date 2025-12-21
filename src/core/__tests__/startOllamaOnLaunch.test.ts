@@ -3,10 +3,9 @@
  *
  * Business rules:
  * 1. Only start if provider is 'ollama'
- * 2. Only start if ollama setup is complete
- * 3. Only start if binary is installed
- * 4. Don't start if already running
- * 5. Fail gracefully (non-fatal errors)
+ * 2. Only start if binary is installed
+ * 3. Don't start if already running
+ * 4. Fail gracefully (non-fatal errors)
  */
 
 import { describe, test, expect, vi } from 'vitest';
@@ -21,7 +20,6 @@ type OllamaRunner = {
 
 type OllamaConfig = {
   provider: 'ollama' | 'anthropic';
-  setupComplete: boolean;
 };
 
 function createMockRunner(overrides: Partial<OllamaRunner> = {}): OllamaRunner {
@@ -34,9 +32,9 @@ function createMockRunner(overrides: Partial<OllamaRunner> = {}): OllamaRunner {
 }
 
 describe('startOllamaOnLaunch', () => {
-  test('starts Ollama when provider is ollama, setup complete, installed, and not running', async () => {
+  test('starts Ollama when provider is ollama, installed, and not running', async () => {
     const runner = createMockRunner();
-    const config: OllamaConfig = { provider: 'ollama', setupComplete: true };
+    const config: OllamaConfig = { provider: 'ollama' };
 
     const result = await startOllamaOnLaunch({ runner, config });
 
@@ -46,7 +44,7 @@ describe('startOllamaOnLaunch', () => {
 
   test('skips when provider is not ollama', async () => {
     const runner = createMockRunner();
-    const config: OllamaConfig = { provider: 'anthropic', setupComplete: true };
+    const config: OllamaConfig = { provider: 'anthropic' };
 
     const result = await startOllamaOnLaunch({ runner, config });
 
@@ -55,22 +53,11 @@ describe('startOllamaOnLaunch', () => {
     expect(result).toEqual({ started: false, reason: 'provider-not-ollama' });
   });
 
-  test('skips when setup is not complete', async () => {
-    const runner = createMockRunner();
-    const config: OllamaConfig = { provider: 'ollama', setupComplete: false };
-
-    const result = await startOllamaOnLaunch({ runner, config });
-
-    expect(runner.isInstalled).not.toHaveBeenCalled();
-    expect(runner.start).not.toHaveBeenCalled();
-    expect(result).toEqual({ started: false, reason: 'setup-incomplete' });
-  });
-
   test('skips when binary is not installed', async () => {
     const runner = createMockRunner({
       isInstalled: vi.fn().mockResolvedValue(false),
     });
-    const config: OllamaConfig = { provider: 'ollama', setupComplete: true };
+    const config: OllamaConfig = { provider: 'ollama' };
 
     const result = await startOllamaOnLaunch({ runner, config });
 
@@ -82,7 +69,7 @@ describe('startOllamaOnLaunch', () => {
     const runner = createMockRunner({
       isRunning: vi.fn().mockResolvedValue(true),
     });
-    const config: OllamaConfig = { provider: 'ollama', setupComplete: true };
+    const config: OllamaConfig = { provider: 'ollama' };
 
     const result = await startOllamaOnLaunch({ runner, config });
 
@@ -94,7 +81,7 @@ describe('startOllamaOnLaunch', () => {
     const runner = createMockRunner({
       start: vi.fn().mockRejectedValue(new Error('Connection refused')),
     });
-    const config: OllamaConfig = { provider: 'ollama', setupComplete: true };
+    const config: OllamaConfig = { provider: 'ollama' };
 
     const result = await startOllamaOnLaunch({ runner, config });
 

@@ -31,21 +31,24 @@ export function App() {
     loadLicenseState();
   }, []);
 
-  // Check if setup wizard should be shown on first run
+  // Check if setup wizard should be shown (Ollama not installed)
   useEffect(() => {
-    const checkSetupComplete = async () => {
+    const checkOllamaSetup = async () => {
       try {
-        const ollamaConfig = await window.mailApi.config.get('ollama');
-        const accounts = await window.mailApi.accounts.list();
-        // Show wizard if setup not complete AND no accounts yet (first run)
-        if (!ollamaConfig?.setupComplete && accounts.length === 0) {
+        const llmConfig = await window.mailApi.config.get('llm');
+        // Only check for Ollama provider
+        if (llmConfig?.provider !== 'ollama') return;
+
+        const isInstalled = await window.mailApi.ollama.isInstalled();
+        // Show wizard if Ollama is not installed
+        if (!isInstalled) {
           setShowSetupWizard(true);
         }
       } catch (err) {
-        console.error('Failed to check setup status:', err);
+        console.error('Failed to check Ollama setup status:', err);
       }
     };
-    checkSetupComplete();
+    checkOllamaSetup();
   }, []);
 
   // Reload emails when selected account changes
@@ -199,17 +202,11 @@ export function App() {
         onClose={() => setShowShortcutsHelp(false)}
       />
 
-      {/* Setup Wizard */}
+      {/* Setup Wizard - shown when Ollama not installed */}
       {showSetupWizard && (
         <SetupWizard
-          onComplete={async () => {
-            await window.mailApi.config.set('ollama', { setupComplete: true });
-            setShowSetupWizard(false);
-          }}
-          onSkip={async () => {
-            await window.mailApi.config.set('ollama', { setupComplete: true });
-            setShowSetupWizard(false);
-          }}
+          onComplete={() => setShowSetupWizard(false)}
+          onSkip={() => setShowSetupWizard(false)}
         />
       )}
 

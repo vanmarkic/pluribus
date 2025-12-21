@@ -161,12 +161,10 @@ async function createWindow(): Promise<void> {
 
   // Start Ollama in background (non-blocking)
   const llmConfig = container.config.get('llm');
-  const ollamaSetup = container.config.get('ollama');
   startOllamaOnLaunch({
     runner: container.ollamaManager,
     config: {
       provider: llmConfig.provider,
-      setupComplete: ollamaSetup.setupComplete,
     },
   }).then((result) => {
     if (result.started) {

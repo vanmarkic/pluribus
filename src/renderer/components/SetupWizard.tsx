@@ -1,8 +1,13 @@
 /**
  * Setup Wizard
  *
- * First-run wizard for downloading bundled Ollama binary and a model.
- * Shows on first launch when ollama.setupComplete config is false.
+ * First-run wizard for downloading bundled Ollama binary and required models.
+ * Shows when Ollama is not installed.
+ *
+ * Downloads:
+ * - Ollama runtime (~50 MB)
+ * - Mistral 7B (for email classification)
+ * - Qwen 2.5:1.5b (for awaiting reply detection)
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -17,15 +22,13 @@ type DownloadProgress = {
   modelName?: string;
 };
 
-type RecommendedModel = {
-  id: string;
-  name: string;
-  description: string;
-  size: string;
-  sizeBytes: number;
-};
+// Models to install automatically
+const REQUIRED_MODELS = [
+  { id: 'mistral:7b', name: 'Mistral 7B', size: '4.1 GB' },
+  { id: 'qwen2.5:1.5b', name: 'Qwen 2.5', size: '1.0 GB' },
+];
 
-type WizardStep = 'welcome' | 'downloading-binary' | 'select-model' | 'downloading-model' | 'complete';
+type WizardStep = 'welcome' | 'downloading-binary' | 'downloading-models' | 'complete';
 
 type SetupWizardProps = {
   onComplete: () => void;
@@ -35,14 +38,8 @@ type SetupWizardProps = {
 export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
   const [step, setStep] = useState<WizardStep>('welcome');
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
-  const [models, setModels] = useState<RecommendedModel[]>([]);
-  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const [currentModelIndex, setCurrentModelIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
-
-  // Load recommended models
-  useEffect(() => {
-    window.mailApi.ollama.getRecommendedModels().then(setModels);
-  }, []);
 
   // Listen for download progress
   useEffect(() => {
@@ -62,56 +59,40 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   };
 
-  // Start binary download
-  const handleStartDownload = useCallback(async () => {
+  // Start the full installation process
+  const handleStartInstall = useCallback(async () => {
     setStep('downloading-binary');
     setError(null);
 
     try {
+      // Step 1: Download Ollama binary
       await window.mailApi.ollama.downloadBinary();
-      setStep('select-model');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to download Ollama');
-      setStep('welcome');
-    }
-  }, []);
 
-  // Download selected model
-  const handleDownloadModel = useCallback(async () => {
-    if (!selectedModelId) return;
-
-    setStep('downloading-model');
-    setError(null);
-
-    try {
-      // Start Ollama server first
+      // Step 2: Start Ollama server
       await window.mailApi.ollama.start();
-      // Pull the model
-      await window.mailApi.ollama.pullModel(selectedModelId);
-      setStep('complete');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to download model');
-      setStep('select-model');
-    }
-  }, [selectedModelId]);
 
-  // Complete setup
-  const handleComplete = useCallback(async () => {
-    try {
-      // Save selected model to config
+      // Step 3: Download required models
+      setStep('downloading-models');
+      for (let i = 0; i < REQUIRED_MODELS.length; i++) {
+        setCurrentModelIndex(i);
+        await window.mailApi.ollama.pullModel(REQUIRED_MODELS[i].id);
+      }
+
+      // Step 4: Save config with first model as default
       const llmConfig = await window.mailApi.config.get('llm');
       await window.mailApi.config.set('llm', {
         ...llmConfig,
         provider: 'ollama',
-        model: selectedModelId,
-        ollamaServerUrl: 'http://127.0.0.1:11435', // Our bundled Ollama port
+        model: REQUIRED_MODELS[0].id, // mistral:7b as default for classification
+        ollamaServerUrl: 'http://127.0.0.1:11435',
       });
-      onComplete();
+
+      setStep('complete');
     } catch (err) {
-      console.error('Failed to save config:', err);
-      onComplete();
+      setError(err instanceof Error ? err.message : 'Installation failed');
+      setStep('welcome');
     }
-  }, [selectedModelId, onComplete]);
+  }, []);
 
   // Render content based on step
   const renderContent = () => {
@@ -138,7 +119,7 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                 className="text-base max-w-md mx-auto"
                 style={{ color: 'var(--color-text-secondary)' }}
               >
-                Pluribus can classify your emails locally using AI. Your emails never leave your computer.
+                Pluribus uses AI to classify your emails locally. Your data never leaves your computer.
               </p>
             </div>
 
@@ -159,9 +140,16 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                 </li>
                 <li className="flex items-center gap-2">
                   <IconCheck className="w-4 h-4 text-green-500" />
-                  <span>AI model (2-4 GB, you choose)</span>
+                  <span>Mistral 7B - email classification (4.1 GB)</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <IconCheck className="w-4 h-4 text-green-500" />
+                  <span>Qwen 2.5 - fast analysis (1.0 GB)</span>
                 </li>
               </ul>
+              <p className="mt-3 text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+                Total: ~5.2 GB. This may take a few minutes.
+              </p>
             </div>
 
             {error && (
@@ -189,14 +177,14 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                 Skip for Now
               </button>
               <button
-                onClick={handleStartDownload}
+                onClick={handleStartInstall}
                 className="flex-1 py-2.5 px-4 rounded-lg font-medium flex items-center justify-center gap-2"
                 style={{
                   background: 'var(--color-accent)',
                   color: 'white',
                 }}
               >
-                Download
+                Install
                 <IconChevronRight className="w-4 h-4" />
               </button>
             </div>
@@ -223,7 +211,7 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                 Downloading Ollama
               </h1>
               <p className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
-                {progress
+                {progress?.phase === 'binary' && progress.totalBytes > 0
                   ? `${formatBytes(progress.bytesDownloaded)} / ${formatBytes(progress.totalBytes)}`
                   : 'Starting download...'}
               </p>
@@ -237,7 +225,7 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
               <div
                 className="h-full rounded-full transition-all duration-300"
                 style={{
-                  width: `${progress?.percent ?? 0}%`,
+                  width: `${progress?.phase === 'binary' ? progress.percent : 0}%`,
                   background: 'var(--color-accent)',
                 }}
               />
@@ -247,121 +235,13 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
               className="text-center text-sm"
               style={{ color: 'var(--color-text-tertiary)' }}
             >
-              {progress?.percent ?? 0}% complete
+              Step 1 of 3: {progress?.phase === 'binary' ? `${progress.percent}%` : '0%'} complete
             </p>
           </>
         );
 
-      case 'select-model':
-        return (
-          <>
-            <div className="text-center mb-6">
-              <h1
-                className="text-2xl font-semibold mb-2"
-                style={{ color: 'var(--color-text-primary)' }}
-              >
-                Choose a Model
-              </h1>
-              <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-                Select an AI model for email classification
-              </p>
-            </div>
-
-            <div className="space-y-3 mb-6">
-              {models.map((model, index) => (
-                <button
-                  key={model.id}
-                  onClick={() => setSelectedModelId(model.id)}
-                  className="w-full p-4 rounded-lg text-left transition-all"
-                  style={{
-                    background:
-                      selectedModelId === model.id
-                        ? 'var(--color-accent-light, rgba(59, 130, 246, 0.1))'
-                        : 'var(--color-bg-secondary)',
-                    border: `2px solid ${
-                      selectedModelId === model.id
-                        ? 'var(--color-accent)'
-                        : 'transparent'
-                    }`,
-                  }}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span
-                      className="font-medium"
-                      style={{ color: 'var(--color-text-primary)' }}
-                    >
-                      {model.name}
-                      {index === 0 && (
-                        <span
-                          className="ml-2 text-xs px-2 py-0.5 rounded-full"
-                          style={{
-                            background: 'var(--color-accent)',
-                            color: 'white',
-                          }}
-                        >
-                          Recommended
-                        </span>
-                      )}
-                    </span>
-                    <span
-                      className="text-sm"
-                      style={{ color: 'var(--color-text-tertiary)' }}
-                    >
-                      {model.size}
-                    </span>
-                  </div>
-                  <p
-                    className="text-sm"
-                    style={{ color: 'var(--color-text-secondary)' }}
-                  >
-                    {model.description}
-                  </p>
-                </button>
-              ))}
-            </div>
-
-            {error && (
-              <div
-                className="rounded-lg p-3 mb-4 text-sm"
-                style={{
-                  background: '#fef2f2',
-                  color: '#dc2626',
-                  border: '1px solid #fecaca',
-                }}
-              >
-                {error}
-              </div>
-            )}
-
-            <div className="flex gap-3">
-              <button
-                onClick={onSkip}
-                className="flex-1 py-2.5 px-4 rounded-lg font-medium"
-                style={{
-                  background: 'var(--color-bg-secondary)',
-                  color: 'var(--color-text-secondary)',
-                }}
-              >
-                Skip for Now
-              </button>
-              <button
-                onClick={handleDownloadModel}
-                disabled={!selectedModelId}
-                className="flex-1 py-2.5 px-4 rounded-lg font-medium flex items-center justify-center gap-2 disabled:opacity-50"
-                style={{
-                  background: 'var(--color-accent)',
-                  color: 'white',
-                }}
-              >
-                Download Model
-                <IconChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-          </>
-        );
-
-      case 'downloading-model':
-        const selectedModel = models.find((m) => m.id === selectedModelId);
+      case 'downloading-models':
+        const currentModel = REQUIRED_MODELS[currentModelIndex];
         return (
           <>
             <div className="text-center mb-8">
@@ -378,7 +258,7 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
                 className="text-2xl font-semibold mb-2"
                 style={{ color: 'var(--color-text-primary)' }}
               >
-                Downloading {selectedModel?.name ?? 'Model'}
+                Downloading {currentModel?.name ?? 'Model'}
               </h1>
               <p className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
                 {progress?.phase === 'model' && progress.totalBytes > 0
@@ -405,8 +285,25 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
               className="text-center text-sm"
               style={{ color: 'var(--color-text-tertiary)' }}
             >
-              {progress?.phase === 'model' ? `${progress.percent}%` : 'Starting...'} complete
+              Step {currentModelIndex + 2} of 3: {progress?.phase === 'model' ? `${progress.percent}%` : 'Starting...'} complete
             </p>
+
+            {/* Model progress indicators */}
+            <div className="flex justify-center gap-2 mt-4">
+              {REQUIRED_MODELS.map((model, index) => (
+                <div
+                  key={model.id}
+                  className="w-2 h-2 rounded-full"
+                  style={{
+                    background: index < currentModelIndex
+                      ? 'var(--color-accent)'
+                      : index === currentModelIndex
+                        ? 'var(--color-accent-light, var(--color-bg-secondary))'
+                        : 'var(--color-bg-secondary)',
+                  }}
+                />
+              ))}
+            </div>
           </>
         );
 
@@ -431,8 +328,28 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
               </p>
             </div>
 
+            <div
+              className="rounded-lg p-4 mb-6"
+              style={{ background: 'var(--color-bg-secondary)' }}
+            >
+              <h3
+                className="font-medium mb-2"
+                style={{ color: 'var(--color-text-primary)' }}
+              >
+                Installed:
+              </h3>
+              <ul className="space-y-1 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+                {REQUIRED_MODELS.map((model) => (
+                  <li key={model.id} className="flex items-center gap-2">
+                    <IconCheck className="w-4 h-4 text-green-500" />
+                    <span>{model.name}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
             <button
-              onClick={handleComplete}
+              onClick={onComplete}
               className="w-full py-2.5 px-4 rounded-lg font-medium"
               style={{
                 background: 'var(--color-accent)',
@@ -455,8 +372,8 @@ export function SetupWizard({ onComplete, onSkip }: SetupWizardProps) {
         className="relative w-full max-w-md mx-4 rounded-2xl shadow-2xl p-8"
         style={{ background: 'var(--color-bg)' }}
       >
-        {/* Close button - only on welcome and select-model */}
-        {(step === 'welcome' || step === 'select-model') && (
+        {/* Close button - only on welcome */}
+        {step === 'welcome' && (
           <button
             onClick={onSkip}
             className="absolute top-4 right-4 p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10"
