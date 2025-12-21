@@ -9,9 +9,9 @@ import { useEffect, useState } from 'react';
 import { AccountWizard } from './components/AccountWizard';
 import { ComposeModal } from './components/ComposeModal';
 import { LicenseActivationModal } from './components/LicenseActivation';
-import { SetupWizard } from './components/SetupWizard';
+import { OllamaSetupBanner } from './components/OllamaSetupBanner';
 import { useKeyboardShortcuts, KeyboardShortcutsHelp } from './hooks/useKeyboardShortcuts';
-import { useUIStore, useSyncStore, useAccountStore, useEmailStore, useLicenseStore } from './stores';
+import { useUIStore, useSyncStore, useAccountStore, useEmailStore, useLicenseStore, useOllamaSetupStore } from './stores';
 import { TitleBar } from './layouts/TitleBar';
 import { MainLayout } from './layouts/MainLayout';
 import type { SyncProgress } from '../core/domain';
@@ -22,8 +22,8 @@ export function App() {
   const { loadAccounts, selectedAccountId } = useAccountStore();
   const { selectedEmail, selectedBody, loadEmails } = useEmailStore();
   const { loadState: loadLicenseState } = useLicenseStore();
+  const { checkAndStart: checkOllamaSetup } = useOllamaSetupStore();
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
-  const [showSetupWizard, setShowSetupWizard] = useState(false);
 
   // Initial data load
   useEffect(() => {
@@ -31,23 +31,8 @@ export function App() {
     loadLicenseState();
   }, []);
 
-  // Check if setup wizard should be shown (Ollama not installed)
+  // Start Ollama setup in background (downloads if needed)
   useEffect(() => {
-    const checkOllamaSetup = async () => {
-      try {
-        const llmConfig = await window.mailApi.config.get('llm');
-        // Only check for Ollama provider
-        if (llmConfig?.provider !== 'ollama') return;
-
-        const isInstalled = await window.mailApi.ollama.isInstalled();
-        // Show wizard if Ollama is not installed
-        if (!isInstalled) {
-          setShowSetupWizard(true);
-        }
-      } catch (err) {
-        console.error('Failed to check Ollama setup status:', err);
-      }
-    };
     checkOllamaSetup();
   }, []);
 
@@ -202,13 +187,8 @@ export function App() {
         onClose={() => setShowShortcutsHelp(false)}
       />
 
-      {/* Setup Wizard - shown when Ollama not installed */}
-      {showSetupWizard && (
-        <SetupWizard
-          onComplete={() => setShowSetupWizard(false)}
-          onSkip={() => setShowSetupWizard(false)}
-        />
-      )}
+      {/* Ollama Setup Banner - shows progress during background setup */}
+      <OllamaSetupBanner />
 
       {/* Truncation Notification Banner */}
       {truncationInfo && truncationInfo.truncated && (

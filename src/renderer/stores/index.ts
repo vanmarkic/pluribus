@@ -1179,3 +1179,128 @@ if (typeof window !== 'undefined' && window.mailApi) {
     });
   });
 }
+
+// ============================================
+// Ollama Setup Store
+// ============================================
+
+type OllamaSetupPhase = 'idle' | 'checking' | 'downloading-binary' | 'starting' | 'downloading-models' | 'ready' | 'error' | 'skipped';
+
+type OllamaSetupStore = {
+  phase: OllamaSetupPhase;
+  progress: number; // 0-100
+  currentModel: string | null;
+  modelsCompleted: number;
+  modelsTotal: number;
+  error: string | null;
+  isReady: boolean; // Convenience flag for UI
+
+  // Actions
+  startSetup: () => Promise<void>;
+  skipSetup: () => void;
+  checkAndStart: () => Promise<void>;
+};
+
+const REQUIRED_MODELS = ['mistral:7b', 'qwen2.5:1.5b'];
+
+export const useOllamaSetupStore = create<OllamaSetupStore>((set, get) => ({
+  phase: 'idle',
+  progress: 0,
+  currentModel: null,
+  modelsCompleted: 0,
+  modelsTotal: REQUIRED_MODELS.length,
+  error: null,
+  isReady: false,
+
+  checkAndStart: async () => {
+    set({ phase: 'checking' });
+
+    try {
+      const llmConfig = await window.mailApi.config.get('llm');
+      if (llmConfig?.provider !== 'ollama') {
+        // Not using Ollama provider, skip setup
+        set({ phase: 'skipped', isReady: false });
+        return;
+      }
+
+      const isInstalled = await window.mailApi.ollama.isInstalled();
+      if (isInstalled) {
+        // Already installed, check if running
+        const isRunning = await window.mailApi.ollama.isRunning();
+        if (!isRunning) {
+          set({ phase: 'starting' });
+          await window.mailApi.ollama.start();
+        }
+        set({ phase: 'ready', isReady: true });
+        return;
+      }
+
+      // Not installed - start background setup
+      await get().startSetup();
+    } catch (err) {
+      set({
+        phase: 'error',
+        error: err instanceof Error ? err.message : 'Setup check failed',
+        isReady: false,
+      });
+    }
+  },
+
+  startSetup: async () => {
+    set({ phase: 'downloading-binary', progress: 0, error: null });
+
+    try {
+      // Step 1: Download binary
+      await window.mailApi.ollama.downloadBinary();
+
+      // Step 2: Start server
+      set({ phase: 'starting' });
+      await window.mailApi.ollama.start();
+
+      // Step 3: Download models
+      set({ phase: 'downloading-models', modelsCompleted: 0 });
+      for (let i = 0; i < REQUIRED_MODELS.length; i++) {
+        set({ currentModel: REQUIRED_MODELS[i], modelsCompleted: i });
+        await window.mailApi.ollama.pullModel(REQUIRED_MODELS[i]);
+      }
+
+      // Step 4: Save config
+      const llmConfig = await window.mailApi.config.get('llm');
+      await window.mailApi.config.set('llm', {
+        ...llmConfig,
+        provider: 'ollama',
+        model: REQUIRED_MODELS[0],
+        ollamaServerUrl: 'http://127.0.0.1:11435',
+      });
+
+      set({
+        phase: 'ready',
+        isReady: true,
+        modelsCompleted: REQUIRED_MODELS.length,
+        currentModel: null,
+      });
+    } catch (err) {
+      set({
+        phase: 'error',
+        error: err instanceof Error ? err.message : 'Setup failed',
+        isReady: false,
+      });
+    }
+  },
+
+  skipSetup: () => {
+    set({ phase: 'skipped', isReady: false });
+  },
+}));
+
+// Listen for download progress events
+if (typeof window !== 'undefined' && window.mailApi) {
+  window.mailApi.on('ollama:download-progress', (data: any) => {
+    const store = useOllamaSetupStore.getState();
+    if (store.phase === 'downloading-binary' && data.phase === 'binary') {
+      useOllamaSetupStore.setState({ progress: data.percent });
+    } else if (store.phase === 'downloading-models' && data.phase === 'model') {
+      useOllamaSetupStore.setState({ progress: data.percent });
+    }
+  });
+}

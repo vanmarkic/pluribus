@@ -17,7 +17,7 @@ import {
   IconClock3, IconNewspaper, IconNotification, IconMegaphone,
   IconBill, IconBriefcase, IconPlane
 } from 'obra-icons-react';
-import { useUIStore, useEmailStore, useAccountStore } from '../stores';
+import { useUIStore, useEmailStore, useAccountStore, useOllamaSetupStore } from '../stores';
 import { AccountSwitcher } from './AccountSwitcher';
 import { LicenseStatusBadge } from './LicenseActivation';
 
@@ -38,8 +38,12 @@ export function Sidebar() {
   const { view, setView, openCompose } = useUIStore();
   const { emails, setFilter, loadEmails, filter } = useEmailStore();
   const { selectedAccountId } = useAccountStore();
+  const { isReady: isOllamaReady, phase: ollamaPhase } = useOllamaSetupStore();
   const [draftCount, setDraftCount] = useState(0);
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
+
+  // Classification is disabled when Ollama is not ready (downloading/starting)
+  const isClassificationDisabled = !isOllamaReady && ollamaPhase !== 'skipped';
 
   useEffect(() => {
     loadDraftCount();
@@ -208,20 +212,33 @@ export function Sidebar() {
         <div className="my-3 border-t" style={{ borderColor: 'var(--color-border)' }} />
 
         <button
-          onClick={() => handleNavClick('ai-sort')}
-          className={`sidebar-item w-full ${view === 'ai-sort' ? 'active' : ''}`}
-          style={view !== 'ai-sort' ? { color: 'var(--color-accent)' } : undefined}
+          onClick={() => !isClassificationDisabled && handleNavClick('ai-sort')}
+          disabled={isClassificationDisabled}
+          className={`sidebar-item w-full ${view === 'ai-sort' ? 'active' : ''} ${isClassificationDisabled ? 'disabled' : ''}`}
+          style={isClassificationDisabled
+            ? { opacity: 0.5, cursor: 'not-allowed' }
+            : view !== 'ai-sort' ? { color: 'var(--color-accent)' } : undefined}
+          title={isClassificationDisabled ? 'Setting up AI...' : undefined}
         >
           <IconSparkles className="w-4 h-4" />
           <span className="flex-1 text-left font-medium">Classify</span>
+          {isClassificationDisabled && (
+            <div
+              className="w-3 h-3 rounded-full border-2 border-t-transparent animate-spin"
+              style={{ borderColor: 'var(--color-text-tertiary)', borderTopColor: 'transparent' }}
+            />
+          )}
         </button>
 
         <button
-          onClick={() => handleNavClick('review')}
-          onDragOver={(e) => handleDragOver(e, 'review')}
+          onClick={() => !isClassificationDisabled && handleNavClick('review')}
+          disabled={isClassificationDisabled}
+          onDragOver={(e) => !isClassificationDisabled && handleDragOver(e, 'review')}
           onDragLeave={handleDragLeave}
-          onDrop={(e) => handleDrop(e, 'Review')}
-          className={`sidebar-item w-full ${view === 'review' ? 'active' : ''} ${dragOverFolder === 'review' ? 'drop-target' : ''}`}
+          onDrop={(e) => !isClassificationDisabled && handleDrop(e, 'Review')}
+          className={`sidebar-item w-full ${view === 'review' ? 'active' : ''} ${dragOverFolder === 'review' ? 'drop-target' : ''} ${isClassificationDisabled ? 'disabled' : ''}`}
+          style={isClassificationDisabled ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
+          title={isClassificationDisabled ? 'Setting up AI...' : undefined}
         >
           <IconChecklist className="w-4 h-4" />
           <span className="flex-1 text-left">Review</span>
