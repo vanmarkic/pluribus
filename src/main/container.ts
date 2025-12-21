@@ -75,6 +75,15 @@ if (JSON.stringify(storedLlm) !== JSON.stringify(migratedLlm)) {
   configStore.set('llm', migratedLlm);
 }
 
+// Migration: update old Ollama URL (11434) to new bundled port (11435)
+const currentLlm = configStore.get('llm');
+if (currentLlm.ollamaServerUrl?.includes(':11434')) {
+  configStore.set('llm', {
+    ...currentLlm,
+    ollamaServerUrl: currentLlm.ollamaServerUrl.replace(':11434', ':11435'),
+  });
+}
+
 // ============================================
 // Container Type
 // ============================================
