@@ -7,8 +7,8 @@
   "main": "dist/main/index.js",
   "scripts": {
     "dev": "vite",
-    "dev:electron": "npm run rebuild:electron && tsc -p tsconfig.main.json && mkdir -p dist/adapters/db && cp src/adapters/db/schema.sql dist/adapters/db/ && electron .",
-    "build": "rm -f tsconfig.main.tsbuildinfo && tsc -p tsconfig.main.json && cp src/adapters/db/schema.sql dist/adapters/db/ && vite build",
+    "dev:electron": "npm run rebuild:electron && tsc -p tsconfig.main.json && mkdir -p dist/adapters/db/migrations && cp src/adapters/db/schema.sql dist/adapters/db/ && cp -r src/adapters/db/migrations/* dist/adapters/db/migrations/ 2>/dev/null || true && electron .",
+    "build": "rm -f tsconfig.main.tsbuildinfo && tsc -p tsconfig.main.json && mkdir -p dist/adapters/db/migrations && cp src/adapters/db/schema.sql dist/adapters/db/ && cp -r src/adapters/db/migrations/* dist/adapters/db/migrations/ 2>/dev/null || true && vite build",
     "start": "npm run rebuild:electron && electron .",
     "typecheck": "tsc --noEmit",
     "test": "npm run rebuild:node && vitest run",
