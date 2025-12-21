@@ -46,9 +46,6 @@ type AppConfig = {
   security: {
     remoteImages: RemoteImagesSetting;
   };
-  ollama: {
-    setupComplete: boolean;
-  };
 };
 
 const LLM_DEFAULTS = {
@@ -67,9 +64,6 @@ const configStore = new Store<AppConfig>({
     llm: LLM_DEFAULTS,
     security: {
       remoteImages: 'block', // Privacy-first default
-    },
-    ollama: {
-      setupComplete: false,
     },
   },
 });
