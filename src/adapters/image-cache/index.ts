@@ -202,10 +202,10 @@ export function createImageCache(getDb: () => any): ImageCache {
           // Write to disk
           fs.writeFileSync(localFilePath, result.data);
 
-          // Return file:// URL for use in renderer
+          // Return cached-image:// URL for use in renderer (secure custom protocol)
           return {
             url,
-            localPath: `file://${localFilePath}`,
+            localPath: `cached-image://email/${emailId}/${filename}`,
           };
         });
 
@@ -228,7 +228,7 @@ export function createImageCache(getDb: () => any): ImageCache {
       const files = fs.readdirSync(emailCacheDir);
       return files.map((filename) => ({
         url: '', // Original URL not stored - renderer must track this
-        localPath: `file://${path.join(emailCacheDir, filename)}`,
+        localPath: `cached-image://email/${emailId}/${filename}`,
       }));
     },
 

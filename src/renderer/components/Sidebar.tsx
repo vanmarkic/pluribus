@@ -10,7 +10,7 @@
  * - Bottom: Settings, License, Account Switcher
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   IconInbox, IconSend, IconDocument, IconArchiveBox, IconDelete,
   IconSettings, IconPen, IconSparkles, IconChecklist,
@@ -21,11 +21,25 @@ import { useUIStore, useEmailStore, useAccountStore } from '../stores';
 import { AccountSwitcher } from './AccountSwitcher';
 import { LicenseStatusBadge } from './LicenseActivation';
 
+// TriageFolder type for drop targets (must match core/domain.ts)
+type TriageFolder =
+  | 'INBOX'
+  | 'Planning'
+  | 'Review'
+  | 'Feed'
+  | 'Social'
+  | 'Promotions'
+  | 'Paper-Trail/Invoices'
+  | 'Paper-Trail/Admin'
+  | 'Paper-Trail/Travel'
+  | 'Archive';
+
 export function Sidebar() {
   const { view, setView, openCompose } = useUIStore();
-  const { emails, setFilter } = useEmailStore();
+  const { emails, setFilter, loadEmails, filter } = useEmailStore();
   const { selectedAccountId } = useAccountStore();
   const [draftCount, setDraftCount] = useState(0);
+  const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
 
   useEffect(() => {
     loadDraftCount();
@@ -93,6 +107,46 @@ export function Sidebar() {
     }
   };
 
+  // Drag and drop handlers for folder items
+  const handleDragOver = useCallback((e: React.DragEvent, folderId: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverFolder(folderId);
+  }, []);
+
+  const handleDragLeave = useCallback(() => {
+    setDragOverFolder(null);
+  }, []);
+
+  const handleDrop = useCallback(async (e: React.DragEvent, targetFolder: TriageFolder) => {
+    e.preventDefault();
+    setDragOverFolder(null);
+
+    const emailIdStr = e.dataTransfer.getData('application/x-email-id');
+    if (!emailIdStr || !selectedAccountId) return;
+
+    const emailId = parseInt(emailIdStr, 10);
+    if (isNaN(emailId)) return;
+
+    // Get source folder from current filter
+    const sourceFolder = filter.folderPath || 'INBOX';
+
+    // Don't move to the same folder
+    if (sourceFolder === targetFolder) return;
+
+    try {
+      await window.mailApi.triage.moveToFolder(emailId, targetFolder, selectedAccountId);
+
+      // Learn from this correction to improve future classifications
+      await window.mailApi.triage.learnFromCorrection(emailId, sourceFolder, targetFolder, selectedAccountId);
+
+      // Refresh email list to reflect the move
+      loadEmails(selectedAccountId);
+    } catch (err) {
+      console.error('Failed to move email to folder:', err);
+    }
+  }, [selectedAccountId, loadEmails, filter.folderPath]);
+
   return (
     <aside className="sidebar">
       {/* App Title */}
@@ -119,7 +173,10 @@ export function Sidebar() {
         {/* Main Section: Inbox, Sent, Drafts */}
         <button
           onClick={() => handleNavClick('inbox')}
-          className={`sidebar-item w-full ${view === 'inbox' ? 'active' : ''}`}
+          onDragOver={(e) => handleDragOver(e, 'inbox')}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDrop(e, 'INBOX')}
+          className={`sidebar-item w-full ${view === 'inbox' ? 'active' : ''} ${dragOverFolder === 'inbox' ? 'drop-target' : ''}`}
         >
           <IconInbox className="w-4 h-4" />
           <span className="flex-1 text-left">Inbox</span>
@@ -161,7 +218,10 @@ export function Sidebar() {
 
         <button
           onClick={() => handleNavClick('review')}
-          className={`sidebar-item w-full ${view === 'review' ? 'active' : ''}`}
+          onDragOver={(e) => handleDragOver(e, 'review')}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDrop(e, 'Review')}
+          className={`sidebar-item w-full ${view === 'review' ? 'active' : ''} ${dragOverFolder === 'review' ? 'drop-target' : ''}`}
         >
           <IconChecklist className="w-4 h-4" />
           <span className="flex-1 text-left">Review</span>
@@ -175,7 +235,10 @@ export function Sidebar() {
 
         <button
           onClick={() => handleNavClick('planning')}
-          className={`sidebar-item w-full ${view === 'planning' ? 'active' : ''}`}
+          onDragOver={(e) => handleDragOver(e, 'planning')}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDrop(e, 'Planning')}
+          className={`sidebar-item w-full ${view === 'planning' ? 'active' : ''} ${dragOverFolder === 'planning' ? 'drop-target' : ''}`}
         >
           <IconClock3 className="w-4 h-4" />
           <span className="flex-1 text-left">Planning</span>
@@ -183,7 +246,10 @@ export function Sidebar() {
 
         <button
           onClick={() => handleNavClick('feed')}
-          className={`sidebar-item w-full ${view === 'feed' ? 'active' : ''}`}
+          onDragOver={(e) => handleDragOver(e, 'feed')}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDrop(e, 'Feed')}
+          className={`sidebar-item w-full ${view === 'feed' ? 'active' : ''} ${dragOverFolder === 'feed' ? 'drop-target' : ''}`}
         >
           <IconNewspaper className="w-4 h-4" />
           <span className="flex-1 text-left">Feed</span>
@@ -191,7 +257,10 @@ export function Sidebar() {
 
         <button
           onClick={() => handleNavClick('social')}
-          className={`sidebar-item w-full ${view === 'social' ? 'active' : ''}`}
+          onDragOver={(e) => handleDragOver(e, 'social')}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDrop(e, 'Social')}
+          className={`sidebar-item w-full ${view === 'social' ? 'active' : ''} ${dragOverFolder === 'social' ? 'drop-target' : ''}`}
         >
           <IconNotification className="w-4 h-4" />
           <span className="flex-1 text-left">Social</span>
@@ -199,7 +268,10 @@ export function Sidebar() {
 
         <button
           onClick={() => handleNavClick('promotions')}
-          className={`sidebar-item w-full ${view === 'promotions' ? 'active' : ''}`}
+          onDragOver={(e) => handleDragOver(e, 'promotions')}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDrop(e, 'Promotions')}
+          className={`sidebar-item w-full ${view === 'promotions' ? 'active' : ''} ${dragOverFolder === 'promotions' ? 'drop-target' : ''}`}
         >
           <IconMegaphone className="w-4 h-4" />
           <span className="flex-1 text-left">Promotions</span>
@@ -213,7 +285,10 @@ export function Sidebar() {
 
         <button
           onClick={() => handleNavClick('paper-trail/invoices')}
-          className={`sidebar-item w-full ${view === 'paper-trail/invoices' ? 'active' : ''}`}
+          onDragOver={(e) => handleDragOver(e, 'paper-trail/invoices')}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDrop(e, 'Paper-Trail/Invoices')}
+          className={`sidebar-item w-full ${view === 'paper-trail/invoices' ? 'active' : ''} ${dragOverFolder === 'paper-trail/invoices' ? 'drop-target' : ''}`}
         >
           <IconBill className="w-4 h-4" />
           <span className="flex-1 text-left">Invoices</span>
@@ -221,7 +296,10 @@ export function Sidebar() {
 
         <button
           onClick={() => handleNavClick('paper-trail/admin')}
-          className={`sidebar-item w-full ${view === 'paper-trail/admin' ? 'active' : ''}`}
+          onDragOver={(e) => handleDragOver(e, 'paper-trail/admin')}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDrop(e, 'Paper-Trail/Admin')}
+          className={`sidebar-item w-full ${view === 'paper-trail/admin' ? 'active' : ''} ${dragOverFolder === 'paper-trail/admin' ? 'drop-target' : ''}`}
         >
           <IconBriefcase className="w-4 h-4" />
           <span className="flex-1 text-left">Admin</span>
@@ -229,7 +307,10 @@ export function Sidebar() {
 
         <button
           onClick={() => handleNavClick('paper-trail/travel')}
-          className={`sidebar-item w-full ${view === 'paper-trail/travel' ? 'active' : ''}`}
+          onDragOver={(e) => handleDragOver(e, 'paper-trail/travel')}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDrop(e, 'Paper-Trail/Travel')}
+          className={`sidebar-item w-full ${view === 'paper-trail/travel' ? 'active' : ''} ${dragOverFolder === 'paper-trail/travel' ? 'drop-target' : ''}`}
         >
           <IconPlane className="w-4 h-4" />
           <span className="flex-1 text-left">Travel</span>
@@ -240,7 +321,10 @@ export function Sidebar() {
 
         <button
           onClick={() => handleNavClick('archive')}
-          className={`sidebar-item w-full ${view === 'archive' ? 'active' : ''}`}
+          onDragOver={(e) => handleDragOver(e, 'archive')}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDrop(e, 'Archive')}
+          className={`sidebar-item w-full ${view === 'archive' ? 'active' : ''} ${dragOverFolder === 'archive' ? 'drop-target' : ''}`}
         >
           <IconArchiveBox className="w-4 h-4" />
           <span className="flex-1 text-left">Archive</span>

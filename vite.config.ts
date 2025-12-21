@@ -25,7 +25,9 @@ export default defineConfig({
   },
   test: {
     root: __dirname,
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}'],
     globals: true,
+    environment: 'jsdom',
+    setupFiles: ['./src/renderer/__tests__/setup.ts'],
   },
 });

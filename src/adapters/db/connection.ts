@@ -40,6 +40,9 @@ export function initDb(dbPath: string, schemaPath?: string, options?: InitDbOpti
     db.exec(fs.readFileSync(schemaPath, 'utf-8'));
   }
 
+  // Run migrations for existing databases
+  runMigrations(db);
+
   // Poka-yoke: Verify critical tables exist after schema load
   const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[];
   const tableNames = tables.map(t => t.name);
@@ -180,4 +183,28 @@ export function escapeFtsQuery(query: string): string | null {
 
   // Wrap each term in quotes and add prefix wildcard for partial matching
   return terms.map(t => `"${t}"*`).join(' ');
+}
+
+// ============================================
+// Database Migrations
+// ============================================
+
+/**
+ * Helper to check if a column exists in a table
+ */
+function hasColumn(db: Database.Database, table: string, column: string): boolean {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  return columns.some(c => c.name === column);
+}
+
+/**
+ * Runs database migrations to update schema for existing databases.
+ * Each migration checks if it needs to run (idempotent).
+ */
+function runMigrations(db: Database.Database): void {
+  // Migration 1: Add suggested_folder column to classification_state
+  if (!hasColumn(db, 'classification_state', 'suggested_folder')) {
+    db.exec(`ALTER TABLE classification_state ADD COLUMN suggested_folder TEXT`);
+    console.log('[DB Migration] Added suggested_folder column to classification_state');
+  }
 }

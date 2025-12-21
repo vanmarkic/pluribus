@@ -16,6 +16,74 @@ import { useEmailStore, useUIStore } from '../stores';
 import { formatSender } from '../../core/domain';
 import { ReclassifyConfirmModal } from './ReclassifyConfirmModal';
 
+/**
+ * Shadow DOM wrapper for email HTML content.
+ * Provides true CSS isolation - app styles cannot leak into email content.
+ */
+interface ShadowContentProps {
+  html: string;
+  className?: string;
+  shadowRootRef?: React.MutableRefObject<ShadowRoot | null>;
+}
+
+function ShadowContent({ html, className, shadowRootRef: externalShadowRef }: ShadowContentProps) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const internalShadowRef = useRef<ShadowRoot | null>(null);
+
+  useEffect(() => {
+    if (!hostRef.current) return;
+
+    // Create shadow root once
+    if (!internalShadowRef.current) {
+      internalShadowRef.current = hostRef.current.attachShadow({ mode: 'open' });
+      // Expose shadow root to parent if requested
+      if (externalShadowRef) {
+        externalShadowRef.current = internalShadowRef.current;
+      }
+    }
+
+    // Minimal styles for email content readability
+    const styles = `
+      :host {
+        display: block;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-size: 15px;
+        line-height: 1.6;
+        color: #374151;
+      }
+      img {
+        max-width: 100%;
+        height: auto;
+      }
+      a {
+        color: #2563eb;
+      }
+      pre {
+        overflow-x: auto;
+        background: #f3f4f6;
+        padding: 1em;
+        border-radius: 4px;
+      }
+      blockquote {
+        border-left: 3px solid #e5e7eb;
+        margin-left: 0;
+        padding-left: 1em;
+        color: #6b7280;
+      }
+      table {
+        border-collapse: collapse;
+      }
+      td, th {
+        padding: 0.5em;
+      }
+    `;
+
+    internalShadowRef.current.innerHTML = `<style>${styles}</style>${html}`;
+  }, [html, externalShadowRef]);
+
+  return <div ref={hostRef} className={className} />;
+}
+
 // Configure DOMPurify for email HTML
 const purifyConfig: DOMPurify.Config = {
   ALLOWED_TAGS: [
@@ -37,48 +105,71 @@ const purifyConfig: DOMPurify.Config = {
   FORBID_ATTR: ['onerror', 'onclick', 'onload', 'onmouseover'],
 };
 
-// Track blocked image URLs during sanitization
-let blockedImageUrls: string[] = [];
+/**
+ * Sanitize HTML and optionally extract blocked remote image URLs.
+ *
+ * This function wraps DOMPurify.sanitize to capture remote image URLs
+ * before they're blocked. We use a scoped approach rather than global
+ * hooks to avoid timing issues with hook reset.
+ *
+ * @param html - The HTML to sanitize
+ * @param blockRemoteImages - Whether to block remote images (default: true)
+ */
+function sanitizeEmailHtml(html: string, blockRemoteImages = true): { sanitized: string; blockedUrls: string[] } {
+  const blockedUrls: string[] = [];
 
-DOMPurify.addHook('beforeSanitizeAttributes', () => {
-  // Reset on each sanitization pass
-  blockedImageUrls = [];
-});
+  // Clear any existing hooks (important for HMR)
+  DOMPurify.removeAllHooks();
 
-DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-  if (node.tagName === 'A') {
-    node.setAttribute('target', '_blank');
-    node.setAttribute('rel', 'noopener noreferrer');
-  }
-  if (node.tagName === 'IMG' && node.hasAttribute('src')) {
-    const src = node.getAttribute('src') || '';
-    if (!src.startsWith('data:') && !src.startsWith('cid:') && !src.startsWith('file:')) {
-      blockedImageUrls.push(src);
-      node.setAttribute('data-original-src', src);
-      node.removeAttribute('src');
+  // Capture IMG src before DOMPurify processes attributes
+  DOMPurify.addHook('uponSanitizeElement', (node, data) => {
+    if (data.tagName === 'img' || data.tagName === 'IMG') {
+      const el = node as Element;
+      const src = el.getAttribute?.('src') || '';
+      if (src && !src.startsWith('data:') && !src.startsWith('cid:') && !src.startsWith('file:') && !src.startsWith('cached-image:')) {
+        if (blockRemoteImages) {
+          // Block this remote image - store the URL before DOMPurify removes it
+          blockedUrls.push(src);
+          el.setAttribute('data-original-src', src);
+          el.removeAttribute('src');
+          el.setAttribute('class', (el.getAttribute('class') || '') + ' blocked-image');
+        }
+        // If not blocking, leave the src attribute as-is (remote load)
+      }
+    }
+  });
+
+  DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+    if (node.tagName === 'A') {
+      node.setAttribute('target', '_blank');
+      node.setAttribute('rel', 'noopener noreferrer');
+    }
+    // Set alt text for blocked images
+    if (node.tagName === 'IMG' && node.hasAttribute('data-original-src')) {
       node.setAttribute('alt', '[Image blocked]');
-      node.setAttribute('class', 'blocked-image');
     }
-  }
-  // Defense-in-depth: Sanitize dangerous CSS patterns in style attributes
-  // Even though DOMPurify handles most cases, explicitly strip known attack vectors
-  if (node.hasAttribute('style')) {
-    const style = node.getAttribute('style') || '';
-    // Remove: expression(), url(javascript:), behavior:, -moz-binding:
-    const sanitized = style
-      .replace(/expression\s*\([^)]*\)/gi, '')
-      .replace(/url\s*\(\s*["']?\s*javascript:/gi, 'url(blocked:')
-      .replace(/behavior\s*:/gi, '')
-      .replace(/-moz-binding\s*:/gi, '');
-    if (sanitized !== style) {
-      node.setAttribute('style', sanitized);
+    // Defense-in-depth: Sanitize dangerous CSS patterns in style attributes
+    // Even though DOMPurify handles most cases, explicitly strip known attack vectors
+    if (node.hasAttribute('style')) {
+      const style = node.getAttribute('style') || '';
+      // Remove: expression(), url(javascript:), behavior:, -moz-binding:
+      const sanitized = style
+        .replace(/expression\s*\([^)]*\)/gi, '')
+        .replace(/url\s*\(\s*["']?\s*javascript:/gi, 'url(blocked:')
+        .replace(/behavior\s*:/gi, '')
+        .replace(/-moz-binding\s*:/gi, '');
+      if (sanitized !== style) {
+        node.setAttribute('style', sanitized);
+      }
     }
-  }
-});
+  });
 
-// Get blocked URLs after sanitization
-function getBlockedImageUrls(): string[] {
-  return [...blockedImageUrls];
+  const sanitized = DOMPurify.sanitize(html, purifyConfig as Parameters<typeof DOMPurify.sanitize>[1]);
+
+  // Clean up hooks after use
+  DOMPurify.removeAllHooks();
+
+  return { sanitized, blockedUrls };
 }
 
 export function EmailViewer() {
@@ -113,9 +204,11 @@ export function EmailViewer() {
   const classificationFeedbackTimeoutRef = useRef<NodeJS.Timeout>();
 
   // Remote images state
+  const [imageSetting, setImageSetting] = useState<'block' | 'allow' | 'auto' | null>(null);
   const [imagesLoaded, setImagesLoaded] = useState(false);
   const [loadingImages, setLoadingImages] = useState(false);
   const bodyContainerRef = useRef<HTMLDivElement>(null);
+  const shadowRootRef = useRef<ShadowRoot | null>(null);
 
   // Reclassify modal state (Issue #56)
   const [showReclassifyModal, setShowReclassifyModal] = useState(false);
@@ -233,17 +326,24 @@ export function EmailViewer() {
     if (!body?.html) {
       return { sanitizedHtml: null, blockedUrls: [] };
     }
-    const result = DOMPurify.sanitize(body.html, purifyConfig as Parameters<typeof DOMPurify.sanitize>[1]);
-    return { sanitizedHtml: result, blockedUrls: getBlockedImageUrls() };
-  }, [body?.html]);
+    // Wait for setting to load before sanitizing; default to blocking if unknown
+    // When setting is 'allow', don't block images - they'll load directly from remote
+    const shouldBlockImages = imageSetting !== 'allow';
+    const { sanitized, blockedUrls } = sanitizeEmailHtml(body.html, shouldBlockImages);
+    return { sanitizedHtml: sanitized, blockedUrls };
+  }, [body?.html, imageSetting]);
 
-  // Check if images should be auto-loaded for this email
+  // Load image setting and check if images should be auto-loaded
   useEffect(() => {
-    if (!email) return;
+    if (!email) {
+      setImageSetting(null);
+      return;
+    }
 
     const checkAndAutoLoad = async () => {
       try {
         const setting = await window.mailApi.images.getSetting();
+        setImageSetting(setting);
 
         if (setting === 'block') {
           setImagesLoaded(false);
@@ -251,7 +351,7 @@ export function EmailViewer() {
         }
 
         if (setting === 'allow') {
-          // 'allow' loads directly from remote - no caching
+          // 'allow' loads directly from remote - no caching, images not blocked
           setImagesLoaded(true);
           return;
         }
@@ -269,7 +369,7 @@ export function EmailViewer() {
 
   // Load images when imagesLoaded becomes true and we have blocked URLs
   useEffect(() => {
-    if (!email || !imagesLoaded || blockedUrls.length === 0 || !bodyContainerRef.current) return;
+    if (!email || !imagesLoaded || blockedUrls.length === 0 || !shadowRootRef.current) return;
 
     const loadImages = async () => {
       try {
@@ -278,11 +378,11 @@ export function EmailViewer() {
         // Create a URL mapping
         const urlMap = new Map(cached.map(c => [c.url, c.localPath]));
 
-        // Replace blocked images in the DOM
-        const container = bodyContainerRef.current;
-        if (!container) return;
+        // Replace blocked images in the shadow DOM
+        const shadowRoot = shadowRootRef.current;
+        if (!shadowRoot) return;
 
-        const blockedImages = container.querySelectorAll('img[data-original-src]');
+        const blockedImages = shadowRoot.querySelectorAll('img[data-original-src]');
         blockedImages.forEach((img) => {
           const originalSrc = img.getAttribute('data-original-src');
           if (originalSrc && urlMap.has(originalSrc)) {
@@ -302,24 +402,22 @@ export function EmailViewer() {
 
   // Auto-load images when setting is 'auto' and we have blocked URLs
   useEffect(() => {
-    if (!email || imagesLoaded || blockedUrls.length === 0) return;
+    // Only auto-load when setting is 'auto' and images aren't loaded yet
+    if (!email || imagesLoaded || blockedUrls.length === 0 || imageSetting !== 'auto') return;
 
     let cancelled = false;
     const timeoutId = setTimeout(async () => {
       if (cancelled) return;
 
       try {
-        const setting = await window.mailApi.images.getSetting();
-        if (setting !== 'auto') return;
-
         setLoadingImages(true);
         const cached = await window.mailApi.images.autoLoad(email.id, blockedUrls);
 
-        if (cancelled || !bodyContainerRef.current) return;
+        if (cancelled || !shadowRootRef.current) return;
 
-        // Create URL mapping and update DOM
+        // Create URL mapping and update shadow DOM
         const urlMap = new Map(cached.map(c => [c.url, c.localPath]));
-        const blockedImages = bodyContainerRef.current.querySelectorAll('img[data-original-src]');
+        const blockedImages = shadowRootRef.current.querySelectorAll('img[data-original-src]');
         blockedImages.forEach((img) => {
           const originalSrc = img.getAttribute('data-original-src');
           if (originalSrc && urlMap.has(originalSrc)) {
@@ -342,7 +440,7 @@ export function EmailViewer() {
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [email?.id, blockedUrls, imagesLoaded]);
+  }, [email?.id, blockedUrls, imagesLoaded, imageSetting]);
 
   // Handle loading images when user clicks the banner
   const handleLoadImages = useCallback(async () => {
@@ -547,9 +645,9 @@ export function EmailViewer() {
 
         <div className="email-viewer-body-content" ref={bodyContainerRef}>
           {sanitizedHtml ? (
-            <div
-              className="prose prose-sm max-w-none"
-              dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
+            <ShadowContent
+              html={sanitizedHtml}
+              shadowRootRef={shadowRootRef}
             />
           ) : body?.text ? (
             <pre className="whitespace-pre-wrap font-sans">

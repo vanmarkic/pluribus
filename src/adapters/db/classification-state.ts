@@ -276,21 +276,26 @@ export function createClassificationStateRepo(getDb: () => Database.Database): C
           GROUP BY cs.priority
         `).all(accountId) as { priority: string; count: number }[];
       } else {
+        // Always JOIN with emails to filter out orphaned classification_state records
+        // This matches listPendingReview() behavior (Issue #52 consistency fix)
         todayRow = db.prepare(`
-          SELECT COUNT(*) as count FROM classification_state
-          WHERE date(classified_at) = date('now')
+          SELECT COUNT(*) as count FROM classification_state cs
+          JOIN emails e ON cs.email_id = e.id
+          WHERE date(cs.classified_at) = date('now')
         `).get() as { count: number };
 
         // Must match listPendingReview() criteria for UI consistency (Issue #52)
         pendingRow = db.prepare(`
-          SELECT COUNT(*) as count FROM classification_state
-          WHERE status IN ('pending_review', 'classified')
+          SELECT COUNT(*) as count FROM classification_state cs
+          JOIN emails e ON cs.email_id = e.id
+          WHERE cs.status IN ('pending_review', 'classified')
         `).get() as { count: number };
 
         priorityRows = db.prepare(`
-          SELECT priority, COUNT(*) as count FROM classification_state
-          WHERE priority IS NOT NULL
-          GROUP BY priority
+          SELECT cs.priority, COUNT(*) as count FROM classification_state cs
+          JOIN emails e ON cs.email_id = e.id
+          WHERE cs.priority IS NOT NULL
+          GROUP BY cs.priority
         `).all() as { priority: string; count: number }[];
       }
 

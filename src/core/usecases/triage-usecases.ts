@@ -28,7 +28,7 @@ export const triageEmail = (deps: Pick<Deps, 'emails' | 'patternMatcher' | 'tria
     const patternResult = deps.patternMatcher.match(email);
 
     // Step 2: Get relevant training examples
-    const examples = await deps.trainingRepo.getRelevantExamples(email.accountId, email, 10);
+    const examples = await deps.trainingRepo.getRelevantExamples(email.accountId, email, 30);
 
     // Step 3: LLM classification with pattern hint
     const result = await deps.triageClassifier.classify(email, patternResult, examples);
@@ -67,7 +67,7 @@ export const triageAndMoveEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'fol
     const patternResult = deps.patternMatcher.match(email);
 
     // Step 2: Get relevant training examples
-    const examples = await deps.trainingRepo.getRelevantExamples(email.accountId, email, 10);
+    const examples = await deps.trainingRepo.getRelevantExamples(email.accountId, email, 30);
 
     // Step 3: LLM classification with pattern hint
     const result = await deps.triageClassifier.classify(email, patternResult, examples);

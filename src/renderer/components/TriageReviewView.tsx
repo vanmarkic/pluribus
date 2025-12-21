@@ -22,6 +22,7 @@ import type { Email, TriageClassificationResult, TriageFolder } from '../../core
 type TriageItem = {
   email: Email;
   analysis: TriageClassificationResult;
+  originalFolder: TriageFolder; // Track AI's original suggestion for learning
 };
 
 type SortField = 'confidence' | 'date' | 'sender';
@@ -37,11 +38,12 @@ const TRIAGE_FOLDERS: { id: TriageFolder; label: string }[] = [
   { id: 'Feed', label: 'Feed' },
   { id: 'Social', label: 'Social' },
   { id: 'Promotions', label: 'Promotions' },
+  { id: 'Archive', label: 'Archive' },
 ];
 
 export function TriageReviewView() {
   const { selectedAccountId } = useAccountStore();
-  const { selectedEmail, selectEmail } = useEmailStore();
+  const { selectedEmail, selectEmail, loadEmails } = useEmailStore();
 
   const [items, setItems] = useState<TriageItem[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -51,40 +53,41 @@ export function TriageReviewView() {
   const [loading, setLoading] = useState(true);
   const [showFolderPicker, setShowFolderPicker] = useState(false);
 
-  // Load emails pending review (from Review folder)
+  // Load emails pending review from classification_state database
+  // This uses the same data source as the dashboard stats for consistency
   useEffect(() => {
     const loadReviewItems = async () => {
-      if (!selectedAccountId) return;
       setLoading(true);
 
       try {
-        // Get emails from Review folder that need classification
-        const emails = await window.mailApi.emails.list({
-          accountId: selectedAccountId,
-          folderPath: 'Review',
+        // Use getPendingReview API which queries classification_state table
+        // This matches the dashboard's pendingReview count from getStats()
+        // Pass accountId if set, otherwise fetch all accounts (matches AISortView behavior)
+        const pendingItems = await window.mailApi.aiSort.getPendingReview({
+          accountId: selectedAccountId || undefined,
           limit: 100,
         });
 
-        // Classify each email to get analysis
-        const triageItems: TriageItem[] = [];
-        for (const email of emails) {
-          try {
-            const analysis = await window.mailApi.triage.classify(email.id);
-            triageItems.push({ email, analysis });
-          } catch {
-            // If classification fails, add with default analysis
-            triageItems.push({
-              email,
-              analysis: {
-                folder: 'Review',
-                tags: [],
-                confidence: 0,
-                patternAgreed: false,
-                reasoning: 'Classification pending',
-              },
-            });
-          }
-        }
+        // Map PendingReviewItem to TriageItem format
+        const triageItems: TriageItem[] = pendingItems.map((item: {
+          email: Email;
+          confidence: number | null;
+          suggestedFolder: string | null;
+          reasoning: string | null;
+        }) => {
+          const folder = (item.suggestedFolder || 'INBOX') as TriageFolder;
+          return {
+            email: item.email,
+            analysis: {
+              folder,
+              tags: [],
+              confidence: item.confidence ?? 0,
+              patternAgreed: false,
+              reasoning: item.reasoning || 'Pending review',
+            },
+            originalFolder: folder, // Track for learning from corrections
+          };
+        });
 
         setItems(triageItems);
       } catch (err) {
@@ -97,7 +100,8 @@ export function TriageReviewView() {
     loadReviewItems();
   }, [selectedAccountId]);
 
-  // Reset index if out of bounds
+  // Safety: Reset index if out of bounds (edge case protection)
+  // Note: items and sortedItems have the same length, so this works for both
   useEffect(() => {
     if (currentIndex >= items.length && items.length > 0) {
       setCurrentIndex(items.length - 1);
@@ -154,60 +158,116 @@ export function TriageReviewView() {
     else setSelectedIds(new Set(items.map(i => i.email.id)));
   };
 
+  // Helper to remove item and adjust index properly
+  // NOTE: currentIndex refers to position in sortedItems, so we need to find
+  // the item's position in the SORTED list, not the raw items array
+  const removeItemAndAdjustIndex = useCallback((emailId: number) => {
+    // Find position in sorted items (what currentIndex refers to)
+    const sortedIndex = sortedItems.findIndex(i => i.email.id === emailId);
+
+    setItems(prev => {
+      const newItems = prev.filter(i => i.email.id !== emailId);
+      return newItems;
+    });
+
+    // Adjust currentIndex based on sorted position
+    setCurrentIndex(prevIndex => {
+      // After filtering, sortedItems will have one fewer item
+      const newLength = sortedItems.length - 1;
+      if (newLength === 0) return 0;
+      if (sortedIndex === -1) return prevIndex; // Item wasn't in sorted list (shouldn't happen)
+      if (sortedIndex < prevIndex) {
+        // Removed item before current - shift index back
+        return prevIndex - 1;
+      } else if (sortedIndex === prevIndex && prevIndex >= newLength) {
+        // Removed current item and we're past the end - go to last
+        return newLength - 1;
+      }
+      // Otherwise keep same index (shows next item naturally)
+      return prevIndex;
+    });
+  }, [sortedItems]);
+
   const handleAccept = useCallback(async (item: TriageItem) => {
-    if (!selectedAccountId) return;
     try {
-      await window.mailApi.triage.moveToFolder(item.email.id, item.analysis.folder, selectedAccountId);
-      setItems(prev => prev.filter(i => i.email.id !== item.email.id));
+      // Use aiSort.accept which:
+      // 1. Updates classification_state to 'accepted' (removes from pending review)
+      // 2. Logs feedback with accuracy score
+      // 3. Moves email to the folder via IMAP
+      await window.mailApi.aiSort.accept(item.email.id, item.analysis.folder);
+      removeItemAndAdjustIndex(item.email.id);
+      // Refresh email list so moved emails disappear from inbox
+      loadEmails(selectedAccountId || undefined);
     } catch (err) {
       console.error('Failed to accept:', err);
     }
-  }, [selectedAccountId]);
+  }, [removeItemAndAdjustIndex, loadEmails, selectedAccountId]);
 
   const handleDismiss = useCallback(async (item: TriageItem) => {
-    if (!selectedAccountId) return;
     try {
-      // Move back to INBOX when dismissed
-      await window.mailApi.triage.moveToFolder(item.email.id, 'INBOX', selectedAccountId);
-      setItems(prev => prev.filter(i => i.email.id !== item.email.id));
+      // Use aiSort.dismiss which:
+      // 1. Updates classification_state to 'dismissed' (removes from pending review)
+      // 2. Logs feedback with 0% accuracy
+      // 3. Tracks confused patterns for improvement
+      await window.mailApi.aiSort.dismiss(item.email.id);
+      removeItemAndAdjustIndex(item.email.id);
     } catch (err) {
       console.error('Failed to dismiss:', err);
     }
-  }, [selectedAccountId]);
+  }, [removeItemAndAdjustIndex]);
 
-  const handleChangeFolder = useCallback(async (item: TriageItem, newFolder: TriageFolder) => {
-    if (!selectedAccountId) return;
-    try {
-      // Learn from correction
-      await window.mailApi.triage.learnFromCorrection(
-        item.email.id,
-        item.analysis.folder,
-        newFolder,
-        selectedAccountId
-      );
-      // Move to new folder
-      await window.mailApi.triage.moveToFolder(item.email.id, newFolder, selectedAccountId);
-      setItems(prev => prev.filter(i => i.email.id !== item.email.id));
-      setShowFolderPicker(false);
-    } catch (err) {
-      console.error('Failed to change folder:', err);
-    }
-  }, [selectedAccountId]);
+  // Update folder choice locally without moving yet - user can review before accepting
+  const handleChangeFolder = useCallback((item: TriageItem, newFolder: TriageFolder) => {
+    setItems(prev => prev.map(i =>
+      i.email.id === item.email.id
+        ? { ...i, analysis: { ...i.analysis, folder: newFolder } }
+        : i
+    ));
+    setShowFolderPicker(false);
+  }, []);
 
   const handleBulkAccept = async () => {
-    for (const id of selectedIds) {
-      const item = items.find(i => i.email.id === id);
-      if (item) await handleAccept(item);
+    // Capture items to process at the start
+    const itemsToProcess = items.filter(i => selectedIds.has(i.email.id));
+    const idsToRemove = new Set(itemsToProcess.map(i => i.email.id));
+
+    // Process all API calls using aiSort.accept (respects user-edited folders)
+    for (const item of itemsToProcess) {
+      try {
+        await window.mailApi.aiSort.accept(item.email.id, item.analysis.folder);
+      } catch (err) {
+        console.error('Failed to accept:', err);
+        idsToRemove.delete(item.email.id);
+      }
     }
+
+    // Remove all successfully processed items at once
+    setItems(prev => prev.filter(i => !idsToRemove.has(i.email.id)));
     setSelectedIds(new Set());
+    setCurrentIndex(0);
+    // Refresh email list so moved emails disappear from inbox
+    loadEmails(selectedAccountId || undefined);
   };
 
   const handleBulkDismiss = async () => {
-    for (const id of selectedIds) {
-      const item = items.find(i => i.email.id === id);
-      if (item) await handleDismiss(item);
+    // Capture items to process at the start
+    const itemsToProcess = items.filter(i => selectedIds.has(i.email.id));
+    const idsToRemove = new Set(itemsToProcess.map(i => i.email.id));
+
+    // Process all API calls using aiSort.dismiss
+    for (const item of itemsToProcess) {
+      try {
+        await window.mailApi.aiSort.dismiss(item.email.id);
+      } catch (err) {
+        console.error('Failed to dismiss:', err);
+        idsToRemove.delete(item.email.id);
+      }
     }
+
+    // Remove all successfully processed items at once
+    setItems(prev => prev.filter(i => !idsToRemove.has(i.email.id)));
     setSelectedIds(new Set());
+    setCurrentIndex(0);
   };
 
   // Keyboard navigation
