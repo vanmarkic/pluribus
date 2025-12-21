@@ -341,7 +341,7 @@ export function ClassificationSettings() {
           <div className="flex gap-2">
             <input
               type="text"
-              value={config.ollamaServerUrl || 'http://localhost:11434'}
+              value={config.ollamaServerUrl || 'http://127.0.0.1:11435'}
               onChange={(e) => updateConfig({ ollamaServerUrl: e.target.value })}
               className="input flex-1"
             />

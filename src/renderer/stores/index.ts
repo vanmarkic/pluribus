@@ -161,6 +161,7 @@ declare global {
           size: string;
           sizeBytes: number;
         }[]>;
+        getServerUrl: () => Promise<string>;
       };
       license: {
         getState: () => Promise<{
@@ -1264,13 +1265,14 @@ export const useOllamaSetupStore = create<OllamaSetupStore>((set, get) => ({
         await window.mailApi.ollama.pullModel(REQUIRED_MODELS[i]);
       }
 
-      // Step 4: Save config
+      // Step 4: Save config with actual server URL from Ollama manager
+      const serverUrl = await window.mailApi.ollama.getServerUrl();
       const llmConfig = await window.mailApi.config.get('llm');
       await window.mailApi.config.set('llm', {
         ...llmConfig,
         provider: 'ollama',
         model: REQUIRED_MODELS[0],
-        ollamaServerUrl: 'http://127.0.0.1:11435',
+        ollamaServerUrl: serverUrl,
       });
 
       set({

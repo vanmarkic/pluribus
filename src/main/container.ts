@@ -56,7 +56,7 @@ const LLM_DEFAULTS = {
   autoClassify: false,
   confidenceThreshold: 0.85,
   reclassifyCooldownDays: 7,
-  ollamaServerUrl: 'http://localhost:11434',
+  ollamaServerUrl: 'http://127.0.0.1:11435',
 };
 
 const configStore = new Store<AppConfig>({

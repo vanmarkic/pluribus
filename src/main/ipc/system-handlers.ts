@@ -77,6 +77,8 @@ export function setupSystemHandlers(container: Container): void {
     return RECOMMENDED_MODELS;
   });
 
+  ipcMain.handle('ollama:getServerUrl', () => ollamaManager.getServerUrl());
+
   // ==========================================
   // License Management
   // ==========================================

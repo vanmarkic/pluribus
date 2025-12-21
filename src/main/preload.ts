@@ -201,6 +201,7 @@ const api = {
       size: string;
       sizeBytes: number;
     }[]>,
+    getServerUrl: () => ipcRenderer.invoke('ollama:getServerUrl') as Promise<string>,
   },
 
   license: {

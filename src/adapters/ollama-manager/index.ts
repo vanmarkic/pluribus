@@ -45,8 +45,39 @@ export type OllamaManager = {
 // Constants
 // Ollama releases provide darwin builds as .tgz archives
 const OLLAMA_DOWNLOAD_URL = 'https://github.com/ollama/ollama/releases/latest/download/ollama-darwin.tgz';
-const OLLAMA_PORT = 11435; // Different from default 11434 to avoid conflicts
-const SERVER_URL = `http://127.0.0.1:${OLLAMA_PORT}`;
+const BASE_PORT = 11435; // Start from this port, increment if in use
+const MAX_PORT_ATTEMPTS = 10; // Try up to 10 ports
+
+// Module-level state for the active port
+let activePort: number = BASE_PORT;
+
+// Check if a port is available
+async function isPortAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const net = require('net');
+    const server = net.createServer();
+    server.listen(port, '127.0.0.1');
+    server.on('listening', () => {
+      server.close();
+      resolve(true);
+    });
+    server.on('error', () => {
+      resolve(false);
+    });
+  });
+}
+
+// Find an available port starting from BASE_PORT
+async function findAvailablePort(): Promise<number> {
+  for (let i = 0; i < MAX_PORT_ATTEMPTS; i++) {
+    const port = BASE_PORT + i;
+    if (await isPortAvailable(port)) {
+      return port;
+    }
+    console.log(`[OllamaManager] Port ${port} in use, trying next...`);
+  }
+  throw new Error(`No available ports found in range ${BASE_PORT}-${BASE_PORT + MAX_PORT_ATTEMPTS - 1}`);
+}
 
 // Curated models for email classification
 export const RECOMMENDED_MODELS = [
@@ -84,7 +115,7 @@ export function createOllamaManager(): OllamaManager {
   return {
     getOllamaPath: () => binPath,
     getModelsPath: () => modelsPath,
-    getServerUrl: () => SERVER_URL,
+    getServerUrl: () => `http://127.0.0.1:${activePort}`,
 
     async isInstalled(): Promise<boolean> {
       try {
@@ -180,7 +211,7 @@ export function createOllamaManager(): OllamaManager {
 
     async isRunning(): Promise<boolean> {
       try {
-        const response = await fetch(`${SERVER_URL}/api/tags`, {
+        const response = await fetch(`http://127.0.0.1:${activePort}/api/tags`, {
           method: 'GET',
           signal: AbortSignal.timeout(2000),
         });
@@ -202,6 +233,10 @@ export function createOllamaManager(): OllamaManager {
         throw new Error('Ollama binary not installed. Call downloadBinary() first.');
       }
 
+      // Find an available port
+      activePort = await findAvailablePort();
+      console.log(`[OllamaManager] Using port ${activePort}`);
+
       // Ensure models directory exists
       await fs.mkdir(modelsPath, { recursive: true });
 
@@ -211,7 +246,7 @@ export function createOllamaManager(): OllamaManager {
       ollamaProcess = spawn(binPath, ['serve'], {
         env: {
           ...process.env,
-          OLLAMA_HOST: `127.0.0.1:${OLLAMA_PORT}`,
+          OLLAMA_HOST: `127.0.0.1:${activePort}`,
           OLLAMA_MODELS: modelsPath,
         },
         detached: false,
