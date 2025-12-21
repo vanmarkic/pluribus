@@ -496,4 +496,15 @@ export type Deps = {
   // Awaiting reply
   awaiting: AwaitingRepo;
   llmGenerator: LLMGenerator;
+  // Threading
+  threads: ThreadRepo;
+};
+
+// ============================================
+// Thread Repository
+// ============================================
+
+export type ThreadRepo = {
+  getThreadedList: (accountId: number, folderId: number) => Promise<import('./domain').ThreadSummary[]>;
+  getThreadMessages: (threadId: string) => Promise<import('./domain').Email[]>;
 };

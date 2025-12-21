@@ -14,7 +14,7 @@ import { createUseCases, type UseCases, type Deps } from '../core';
 
 // Adapters
 // Tags removed - using folders for organization (Issue #54)
-import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup, createAwaitingRepo } from '../adapters/db';
+import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup, createAwaitingRepo, createThreadRepo } from '../adapters/db';
 import { createMailSync, createImapFolderOps } from '../adapters/imap';
 import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier } from '../adapters/llm';
 import { createPatternMatcher, createTrainingRepo, createSenderRulesRepo, createSnoozeRepo, createTriageLogRepo, createTriageClassifier } from '../adapters/triage';
@@ -298,7 +298,10 @@ export function createContainer(): Container {
   const triageClassifier = createTriageClassifier(triageLlmClient);
 
   // Awaiting reply adapters
-  const awaiting = createAwaitingRepo(getDb);
+  const awaiting = createAwaitingRepo();
+
+  // Threading adapters
+  const threads = createThreadRepo();
 
   // LLM text generator for awaiting classification (uses qwen2.5:1.5b by default)
   const llmGenerator = createOllamaTextGenerator(() => {
@@ -342,6 +345,8 @@ export function createContainer(): Container {
     // Awaiting reply
     awaiting,
     llmGenerator,
+    // Threading
+    threads,
   };
   
   // Create use cases

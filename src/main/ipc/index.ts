@@ -19,6 +19,10 @@ import { setupContentHandlers } from './content-handlers';
 import { setupSystemHandlers } from './system-handlers';
 import { setupTriageHandlers } from './triage-handlers';
 import { setupAwaitingHandlers } from './awaiting-handlers';
+import { setupThreadHandlers } from './thread-handlers';
+import { setupUnsubscribeHandlers } from './unsubscribe-handlers';
+// Note: setupSendQueueHandlers requires SendQueue adapter (not yet implemented)
+// import { setupSendQueueHandlers } from './send-queue-handlers';
 
 // Re-export for external use
 export { getTempFiles };
@@ -36,6 +40,9 @@ export { getTempFiles };
  * - Content (Images, Drafts, Contacts)
  * - System (Database, Ollama, License)
  * - Triage
+ * - Awaiting Reply
+ * - Threads
+ * - Unsubscribe
  */
 export function registerIpcHandlers(window: BrowserWindow, container: Container): void {
   setupEmailHandlers(container);
@@ -48,6 +55,10 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   setupSystemHandlers(container);
   setupTriageHandlers(container);
   setupAwaitingHandlers(container);
+  setupThreadHandlers(container);
+  setupUnsubscribeHandlers(container);
+  // Note: Send queue handlers will be registered when adapter is implemented
+  // setupSendQueueHandlers(container.sendQueue);
 }
 
 // Re-export validation helpers for testing

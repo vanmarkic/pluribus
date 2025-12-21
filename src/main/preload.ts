@@ -249,6 +249,67 @@ const api = {
       ipcRenderer.invoke('triage:selectDiverseTrainingEmails', accountId, options),
   },
 
+  // Email Threading
+  threads: {
+    list: (accountId: number, folderId: number) =>
+      ipcRenderer.invoke('threads:list', accountId, folderId) as Promise<{
+        threadId: string;
+        subject: string;
+        snippet: string;
+        participants: { address: string; name: string | null }[];
+        messageCount: number;
+        unreadCount: number;
+        latestDate: string;
+        isLatestUnread: boolean;
+      }[]>,
+    messages: (threadId: string) =>
+      ipcRenderer.invoke('threads:messages', threadId) as Promise<any[]>,
+  },
+
+  // Awaiting Reply
+  awaiting: {
+    list: (accountId: number) =>
+      ipcRenderer.invoke('awaiting:list', accountId) as Promise<any[]>,
+    mark: (emailId: number) =>
+      ipcRenderer.invoke('awaiting:mark', emailId) as Promise<void>,
+    clear: (emailId: number) =>
+      ipcRenderer.invoke('awaiting:clear', emailId) as Promise<void>,
+    shouldTrack: (body: string) =>
+      ipcRenderer.invoke('awaiting:shouldTrack', body) as Promise<boolean>,
+    clearByReply: (inReplyToMessageId: string) =>
+      ipcRenderer.invoke('awaiting:clearByReply', inReplyToMessageId) as Promise<number | null>,
+    toggle: (emailId: number) =>
+      ipcRenderer.invoke('awaiting:toggle', emailId) as Promise<boolean>,
+  },
+
+  // Send Queue (delayed sending)
+  sendQueue: {
+    queue: (accountId: number, draft: any) =>
+      ipcRenderer.invoke('send:queue', accountId, draft) as Promise<{ id: string; expiresAt: string }>,
+    cancel: (id: string) =>
+      ipcRenderer.invoke('send:cancel', id) as Promise<boolean>,
+    status: (id: string) =>
+      ipcRenderer.invoke('send:status', id) as Promise<{
+        id: string;
+        accountId: number;
+        draft: any;
+        expiresAt: string;
+        status: 'pending' | 'sent' | 'cancelled';
+      } | null>,
+  },
+
+  // Unsubscribe
+  unsubscribe: {
+    parse: (listUnsubscribe: string | null, listUnsubscribePost?: string) =>
+      ipcRenderer.invoke('unsubscribe:parse', listUnsubscribe, listUnsubscribePost) as Promise<{
+        mailto: string | null;
+        https: string | null;
+        oneClick: boolean;
+      }>,
+    execute: (info: { mailto: string | null; https: string | null; oneClick: boolean }) =>
+      ipcRenderer.invoke('unsubscribe:execute', info) as Promise<'email' | 'post' | 'browser' | 'none'>,
+  },
+
   on: (channel: string, callback: Callback) => {
     if (!listeners.has(channel)) listeners.set(channel, new Set());
     listeners.get(channel)!.add(callback);

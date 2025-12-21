@@ -6,7 +6,7 @@
  * - getThreadMessages: Get all messages in a thread
  */
 
-import type { ThreadRepo } from '../../adapters/db/thread-repo';
+import type { ThreadRepo } from '../ports';
 import type { ThreadSummary, Email } from '../domain';
 
 type Deps = {

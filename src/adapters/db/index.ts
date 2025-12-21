@@ -22,3 +22,7 @@ export { createClassificationStateRepo } from './classification-state';
 
 // Awaiting reply
 export { createAwaitingRepo } from './awaiting-repo';
+
+// Threading
+export { createThreadRepo } from './thread-repo';
+export type { ThreadRepo } from './thread-repo';

@@ -476,6 +476,35 @@ export function createMockApi(): MailAPI {
       selectDiverseTrainingEmails: async () => mockEmails.slice(0, 12),
     },
 
+    // Email Threading
+    threads: {
+      list: async () => [],
+      messages: async () => [],
+    },
+
+    // Awaiting Reply
+    awaiting: {
+      list: async () => [],
+      mark: async () => {},
+      clear: async () => {},
+      shouldTrack: async () => false,
+      clearByReply: async () => null,
+      toggle: async () => false,
+    },
+
+    // Send Queue (delayed sending)
+    sendQueue: {
+      queue: async () => ({ id: 'mock-queue-id', expiresAt: new Date(Date.now() + 30000).toISOString() }),
+      cancel: async () => true,
+      status: async () => null,
+    },
+
+    // Unsubscribe
+    unsubscribe: {
+      parse: async () => ({ mailto: null, https: null, oneClick: false }),
+      execute: async () => 'none' as const,
+    },
+
     on: (channel, callback) => {
       if (!listeners.has(channel)) listeners.set(channel, new Set());
       listeners.get(channel)!.add(callback);

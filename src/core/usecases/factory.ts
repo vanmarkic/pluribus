@@ -17,6 +17,7 @@ import * as contactUseCases from './contact-usecases';
 import * as databaseUseCases from './database-usecases';
 import * as triageUseCases from './triage-usecases';
 import * as awaitingUseCases from './awaiting';
+import * as threadUseCases from './thread-usecases';
 
 /**
  * Create all use cases with dependencies
@@ -139,6 +140,10 @@ export function createUseCases(deps: Deps) {
     clearAwaitingByReply: awaitingUseCases.clearAwaitingByReply(deps),
     getAwaitingList: awaitingUseCases.getAwaitingList(deps),
     toggleAwaiting: awaitingUseCases.toggleAwaiting(deps),
+
+    // Threading
+    getThreadedEmails: threadUseCases.getThreadedEmails(deps),
+    getThreadMessages: threadUseCases.getThreadMessages(deps),
   };
 }
 
