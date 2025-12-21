@@ -25,6 +25,7 @@ import { createBackgroundTaskManager } from '../adapters/background';
 import { createOllamaManager, type OllamaManager } from '../adapters/ollama-manager';
 import { createOllamaTextGenerator } from '../adapters/ollama';
 import { createLicenseService } from '../adapters/license';
+import { createSendQueue, type SendQueue } from '../adapters/send-queue';
 import type { RemoteImagesSetting, DatabaseHealth } from '../core/ports';
 
 // ============================================
@@ -92,6 +93,7 @@ export type Container = {
     set: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
   };
   ollamaManager: OllamaManager;
+  sendQueue: SendQueue;
   shutdown: () => Promise<void>;
 };
 
@@ -355,6 +357,30 @@ export function createContainer(): Container {
   // Create OllamaManager for bundled Ollama binary management
   const ollamaManager = createOllamaManager();
 
+  // Create SendQueue for undo send (10 second delay)
+  const sendQueue = createSendQueue({
+    delayMs: 10000,
+    onSend: async (accountId, draft) => {
+      // Use the mail sender to actually send
+      const result = await sender.send(accountId, {
+        to: draft.to,
+        cc: draft.cc,
+        bcc: draft.bcc,
+        subject: draft.subject,
+        text: draft.body,
+        inReplyTo: draft.inReplyTo,
+        references: draft.references ? [draft.references] : undefined,
+      });
+      return { messageId: result.messageId };
+    },
+    onSent: (id, messageId) => {
+      console.log(`[SendQueue] Email ${id} sent: ${messageId}`);
+    },
+    onError: (id, error) => {
+      console.error(`[SendQueue] Failed to send ${id}:`, error);
+    },
+  });
+
   // Shutdown function
   const shutdown = async () => {
     await sync.disconnect(0); // Disconnect all
@@ -369,6 +395,7 @@ export function createContainer(): Container {
       set: (key, value) => configStore.set(key, value),
     },
     ollamaManager,
+    sendQueue,
     shutdown,
   };
 }

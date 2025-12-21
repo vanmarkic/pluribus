@@ -21,8 +21,7 @@ import { setupTriageHandlers } from './triage-handlers';
 import { setupAwaitingHandlers } from './awaiting-handlers';
 import { setupThreadHandlers } from './thread-handlers';
 import { setupUnsubscribeHandlers } from './unsubscribe-handlers';
-// Note: setupSendQueueHandlers requires SendQueue adapter (not yet implemented)
-// import { setupSendQueueHandlers } from './send-queue-handlers';
+import { setupSendQueueHandlers } from './send-queue-handlers';
 
 // Re-export for external use
 export { getTempFiles };
@@ -43,6 +42,7 @@ export { getTempFiles };
  * - Awaiting Reply
  * - Threads
  * - Unsubscribe
+ * - Send Queue (undo send)
  */
 export function registerIpcHandlers(window: BrowserWindow, container: Container): void {
   setupEmailHandlers(container);
@@ -57,8 +57,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   setupAwaitingHandlers(container);
   setupThreadHandlers(container);
   setupUnsubscribeHandlers(container);
-  // Note: Send queue handlers will be registered when adapter is implemented
-  // setupSendQueueHandlers(container.sendQueue);
+  setupSendQueueHandlers(container.sendQueue);
 }
 
 // Re-export validation helpers for testing
