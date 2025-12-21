@@ -26,19 +26,33 @@ vi.mock('fs/promises', () => ({
 
 // Mock child_process
 vi.mock('child_process', () => ({
+  default: {
+    spawn: vi.fn(),
+    execSync: vi.fn(),
+  },
   spawn: vi.fn(),
+  execSync: vi.fn(),
 }));
 
 // Mock fs (for createWriteStream)
-vi.mock('fs', () => ({
-  createWriteStream: vi.fn(() => ({
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  const mockWriteStream = {
     write: vi.fn(),
     end: vi.fn(),
-    on: vi.fn((event, cb) => {
+    on: vi.fn((event: string, cb: () => void) => {
       if (event === 'finish') setTimeout(cb, 0);
     }),
-  })),
-}));
+  };
+  return {
+    ...actual,
+    default: {
+      ...((actual.default ?? {}) as Record<string, unknown>),
+      createWriteStream: vi.fn(() => mockWriteStream),
+    },
+    createWriteStream: vi.fn(() => mockWriteStream),
+  };
+});
 
 import fs from 'fs/promises';
 import { createOllamaManager, RECOMMENDED_MODELS, cleanupOllamaProcess } from './index';

@@ -8,7 +8,6 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as path from 'path';
 import * as fs from 'fs';
 import { initDb, closeDb, createEmailRepo, createContactRepo } from './index';
-import type { Email } from '../../core/domain';
 
 const TEST_DB_PATH = path.join(__dirname, 'test.db');
 const SCHEMA_PATH = path.join(__dirname, 'schema.sql');
@@ -401,6 +400,16 @@ describe('Database Adapter - SQL Injection Protection', () => {
         isStarred: false,
         hasAttachments: false,
         bodyFetched: false,
+        // Threading
+        inReplyTo: null,
+        references: null,
+        threadId: null,
+        // Awaiting reply
+        awaitingReply: false,
+        awaitingReplySince: null,
+        // Unsubscribe
+        listUnsubscribe: null,
+        listUnsubscribePost: null,
       });
 
       // Should not throw

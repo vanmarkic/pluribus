@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createOllamaProvider, createOllamaClassifier, startOllama, resetOllamaEmailCount } from './ollama';
 
 // Mock global fetch
@@ -144,20 +144,30 @@ describe('OllamaClassifier', () => {
 
   const mockEmail = {
     id: 1,
-    subject: 'Test Email',
-    from: { address: 'test@example.com', name: 'Test User' },
-    to: [{ address: 'me@example.com', name: 'Me' }],
-    date: new Date('2024-01-01'),
-    snippet: 'This is a test email',
-    isRead: false,
-    isStarred: false,
     accountId: 1,
-    folderPath: 'INBOX',
-    threadId: null,
+    folderId: 1,
     uid: 1,
     messageId: '<test@example.com>',
+    subject: 'Test Email',
+    from: { address: 'test@example.com', name: 'Test User' },
+    to: ['me@example.com'],
+    date: new Date('2024-01-01'),
+    snippet: 'This is a test email',
+    sizeBytes: 1000,
+    isRead: false,
+    isStarred: false,
+    hasAttachments: false,
+    bodyFetched: false,
+    // Threading
     inReplyTo: null,
     references: null,
+    threadId: null,
+    // Awaiting reply
+    awaitingReply: false,
+    awaitingReplySince: null,
+    // Unsubscribe
+    listUnsubscribe: null,
+    listUnsubscribePost: null,
   };
 
   beforeEach(() => {

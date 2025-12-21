@@ -6,11 +6,10 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import * as path from 'path';
-import * as fs from 'fs';
+import path from 'path';
+import fs from 'fs';
 import { initDb, closeDb, createEmailRepo, createAccountRepo, createFolderRepo } from './index';
 import { createClassificationStateRepo } from './classification-state';
-import type { Email, ClassificationStatus } from '../../core/domain';
 
 const TEST_DB_PATH = path.join(__dirname, 'test-classification-state.db');
 const SCHEMA_PATH = path.join(__dirname, 'schema.sql');
@@ -85,6 +84,16 @@ describe('Classification State Repository', () => {
       isStarred: false,
       hasAttachments: false,
       bodyFetched: false,
+      // Threading
+      inReplyTo: null,
+      references: null,
+      threadId: null,
+      // Awaiting reply
+      awaitingReply: false,
+      awaitingReplySince: null,
+      // Unsubscribe
+      listUnsubscribe: null,
+      listUnsubscribePost: null,
     });
     testEmailIds.push(email.id);
     return email.id;
