@@ -30,11 +30,49 @@ type ImapMessage = {
     from?: Array<{ address?: string; name?: string }>;
     to?: Array<{ address?: string }>;
     date?: Date;
+    inReplyTo?: string;
   };
   flags?: Set<string>;
   size?: number;
   bodyStructure?: unknown;
+  headers?: Buffer;
 };
+
+/**
+ * Parse raw headers buffer into a Map.
+ * Headers format: "Header-Name: value\r\n"
+ */
+function parseHeaders(buffer: Buffer | undefined): Map<string, string> {
+  const result = new Map<string, string>();
+  if (!buffer) return result;
+
+  const text = buffer.toString('utf-8');
+  const lines = text.split(/\r?\n/);
+  let currentKey = '';
+  let currentValue = '';
+
+  for (const line of lines) {
+    if (line.startsWith(' ') || line.startsWith('\t')) {
+      // Continuation of previous header (folded)
+      currentValue += ' ' + line.trim();
+    } else if (line.includes(':')) {
+      // Save previous header if exists
+      if (currentKey) {
+        result.set(currentKey.toLowerCase(), currentValue);
+      }
+      // Parse new header
+      const colonIndex = line.indexOf(':');
+      currentKey = line.substring(0, colonIndex).trim();
+      currentValue = line.substring(colonIndex + 1).trim();
+    }
+  }
+  // Save last header
+  if (currentKey) {
+    result.set(currentKey.toLowerCase(), currentValue);
+  }
+
+  return result;
+}
 
 function mapImapToEmail(
   msg: ImapMessage,
@@ -43,8 +81,34 @@ function mapImapToEmail(
   hasAttachments: boolean
 ): Omit<Email, 'id'> {
   const env = msg.envelope;
+  const headers = parseHeaders(msg.headers);
+  const messageId = env.messageId || `local-${Date.now()}-${msg.uid}`;
+
+  // Extract thread-related headers
+  // inReplyTo from envelope, references from headers
+  const inReplyTo = env.inReplyTo || null;
+  const references = headers.get('references') || null;
+
+  // Compute thread_id: first message-id in references chain (thread root),
+  // or own message-id if standalone email
+  let threadId: string | null = null;
+  if (references) {
+    // References is space-separated list of message-ids
+    const firstRef = references.trim().split(/\s+/)[0];
+    if (firstRef) {
+      threadId = firstRef;
+    }
+  }
+  if (!threadId) {
+    threadId = messageId;
+  }
+
+  // Extract unsubscribe headers
+  const listUnsubscribe = headers.get('list-unsubscribe') || null;
+  const listUnsubscribePost = headers.get('list-unsubscribe-post') || null;
+
   return {
-    messageId: env.messageId || `local-${Date.now()}-${msg.uid}`,
+    messageId,
     accountId,
     folderId,
     uid: msg.uid,
@@ -61,6 +125,19 @@ function mapImapToEmail(
     isStarred: msg.flags?.has('\\Flagged') || false,
     hasAttachments,
     bodyFetched: false,
+
+    // Threading
+    inReplyTo,
+    references,
+    threadId,
+
+    // Awaiting reply (default values, will be updated later if needed)
+    awaitingReply: false,
+    awaitingReplySince: null,
+
+    // Unsubscribe
+    listUnsubscribe,
+    listUnsubscribePost,
   };
 }
 
@@ -311,6 +388,7 @@ export function createMailSync(
               flags: true,
               bodyStructure: true,
               size: true,
+              headers: ['references', 'list-unsubscribe', 'list-unsubscribe-post'],
             }, { uid: true })) {
               if (!msg.envelope) continue;
 

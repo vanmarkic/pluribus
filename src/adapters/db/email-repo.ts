@@ -105,14 +105,17 @@ export function createEmailRepo(): EmailRepo {
         INSERT INTO emails (
           message_id, account_id, folder_id, uid, subject,
           from_address, from_name, to_addresses, date, snippet,
-          size_bytes, is_read, is_starred, has_attachments, body_fetched
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          size_bytes, is_read, is_starred, has_attachments, body_fetched,
+          in_reply_to, references, thread_id, list_unsubscribe, list_unsubscribe_post
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         email.messageId, email.accountId, email.folderId, email.uid, email.subject,
         email.from.address, email.from.name, JSON.stringify(email.to),
         email.date.toISOString(), email.snippet, email.sizeBytes,
         email.isRead ? 1 : 0, email.isStarred ? 1 : 0,
-        email.hasAttachments ? 1 : 0, email.bodyFetched ? 1 : 0
+        email.hasAttachments ? 1 : 0, email.bodyFetched ? 1 : 0,
+        email.inReplyTo, email.references, email.threadId,
+        email.listUnsubscribe, email.listUnsubscribePost
       );
       return { ...email, id: result.lastInsertRowid as number };
     },
@@ -122,8 +125,9 @@ export function createEmailRepo(): EmailRepo {
         INSERT OR IGNORE INTO emails (
           message_id, account_id, folder_id, uid, subject,
           from_address, from_name, to_addresses, date, snippet,
-          size_bytes, is_read, is_starred, has_attachments, body_fetched
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          size_bytes, is_read, is_starred, has_attachments, body_fetched,
+          in_reply_to, references, thread_id, list_unsubscribe, list_unsubscribe_post
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const newIds: number[] = [];
@@ -134,7 +138,9 @@ export function createEmailRepo(): EmailRepo {
             e.from.address, e.from.name, JSON.stringify(e.to),
             e.date.toISOString(), e.snippet, e.sizeBytes,
             e.isRead ? 1 : 0, e.isStarred ? 1 : 0,
-            e.hasAttachments ? 1 : 0, e.bodyFetched ? 1 : 0
+            e.hasAttachments ? 1 : 0, e.bodyFetched ? 1 : 0,
+            e.inReplyTo, e.references, e.threadId,
+            e.listUnsubscribe, e.listUnsubscribePost
           );
           if (r.changes > 0) {
             newIds.push(r.lastInsertRowid as number);
