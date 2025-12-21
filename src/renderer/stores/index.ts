@@ -919,6 +919,208 @@ export const useLicenseStore = create<LicenseStore>((set, get) => ({
   closeActivationModal: () => set({ showActivationModal: false, error: null }),
 }));
 
+// ============================================
+// Thread Store
+// ============================================
+
+type ThreadStore = {
+  // State
+  threadView: boolean;           // true = show threaded, false = flat
+  expandedThreads: Set<string>;  // Set of expanded thread IDs
+
+  // Actions
+  setThreadView: (enabled: boolean) => void;
+  toggleThread: (threadId: string) => void;
+  expandThread: (threadId: string) => void;
+  collapseThread: (threadId: string) => void;
+  collapseAll: () => void;
+  expandAll: (threadIds: string[]) => void;
+};
+
+export const useThreadStore = create<ThreadStore>()(
+  persist(
+    (set) => ({
+      threadView: false,
+      expandedThreads: new Set(),
+
+      setThreadView: (enabled) => set({ threadView: enabled }),
+
+      toggleThread: (threadId) => set((state) => {
+        const newExpanded = new Set(state.expandedThreads);
+        if (newExpanded.has(threadId)) {
+          newExpanded.delete(threadId);
+        } else {
+          newExpanded.add(threadId);
+        }
+        return { expandedThreads: newExpanded };
+      }),
+
+      expandThread: (threadId) => set((state) => {
+        const newExpanded = new Set(state.expandedThreads);
+        newExpanded.add(threadId);
+        return { expandedThreads: newExpanded };
+      }),
+
+      collapseThread: (threadId) => set((state) => {
+        const newExpanded = new Set(state.expandedThreads);
+        newExpanded.delete(threadId);
+        return { expandedThreads: newExpanded };
+      }),
+
+      collapseAll: () => set({ expandedThreads: new Set() }),
+
+      expandAll: (threadIds) => set({ expandedThreads: new Set(threadIds) }),
+    }),
+    {
+      name: 'thread-store',
+      partialize: (state) => ({ threadView: state.threadView }),
+      // Note: expandedThreads is not persisted - threads start collapsed on app reload
+    }
+  )
+);
+
+// ============================================
+// Awaiting Reply Store
+// ============================================
+
+type AwaitingStore = {
+  // State
+  awaitingEmails: Email[];
+  awaitingLoading: boolean;
+  awaitingError: string | null;
+
+  // Actions
+  fetchAwaitingEmails: (accountId: number) => Promise<void>;
+  toggleAwaiting: (emailId: number) => Promise<void>;
+  clearAwaiting: () => void;
+};
+
+export const useAwaitingStore = create<AwaitingStore>((set, get) => ({
+  awaitingEmails: [],
+  awaitingLoading: false,
+  awaitingError: null,
+
+  fetchAwaitingEmails: async (accountId) => {
+    set({ awaitingLoading: true, awaitingError: null });
+    try {
+      // Fetch emails marked as awaiting reply
+      // This uses a special filter - the backend should support this via folderPath or a dedicated endpoint
+      const emails = await window.mailApi.emails.list({
+        accountId,
+        awaitingReply: true,
+      });
+      set({ awaitingEmails: emails, awaitingLoading: false });
+    } catch (err) {
+      set({ awaitingError: String(err), awaitingLoading: false });
+    }
+  },
+
+  toggleAwaiting: async (emailId) => {
+    try {
+      // Toggle the awaiting reply status for an email
+      // This will be implemented in the backend
+      const email = get().awaitingEmails.find(e => e.id === emailId);
+      if (email) {
+        // Remove from awaiting list (was awaiting, now not)
+        set((state) => ({
+          awaitingEmails: state.awaitingEmails.filter(e => e.id !== emailId),
+        }));
+      }
+      // Note: The actual toggle API call would go here once backend is implemented
+      // await window.mailApi.emails.toggleAwaiting(emailId);
+    } catch (err) {
+      set({ awaitingError: String(err) });
+    }
+  },
+
+  clearAwaiting: () => set({ awaitingEmails: [], awaitingError: null }),
+}));
+
+// ============================================
+// Send Queue Store (Undo Send)
+// ============================================
+
+type PendingSend = {
+  id: string;
+  expiresAt: Date;
+  draft: DraftInput;
+  accountId: number;
+};
+
+type SendQueueStore = {
+  // State
+  pendingSend: PendingSend | null;
+  sendError: string | null;
+
+  // Actions
+  queueSend: (accountId: number, draft: DraftInput) => Promise<{ id: string; expiresAt: Date }>;
+  cancelSend: () => Promise<boolean>;
+  clearPendingSend: () => void;
+  executePendingSend: () => Promise<void>;
+};
+
+// Default undo window in milliseconds (5 seconds)
+const UNDO_SEND_DELAY_MS = 5000;
+
+export const useSendQueueStore = create<SendQueueStore>((set, get) => ({
+  pendingSend: null,
+  sendError: null,
+
+  queueSend: async (accountId, draft) => {
+    // Generate unique ID for this send operation
+    const id = `send-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const expiresAt = new Date(Date.now() + UNDO_SEND_DELAY_MS);
+
+    // Store pending send
+    set({
+      pendingSend: { id, expiresAt, draft, accountId },
+      sendError: null,
+    });
+
+    // Schedule actual send after delay
+    setTimeout(() => {
+      const current = get().pendingSend;
+      // Only execute if this is still the pending send (not cancelled)
+      if (current && current.id === id) {
+        get().executePendingSend();
+      }
+    }, UNDO_SEND_DELAY_MS);
+
+    return { id, expiresAt };
+  },
+
+  cancelSend: async () => {
+    const { pendingSend } = get();
+    if (!pendingSend) {
+      return false;
+    }
+
+    // Check if still within undo window
+    if (new Date() > pendingSend.expiresAt) {
+      return false; // Too late to cancel
+    }
+
+    // Clear the pending send
+    set({ pendingSend: null });
+    return true;
+  },
+
+  clearPendingSend: () => set({ pendingSend: null, sendError: null }),
+
+  executePendingSend: async () => {
+    const { pendingSend } = get();
+    if (!pendingSend) return;
+
+    try {
+      // Actually send the email
+      await window.mailApi.send.email(pendingSend.accountId, pendingSend.draft);
+      set({ pendingSend: null, sendError: null });
+    } catch (err) {
+      set({ sendError: String(err), pendingSend: null });
+    }
+  },
+}));
+
 // Subscribe to license state changes from main process
 if (typeof window !== 'undefined' && window.mailApi) {
   window.mailApi.on('license:state-changed', (state: any) => {
