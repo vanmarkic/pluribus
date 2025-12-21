@@ -29,6 +29,13 @@ const baseEmail: Email = {
   isStarred: false,
   hasAttachments: false,
   bodyFetched: false,
+  inReplyTo: null,
+  references: null,
+  threadId: null,
+  awaitingReply: false,
+  awaitingReplySince: null,
+  listUnsubscribe: null,
+  listUnsubscribePost: null,
 };
 
 const basePatternHint: PatternMatchResult = {

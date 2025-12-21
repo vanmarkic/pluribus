@@ -49,6 +49,16 @@ const emailArbitrary = fc.record({
   isStarred: fc.boolean(),
   hasAttachments: fc.boolean(),
   bodyFetched: fc.boolean(),
+  // Threading
+  inReplyTo: fc.option(fc.emailAddress().map(email => `<${email}>`), { nil: null }),
+  references: fc.option(fc.string({ maxLength: 500 }), { nil: null }),
+  threadId: fc.option(fc.string({ minLength: 10, maxLength: 50 }), { nil: null }),
+  // Awaiting reply
+  awaitingReply: fc.boolean(),
+  awaitingReplySince: fc.option(fc.integer({ min: 946684800000, max: 1924991999000 }).map(ts => new Date(ts)), { nil: null }),
+  // Unsubscribe
+  listUnsubscribe: fc.option(fc.string({ maxLength: 500 }), { nil: null }),
+  listUnsubscribePost: fc.option(fc.string({ maxLength: 200 }), { nil: null }),
 }) as fc.Arbitrary<Email>;
 
 const triageFolderArbitrary = fc.constantFrom<TriageFolder>(
@@ -388,6 +398,13 @@ describe('Property-Based Regression Tests', () => {
         isStarred: false,
         hasAttachments: false,
         bodyFetched: false,
+        inReplyTo: null,
+        references: null,
+        threadId: null,
+        awaitingReply: false,
+        awaitingReplySince: null,
+        listUnsubscribe: null,
+        listUnsubscribePost: null,
       };
 
       const patternHint: PatternMatchResult = {
@@ -416,6 +433,13 @@ describe('Property-Based Regression Tests', () => {
         isStarred: false,
         hasAttachments: false,
         bodyFetched: false,
+        inReplyTo: null,
+        references: null,
+        threadId: null,
+        awaitingReply: false,
+        awaitingReplySince: null,
+        listUnsubscribe: null,
+        listUnsubscribePost: null,
       };
 
       const patternHint: PatternMatchResult = {
@@ -479,6 +503,13 @@ describe('Property-Based Regression Tests', () => {
         isStarred: false,
         hasAttachments: false,
         bodyFetched: false,
+        inReplyTo: null,
+        references: null,
+        threadId: null,
+        awaitingReply: false,
+        awaitingReplySince: null,
+        listUnsubscribe: null,
+        listUnsubscribePost: null,
       };
 
       const patternHint: PatternMatchResult = {
@@ -509,6 +540,13 @@ describe('Property-Based Regression Tests', () => {
         isStarred: false,
         hasAttachments: false,
         bodyFetched: false,
+        inReplyTo: null,
+        references: null,
+        threadId: null,
+        awaitingReply: false,
+        awaitingReplySince: null,
+        listUnsubscribe: null,
+        listUnsubscribePost: null,
       };
 
       const patternHint: PatternMatchResult = {
@@ -539,6 +577,13 @@ describe('Property-Based Regression Tests', () => {
         isStarred: false,
         hasAttachments: false,
         bodyFetched: false,
+        inReplyTo: null,
+        references: null,
+        threadId: null,
+        awaitingReply: false,
+        awaitingReplySince: null,
+        listUnsubscribe: null,
+        listUnsubscribePost: null,
       };
 
       const patternHint: PatternMatchResult = {

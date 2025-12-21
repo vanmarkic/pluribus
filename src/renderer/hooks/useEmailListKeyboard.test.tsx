@@ -20,18 +20,29 @@ vi.mock('../stores', () => ({
 const createEmail = (id: number, overrides: Partial<Email> = {}): Email => ({
   id,
   accountId: 1,
+  folderId: 1,
+  uid: id,
   messageId: `msg-${id}`,
   subject: `Test Email ${id}`,
   from: { address: `sender${id}@test.com`, name: `Sender ${id}` },
   to: [`recipient${id}@test.com`],
-  cc: [],
-  bcc: [],
   date: new Date(),
   snippet: `Snippet for email ${id}`,
+  sizeBytes: 1000,
   isRead: false,
   isStarred: false,
   hasAttachments: false,
-  folder: 'INBOX',
+  bodyFetched: false,
+  // Threading
+  inReplyTo: null,
+  references: null,
+  threadId: null,
+  // Awaiting reply
+  awaitingReply: false,
+  awaitingReplySince: null,
+  // Unsubscribe
+  listUnsubscribe: null,
+  listUnsubscribePost: null,
   ...overrides,
 });
 
