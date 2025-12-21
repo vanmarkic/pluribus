@@ -196,6 +196,50 @@ declare global {
         // Issue #55: Select diverse training emails
         selectDiverseTrainingEmails: (accountId: number, options?: { maxEmails?: number; poolSize?: number }) => Promise<Email[]>;
       };
+      // Threading
+      threads: {
+        list: (accountId: number, folderId: number) => Promise<{
+          threadId: string;
+          subject: string;
+          snippet: string;
+          participants: { address: string; name: string | null }[];
+          messageCount: number;
+          unreadCount: number;
+          latestDate: string;
+          isLatestUnread: boolean;
+        }[]>;
+        messages: (threadId: string) => Promise<Email[]>;
+      };
+      // Awaiting Reply
+      awaiting: {
+        list: (accountId: number) => Promise<Email[]>;
+        mark: (emailId: number) => Promise<void>;
+        clear: (emailId: number) => Promise<void>;
+        shouldTrack: (body: string) => Promise<boolean>;
+        clearByReply: (inReplyToMessageId: string) => Promise<number | null>;
+        toggle: (emailId: number) => Promise<boolean>;
+      };
+      // Send Queue (undo send)
+      sendQueue: {
+        queue: (accountId: number, draft: any) => Promise<{ id: string; expiresAt: string }>;
+        cancel: (id: string) => Promise<boolean>;
+        status: (id: string) => Promise<{
+          id: string;
+          accountId: number;
+          draft: any;
+          expiresAt: string;
+          status: 'pending' | 'sent' | 'cancelled';
+        } | null>;
+      };
+      // Unsubscribe
+      unsubscribe: {
+        parse: (listUnsubscribe: string | null, listUnsubscribePost?: string) => Promise<{
+          mailto: string | null;
+          https: string | null;
+          oneClick: boolean;
+        }>;
+        execute: (info: { mailto: string | null; https: string | null; oneClick: boolean }) => Promise<'email' | 'post' | 'browser' | 'none'>;
+      };
       on: (channel: string, callback: (...args: any[]) => void) => void;
       off: (channel: string, callback: (...args: any[]) => void) => void;
     };
@@ -1003,12 +1047,8 @@ export const useAwaitingStore = create<AwaitingStore>((set, get) => ({
   fetchAwaitingEmails: async (accountId) => {
     set({ awaitingLoading: true, awaitingError: null });
     try {
-      // Fetch emails marked as awaiting reply
-      // This uses a special filter - the backend should support this via folderPath or a dedicated endpoint
-      const emails = await window.mailApi.emails.list({
-        accountId,
-        awaitingReply: true,
-      });
+      // Fetch emails marked as awaiting reply using dedicated endpoint
+      const emails = await window.mailApi.awaiting.list(accountId);
       set({ awaitingEmails: emails, awaitingLoading: false });
     } catch (err) {
       set({ awaitingError: String(err), awaitingLoading: false });
@@ -1018,16 +1058,22 @@ export const useAwaitingStore = create<AwaitingStore>((set, get) => ({
   toggleAwaiting: async (emailId) => {
     try {
       // Toggle the awaiting reply status for an email
-      // This will be implemented in the backend
-      const email = get().awaitingEmails.find(e => e.id === emailId);
-      if (email) {
-        // Remove from awaiting list (was awaiting, now not)
+      const isNowAwaiting = await window.mailApi.awaiting.toggle(emailId);
+
+      if (isNowAwaiting) {
+        // Email is now awaiting - would need to re-fetch to get email details
+        // For now, just refetch the list
+        const accountId = get().awaitingEmails[0]?.accountId;
+        if (accountId) {
+          const emails = await window.mailApi.awaiting.list(accountId);
+          set({ awaitingEmails: emails });
+        }
+      } else {
+        // Email is no longer awaiting - remove from list
         set((state) => ({
           awaitingEmails: state.awaitingEmails.filter(e => e.id !== emailId),
         }));
       }
-      // Note: The actual toggle API call would go here once backend is implemented
-      // await window.mailApi.emails.toggleAwaiting(emailId);
     } catch (err) {
       set({ awaitingError: String(err) });
     }
