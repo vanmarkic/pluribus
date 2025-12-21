@@ -29,5 +29,8 @@ export * from './database-usecases';
 // Triage use cases
 export * from './triage-usecases';
 
+// Thread use cases
+export * from './thread-usecases';
+
 // Factory (createUseCases, UseCases type)
 export * from './factory';
