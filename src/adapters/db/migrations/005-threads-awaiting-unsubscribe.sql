@@ -3,7 +3,7 @@
 
 -- Threading columns
 ALTER TABLE emails ADD COLUMN in_reply_to TEXT;
-ALTER TABLE emails ADD COLUMN references TEXT;
+ALTER TABLE emails ADD COLUMN "references" TEXT;
 ALTER TABLE emails ADD COLUMN thread_id TEXT;
 
 -- Awaiting reply columns

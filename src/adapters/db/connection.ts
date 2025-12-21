@@ -7,6 +7,7 @@
 
 import Database from 'better-sqlite3';
 import * as fs from 'fs';
+import * as path from 'path';
 
 // ============================================
 // Connection State
@@ -201,10 +202,40 @@ function hasColumn(db: Database.Database, table: string, column: string): boolea
  * Runs database migrations to update schema for existing databases.
  * Each migration checks if it needs to run (idempotent).
  */
-function runMigrations(db: Database.Database): void {
+export function runMigrations(db: Database.Database): void {
   // Migration 1: Add suggested_folder column to classification_state
   if (!hasColumn(db, 'classification_state', 'suggested_folder')) {
     db.exec(`ALTER TABLE classification_state ADD COLUMN suggested_folder TEXT`);
     console.log('[DB Migration] Added suggested_folder column to classification_state');
+  }
+
+  // Migration 005: Add threading, awaiting reply, and unsubscribe columns
+  if (!hasColumn(db, 'emails', 'thread_id')) {
+    const migrationPath = path.join(__dirname, 'migrations', '005-threads-awaiting-unsubscribe.sql');
+    const migration005 = fs.readFileSync(migrationPath, 'utf-8');
+
+    // Remove comment lines first, then split by semicolon
+    const sqlWithoutComments = migration005
+      .split('\n')
+      .filter(line => !line.trim().startsWith('--'))
+      .join('\n');
+
+    // Split by semicolon and run each statement (ALTER TABLE can't be batched)
+    const statements = sqlWithoutComments
+      .split(';')
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+
+    for (const stmt of statements) {
+      try {
+        db.exec(stmt);
+      } catch (err: any) {
+        // Ignore "duplicate column" errors for idempotent migrations
+        if (!err.message.includes('duplicate column')) {
+          throw err;
+        }
+      }
+    }
+    console.log('[DB Migration] Applied migration 005: threads, awaiting reply, unsubscribe');
   }
 }
