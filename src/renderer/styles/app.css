@@ -641,3 +641,151 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-text-muted);
 }
+
+/* ============================================
+   THREAD VIEW STYLES
+   ============================================ */
+
+/* Thread view toggle button */
+.thread-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.thread-view-toggle:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
+}
+
+.thread-view-toggle[aria-pressed="true"] {
+  background: var(--color-accent-light);
+  color: var(--color-accent-text);
+  border-color: var(--color-accent);
+}
+
+/* Thread expand/collapse button */
+.thread-expand-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.thread-expand-btn:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-text-secondary);
+}
+
+/* Thread message count badge */
+.thread-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.email-item.unread .thread-count-badge {
+  background: var(--color-accent);
+  color: white;
+}
+
+/* Thread row styles */
+.thread-row {
+  position: relative;
+}
+
+/* Expanded email within thread - reduced padding */
+.thread-email-row {
+  display: flex;
+  padding-left: var(--space-sm);
+  padding-top: var(--space-sm);
+  padding-bottom: var(--space-sm);
+  padding-right: var(--space-lg);
+  background: var(--color-bg-secondary);
+}
+
+.thread-email-row:hover {
+  background: var(--color-bg-hover);
+}
+
+.thread-email-row.selected {
+  background: var(--color-bg-selected);
+}
+
+.thread-email-row.focused {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+/* Thread connector line */
+.thread-connector {
+  display: flex;
+  align-items: stretch;
+  width: 24px;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.thread-line {
+  position: absolute;
+  left: 11px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--color-border);
+}
+
+.thread-line.thread-line-first {
+  top: 50%;
+}
+
+.thread-line.thread-line-last {
+  bottom: 50%;
+}
+
+.thread-line.thread-line-first.thread-line-last {
+  display: none;
+}
+
+/* Thread email content area */
+.thread-email-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.thread-email-content .email-item-header {
+  margin-bottom: 0;
+}
+
+.thread-email-content .email-item-snippet {
+  -webkit-line-clamp: 1;
+}
