@@ -1,16 +1,18 @@
 /**
  * Email List Component
  *
- * Displays list of emails with sender, subject, snippet, date, and tags.
- * Matches reference design with clean layout.
+ * Displays list of emails with sender, subject, snippet, date.
+ * Supports keyboard navigation, multiselect, and quick actions.
  * Uses react-window for virtualization to handle large email lists efficiently.
  */
 
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import { FixedSizeList, ListChildComponentProps } from 'react-window';
 import { IconFavorite } from 'obra-icons-react';
-// useTagStore removed - using folders for organization (Issue #54)
 import { useEmailStore, useUIStore, useAccountStore } from '../stores';
+import { useEmailListKeyboard } from '../hooks/useEmailListKeyboard';
+import { EmailQuickActions } from './EmailQuickActions';
+import { BulkActionBar } from './BulkActionBar';
 import { formatSender, isRecent } from '../../core/domain';
 import type { Email } from '../../core/domain';
 
@@ -54,14 +56,30 @@ const sanitizeSnippet = (snippet: string): string => {
 interface EmailRowData {
   emails: Email[];
   selectedId: number | null;
+  focusedId: number | null;
+  selectedIds: Set<number>;
   selectEmail: (id: number) => void;
   toggleStar: (id: number) => void;
+  toggleSelect: (id: number) => void;
+  handleShiftClick: (id: number) => void;
   isSentFolder: boolean;
+  onDragStart: (email: Email) => void;
 }
 
 // Virtualized email row component
 const EmailRow = ({ index, style, data }: ListChildComponentProps) => {
-  const { emails, selectedId, selectEmail, toggleStar, isSentFolder } = data;
+  const {
+    emails,
+    selectedId,
+    focusedId,
+    selectedIds,
+    selectEmail,
+    toggleStar,
+    toggleSelect,
+    handleShiftClick,
+    isSentFolder,
+    onDragStart
+  } = data as EmailRowData;
   const email = emails[index];
 
   // In Sent folder, show recipients instead of sender
@@ -69,16 +87,72 @@ const EmailRow = ({ index, style, data }: ListChildComponentProps) => {
     ? `To: ${email.to.join(', ')}`
     : formatSender(email.from);
 
+  const handleDragStart = (e: React.DragEvent) => {
+    e.dataTransfer.setData('application/x-email-id', String(email.id));
+    e.dataTransfer.setData('text/plain', email.subject || '(no subject)');
+    e.dataTransfer.effectAllowed = 'move';
+    onDragStart(email);
+  };
+
+  // Handle click with modifiers
+  const handleClick = (e: React.MouseEvent) => {
+    if (e.shiftKey) {
+      // Shift+click: select range
+      handleShiftClick(email.id);
+    } else if (e.metaKey || e.ctrlKey) {
+      // Cmd/Ctrl+click: toggle selection
+      toggleSelect(email.id);
+    } else {
+      // Normal click: open email
+      selectEmail(email.id);
+    }
+  };
+
+  const isSelected = selectedId === email.id;
+  const isFocused = focusedId === email.id;
+  const isMultiSelected = selectedIds.has(email.id);
+
+  // Build class names
+  const classNames = [
+    'email-item',
+    'group', // For hover effects on quick actions
+    isSelected && 'selected',
+    isFocused && 'focused',
+    isMultiSelected && 'multi-selected',
+    !email.isRead && 'unread',
+  ].filter(Boolean).join(' ');
+
   return (
     <div style={{ ...style, overflow: 'hidden' }}>
-      <button
-        onClick={() => selectEmail(email.id)}
-        className={`email-item ${selectedId === email.id ? 'selected' : ''} ${!email.isRead ? 'unread' : ''}`}
-        style={{ height: '100%', boxSizing: 'border-box' }}
+      <div
+        onClick={handleClick}
+        draggable
+        onDragStart={handleDragStart}
+        className={classNames}
+        style={{ height: '100%', boxSizing: 'border-box', cursor: 'grab' }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            selectEmail(email.id);
+          }
+        }}
       >
-        {/* Header row: Sender/Recipient + Star + Date */}
+        {/* Header row: Checkbox + Sender/Recipient + Star + Date + Quick Actions */}
         <div className="email-item-header">
           <div className="flex items-center gap-2">
+            {/* Checkbox for multiselect */}
+            <input
+              type="checkbox"
+              checked={isMultiSelected}
+              onChange={(e) => {
+                e.stopPropagation();
+                toggleSelect(email.id);
+              }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-4 h-4 rounded shrink-0"
+              aria-label={`Select email from ${displayName}`}
+            />
             <span className={`email-item-sender ${!email.isRead ? 'unread' : ''}`}>
               {displayName}
             </span>
@@ -102,7 +176,11 @@ const EmailRow = ({ index, style, data }: ListChildComponentProps) => {
               <IconFavorite className="w-4 h-4" />
             </span>
           </div>
-          <span className="email-item-date">{formatDate(email.date)}</span>
+          <div className="flex items-center gap-2">
+            {/* Quick actions on hover */}
+            <EmailQuickActions emailId={email.id} isRead={email.isRead} />
+            <span className="email-item-date">{formatDate(email.date)}</span>
+          </div>
         </div>
 
         {/* Subject */}
@@ -115,7 +193,7 @@ const EmailRow = ({ index, style, data }: ListChildComponentProps) => {
         <div className="email-item-snippet">
           {sanitizeSnippet(email.snippet)}
         </div>
-      </button>
+      </div>
     </div>
   );
 };
@@ -131,6 +209,10 @@ export function EmailList() {
     toggleStar,
     loadMore,
     filter,
+    focusedId,
+    selectedIds,
+    toggleSelect,
+    selectRange,
   } = useEmailStore();
   const { view } = useUIStore();
   // useTagStore removed - using folders (Issue #54)
@@ -139,6 +221,12 @@ export function EmailList() {
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<FixedSizeList>(null);
   const [listHeight, setListHeight] = useState(600);
+
+  // Track last clicked for shift-click range selection
+  const lastClickedRef = useRef<number | null>(null);
+
+  // Use keyboard navigation hook
+  useEmailListKeyboard(emails);
 
   // Note: loadEmails is called by App.tsx when selectedAccountId changes
 
@@ -184,26 +272,64 @@ export function EmailList() {
     }
   }, []);
 
-  // Scroll to selected email when selection changes via keyboard navigation
+  // Scroll to focused email when focus changes via keyboard navigation
   useEffect(() => {
-    if (selectedId && listRef.current && emails.length > 0) {
-      const selectedIndex = emails.findIndex(e => e.id === selectedId);
-      if (selectedIndex !== -1) {
-        listRef.current.scrollToItem(selectedIndex, 'auto');
+    if (focusedId && listRef.current && emails.length > 0) {
+      const focusedIndex = emails.findIndex(e => e.id === focusedId);
+      if (focusedIndex !== -1) {
+        listRef.current.scrollToItem(focusedIndex, 'auto');
       }
     }
-  }, [selectedId, emails]);
+  }, [focusedId, emails]);
 
   // Determine if viewing Sent folder to show recipients instead of sender
   const isSentFolder = filter.folderPath?.toLowerCase().includes('sent') ?? false;
+
+  // Track dragged email for visual feedback (future: could show drag preview)
+  const [, setDraggedEmail] = useState<Email | null>(null);
+
+  const handleDragStart = (email: Email) => {
+    setDraggedEmail(email);
+  };
+
+  // Clear drag state when drag ends
+  useEffect(() => {
+    const handleDragEnd = () => setDraggedEmail(null);
+    document.addEventListener('dragend', handleDragEnd);
+    return () => document.removeEventListener('dragend', handleDragEnd);
+  }, []);
+
+  // Handle shift-click for range selection
+  const handleShiftClick = useCallback((id: number) => {
+    if (lastClickedRef.current) {
+      selectRange(lastClickedRef.current, id);
+    } else {
+      toggleSelect(id);
+    }
+    lastClickedRef.current = id;
+  }, [selectRange, toggleSelect]);
+
+  // Update lastClickedRef when toggling select via checkbox
+  const handleToggleSelect = useCallback((id: number) => {
+    toggleSelect(id);
+    lastClickedRef.current = id;
+  }, [toggleSelect]);
+
+  // Calculate height adjustment for bulk action bar
+  const bulkActionBarHeight = selectedIds.size > 0 ? 48 : 0;
 
   // Prepare data for virtualized rows
   const itemData: EmailRowData = {
     emails,
     selectedId,
+    focusedId,
+    selectedIds,
     selectEmail,
     toggleStar,
+    toggleSelect: handleToggleSelect,
+    handleShiftClick,
     isSentFolder,
+    onDragStart: handleDragStart,
   };
 
   return (
@@ -213,6 +339,9 @@ export function EmailList() {
         <h2 className="email-list-title">{title}</h2>
         <span className="email-list-count">{emails.length} messages</span>
       </div>
+
+      {/* Bulk Action Bar - appears when items are selected */}
+      <BulkActionBar />
 
       {/* Email List */}
       <div className="flex-1 overflow-hidden" ref={containerRef}>
@@ -228,7 +357,7 @@ export function EmailList() {
           <>
             <FixedSizeList
               ref={listRef}
-              height={listHeight - (hasMore ? 50 : 0)}
+              height={listHeight - (hasMore ? 50 : 0) - bulkActionBarHeight}
               itemCount={emails.length}
               itemSize={120}
               itemData={itemData}
@@ -256,6 +385,26 @@ export function EmailList() {
           </>
         )}
       </div>
+
+      {/* Keyboard shortcuts footer */}
+      {emails.length > 0 && (
+        <div
+          className="px-3 py-1.5 text-xs border-t flex justify-end"
+          style={{
+            background: 'var(--color-bg-secondary)',
+            borderColor: 'var(--color-border)',
+            color: 'var(--color-text-tertiary)',
+          }}
+        >
+          <span>
+            <kbd className="px-1 rounded" style={{ background: 'var(--color-bg)' }}>Space</kbd> select
+            {' | '}
+            <kbd className="px-1 rounded" style={{ background: 'var(--color-bg)' }}>E</kbd> archive
+            {' | '}
+            <kbd className="px-1 rounded" style={{ background: 'var(--color-bg)' }}>Del</kbd> trash
+          </span>
+        </div>
+      )}
     </div>
   );
 }
