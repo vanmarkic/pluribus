@@ -5,7 +5,7 @@
  * This is dependency inversion without the ceremony.
  */
 
-import type { Email, EmailBody, Attachment, Account, Folder, ListEmailsOptions, Classification, SyncProgress, SyncOptions, Draft, DraftInput, ListDraftsOptions, ClassificationState, ClassificationFeedback, ConfusedPattern, ClassificationStats, ClassificationStatus, RecentContact, LicenseState, TriageClassificationResult, TrainingExample, SenderRule, EmailSnooze, TriageLogEntry, TriageFolder } from './domain';
+import type { Email, EmailBody, Attachment, Account, Folder, ListEmailsOptions, Classification, SyncProgress, SyncOptions, Draft, DraftInput, ListDraftsOptions, ClassificationState, ClassificationFeedback, ConfusedPattern, ClassificationStats, ClassificationStatus, RecentContact, LicenseState, TriageClassificationResult, TrainingExample, SenderRule, EmailSnooze, TriageLogEntry, TriageFolder, EmailEmbedding, SimilarEmail } from './domain';
 
 // Re-export types needed by adapters
 export type { ListEmailsOptions, ListDraftsOptions };
@@ -464,6 +464,48 @@ export type LLMGenerator = {
 };
 
 // ============================================
+// Embeddings & Vector Search Ports
+// ============================================
+
+export type EmbeddingService = {
+  /** Generate embedding vector from text */
+  embed: (text: string) => Promise<number[]>;
+  /** Calculate cosine similarity between two vectors */
+  similarity: (a: number[], b: number[]) => number;
+  /** Get the model identifier */
+  getModel: () => string;
+};
+
+export type EmbeddingRepo = {
+  /** Find embedding by email ID and model */
+  findByEmail: (emailId: number, model?: string) => Promise<EmailEmbedding | null>;
+  /** Find all embeddings for similarity search */
+  findAll: (model?: string, accountId?: number) => Promise<EmailEmbedding[]>;
+  /** Save embedding for an email */
+  save: (emailId: number, embedding: number[], folder: string, isCorrection: boolean, model: string) => Promise<EmailEmbedding>;
+  /** Delete embeddings for an email */
+  delete: (emailId: number) => Promise<void>;
+  /** Count total embeddings */
+  count: (model?: string) => Promise<number>;
+};
+
+export type VectorSearchResult = {
+  emailId: number;
+  folder: string;
+  similarity: number;
+  wasCorrection: boolean;
+};
+
+export type VectorSearch = {
+  /** Find K most similar emails to the query text */
+  findSimilar: (emailText: string, topK?: number, accountId?: number) => Promise<VectorSearchResult[]>;
+  /** Index an email for future similarity search */
+  indexEmail: (emailId: number, emailText: string, folder: string, isCorrection?: boolean) => Promise<void>;
+  /** Calculate confidence from similar neighbors */
+  calculateConfidence: (similar: VectorSearchResult[]) => { folder: string; confidence: number } | null;
+};
+
+// ============================================
 // All Dependencies (for DI)
 // ============================================
 
@@ -496,4 +538,8 @@ export type Deps = {
   // Awaiting reply
   awaiting: AwaitingRepo;
   llmGenerator: LLMGenerator;
+  // Embeddings & Vector Search
+  embeddingService: EmbeddingService;
+  embeddingRepo: EmbeddingRepo;
+  vectorSearch: VectorSearch;
 };

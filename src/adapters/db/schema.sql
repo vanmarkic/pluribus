@@ -292,3 +292,23 @@ CREATE TABLE IF NOT EXISTS triage_log (
 
 CREATE INDEX IF NOT EXISTS idx_triage_log_email ON triage_log(email_id);
 CREATE INDEX IF NOT EXISTS idx_triage_log_created ON triage_log(created_at DESC);
+
+-- ============================================
+-- Embedding + Vector Search
+-- ============================================
+
+-- Email embeddings (for semantic similarity search)
+CREATE TABLE IF NOT EXISTS email_embeddings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email_id INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+  embedding BLOB NOT NULL,
+  embedding_model TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+  folder TEXT NOT NULL,
+  is_correction INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(email_id, embedding_model)
+);
+
+CREATE INDEX IF NOT EXISTS idx_embeddings_email ON email_embeddings(email_id);
+CREATE INDEX IF NOT EXISTS idx_embeddings_folder ON email_embeddings(folder);
+CREATE INDEX IF NOT EXISTS idx_embeddings_correction ON email_embeddings(is_correction) WHERE is_correction = 1;

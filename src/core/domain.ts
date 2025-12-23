@@ -445,3 +445,24 @@ export const DEV_DOMAINS = [
   'github.com', 'gitlab.com', 'bitbucket.org', 'circleci.com',
   'travis-ci.com', 'vercel.com', 'netlify.com'
 ];
+
+// ============================================
+// Embeddings & Vector Search
+// ============================================
+
+export type EmailEmbedding = {
+  id: number;
+  emailId: number;
+  embedding: number[];
+  embeddingModel: string;
+  folder: string;
+  isCorrection: boolean;
+  createdAt: Date;
+};
+
+export type SimilarEmail = {
+  emailId: number;
+  folder: string;
+  similarity: number;
+  wasCorrection: boolean;
+};
