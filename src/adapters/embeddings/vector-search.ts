@@ -9,6 +9,9 @@ import type { VectorSearch, VectorSearchResult, EmbeddingService, EmbeddingRepo 
 import type { Email } from '../../core/domain';
 import { prepareEmailText } from './index';
 
+/** Weight multiplier for user corrections (corrections are more reliable) */
+const CORRECTION_WEIGHT_MULTIPLIER = 2.0;
+
 /**
  * Create vector search service.
  * 
@@ -86,7 +89,7 @@ export function createVectorSearch(
 
       for (const result of similar) {
         // Corrections count 2x as much
-        const weight = result.similarity * (result.wasCorrection ? 2.0 : 1.0);
+        const weight = result.similarity * (result.wasCorrection ? CORRECTION_WEIGHT_MULTIPLIER : 1.0);
         folderVotes[result.folder] = (folderVotes[result.folder] || 0) + weight;
         totalWeight += weight;
       }

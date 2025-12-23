@@ -12,6 +12,7 @@ const MODEL_NAME = 'Xenova/all-MiniLM-L6-v2';
 const MODEL_ID = 'all-MiniLM-L6-v2';
 
 let pipelineInstance: FeatureExtractionPipeline | null = null;
+let pipelinePromise: Promise<FeatureExtractionPipeline> | null = null;
 
 /**
  * Create embedding service using all-MiniLM-L6-v2 model.
@@ -25,9 +26,12 @@ let pipelineInstance: FeatureExtractionPipeline | null = null;
 export function createEmbeddingService(): EmbeddingService {
   return {
     async embed(text: string): Promise<number[]> {
-      // Lazy load the model pipeline
+      // Lazy load the model pipeline (with race condition protection)
       if (!pipelineInstance) {
-        pipelineInstance = await pipeline('feature-extraction', MODEL_NAME);
+        if (!pipelinePromise) {
+          pipelinePromise = pipeline('feature-extraction', MODEL_NAME);
+        }
+        pipelineInstance = await pipelinePromise;
       }
 
       // Generate embedding with mean pooling and normalization

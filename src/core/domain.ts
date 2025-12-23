@@ -368,7 +368,7 @@ export type TrainingExample = {
   fromDomain: string;
   subject: string;
   aiSuggestion: string | null;
-  userChoice: string;
+  userChoice: TriageFolder;  // Changed from string to TriageFolder
   wasCorrection: boolean;
   source: 'onboarding' | 'review_folder' | 'manual_move';
   createdAt: Date;

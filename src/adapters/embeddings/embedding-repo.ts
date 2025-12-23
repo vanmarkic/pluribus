@@ -99,8 +99,7 @@ export function createEmbeddingRepo(db: Database): EmbeddingRepo {
         ON CONFLICT(email_id, embedding_model) DO UPDATE SET
           embedding = excluded.embedding,
           folder = excluded.folder,
-          is_correction = excluded.is_correction,
-          created_at = datetime('now')
+          is_correction = excluded.is_correction
         RETURNING *
       `);
 

@@ -9,6 +9,9 @@ import type { TriageClassifier, PatternMatchResult, VectorSearch } from '../../c
 import type { Email, TrainingExample, TriageClassificationResult, TriageFolder, SimilarEmail } from '../../core/domain';
 import { prepareEmailForEmbedding } from '../embeddings/vector-search';
 
+/** Number of similar emails to retrieve for context */
+const TOP_SIMILAR_EMAILS = 5;
+
 const TRIAGE_PROMPT = `You are an email triage assistant. Classify this email into ONE folder.
 
 FOLDERS (user can drag-drop emails between these to correct you):
@@ -156,7 +159,7 @@ export function createEnhancedTriageClassifier(
       if (vectorSearch) {
         try {
           const emailText = prepareEmailForEmbedding(email);
-          const similar = await vectorSearch.findSimilar(emailText, 5, email.accountId);
+          const similar = await vectorSearch.findSimilar(emailText, TOP_SIMILAR_EMAILS, email.accountId);
           
           if (similar.length > 0) {
             similarEmails = similar.map(s => ({

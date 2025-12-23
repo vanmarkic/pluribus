@@ -288,7 +288,7 @@ export const saveTrainingExample = (deps: Pick<Deps, 'emails' | 'trainingRepo' |
         const email = await deps.emails.findById(example.emailId);
         if (email) {
           const emailText = `${email.subject}\n${email.snippet}`;
-          await deps.vectorSearch.indexEmail(example.emailId, emailText, example.userChoice as any, example.wasCorrection);
+          await deps.vectorSearch.indexEmail(example.emailId, emailText, example.userChoice, example.wasCorrection);
         }
       } catch (error) {
         // Don't fail the use case if embedding indexing fails
