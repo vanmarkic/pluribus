@@ -89,7 +89,7 @@ export function deserializeEmbedding(buffer: Buffer): number[] {
 export function prepareEmailText(subject: string, snippet: string): string {
   // Truncate to reasonable length (model has 512 token limit)
   const maxLength = 400;
-  const combined = `${subject}\n${snippet}`;
+  const combined = `${subject}\n${snippet}`.trim();
   return combined.length > maxLength 
     ? combined.substring(0, maxLength)
     : combined;

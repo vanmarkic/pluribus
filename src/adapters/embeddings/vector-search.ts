@@ -27,19 +27,19 @@ export function createVectorSearch(
       topK: number = 5,
       accountId?: number
     ): Promise<VectorSearchResult[]> {
-      // Generate embedding for query
-      const queryVector = await embeddingService.embed(emailText);
-
       // Get all embeddings (filtered by account if specified)
       const allEmbeddings = await embeddingRepo.findAll(
         embeddingService.getModel(),
         accountId
       );
 
-      // No embeddings yet
+      // No embeddings yet - return early before generating query embedding
       if (allEmbeddings.length === 0) {
         return [];
       }
+
+      // Generate embedding for query
+      const queryVector = await embeddingService.embed(emailText);
 
       // Calculate similarities
       const scored = allEmbeddings.map((emb) => ({

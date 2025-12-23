@@ -18,6 +18,10 @@ import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAc
 import { createMailSync, createImapFolderOps } from '../adapters/imap';
 import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier } from '../adapters/llm';
 import { createPatternMatcher, createTrainingRepo, createSenderRulesRepo, createSnoozeRepo, createTriageLogRepo, createTriageClassifier } from '../adapters/triage';
+import { createEmbeddingService } from '../adapters/embeddings/index';
+import { createEmbeddingRepo } from '../adapters/embeddings/embedding-repo';
+import { createVectorSearch } from '../adapters/embeddings/vector-search';
+import { createEnhancedTriageClassifier } from '../adapters/triage/enhanced-classifier';
 import { createSecureStorage } from '../adapters/keychain';
 import { createMailSender } from '../adapters/smtp';
 import { createImageCache } from '../adapters/image-cache';
@@ -260,6 +264,11 @@ export function createContainer(): Container {
   const triageLog = createTriageLogRepo(getDb);
   const imapFolderOps = createImapFolderOps(secrets);
 
+  // Embedding & vector search adapters
+  const embeddingService = createEmbeddingService();
+  const embeddingRepo = createEmbeddingRepo(getDb());
+  const vectorSearch = createVectorSearch(embeddingService, embeddingRepo);
+
   // Create LLM client for triage classifier (delegates to current provider)
   const triageLlmClient = {
     async complete(prompt: string): Promise<string> {
@@ -295,7 +304,7 @@ export function createContainer(): Container {
       }
     },
   };
-  const triageClassifier = createTriageClassifier(triageLlmClient);
+  const triageClassifier = createEnhancedTriageClassifier(triageLlmClient, vectorSearch);
 
   // Awaiting reply adapters
   const awaiting = createAwaitingRepo(getDb);
@@ -342,6 +351,10 @@ export function createContainer(): Container {
     // Awaiting reply
     awaiting,
     llmGenerator,
+    // Embeddings & Vector Search
+    embeddingService,
+    embeddingRepo,
+    vectorSearch,
   };
   
   // Create use cases
