@@ -142,7 +142,7 @@ export const moveEmailToTriageFolder = (deps: Pick<Deps, 'emails' | 'accounts' |
     });
   };
 
-export const learnFromTriageCorrection = (deps: Pick<Deps, 'emails' | 'trainingRepo' | 'senderRules'>) =>
+export const learnFromTriageCorrection = (deps: Pick<Deps, 'emails' | 'trainingRepo' | 'senderRules' | 'vectorSearch'>) =>
   async (emailId: number, aiSuggestion: string, userChoice: TriageFolder): Promise<void> => {
     const email = await deps.emails.findById(emailId);
     if (!email) throw new Error('Email not found');
@@ -162,6 +162,15 @@ export const learnFromTriageCorrection = (deps: Pick<Deps, 'emails' | 'trainingR
       wasCorrection,
       source: 'review_folder',
     });
+
+    // Index embedding for this training example (async, non-blocking)
+    try {
+      const emailText = `${email.subject}\n${email.snippet}`;
+      await deps.vectorSearch.indexEmail(emailId, emailText, userChoice, wasCorrection);
+    } catch (error) {
+      // Don't fail the use case if embedding indexing fails
+      console.warn('Failed to index embedding for training example:', error);
+    }
 
     // Update or create sender rule
     if (wasCorrection) {
@@ -269,9 +278,25 @@ export const processSnoozedEmails = (deps: Pick<Deps, 'snoozes' | 'emails' | 'ac
     return processed;
   };
 
-export const saveTrainingExample = (deps: Pick<Deps, 'trainingRepo'>) =>
+export const saveTrainingExample = (deps: Pick<Deps, 'emails' | 'trainingRepo' | 'vectorSearch'>) =>
   async (example: Omit<TrainingExample, 'id' | 'createdAt'>): Promise<TrainingExample> => {
-    return deps.trainingRepo.save(example);
+    const saved = await deps.trainingRepo.save(example);
+    
+    // Index embedding for this training example (async, non-blocking)
+    if (example.emailId) {
+      try {
+        const email = await deps.emails.findById(example.emailId);
+        if (email) {
+          const emailText = `${email.subject}\n${email.snippet}`;
+          await deps.vectorSearch.indexEmail(example.emailId, emailText, example.userChoice, example.wasCorrection);
+        }
+      } catch (error) {
+        // Don't fail the use case if embedding indexing fails
+        console.warn('Failed to index embedding for training example:', error);
+      }
+    }
+    
+    return saved;
   };
 
 export const getTrainingExamples = (deps: Pick<Deps, 'trainingRepo'>) =>

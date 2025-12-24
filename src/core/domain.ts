@@ -368,7 +368,7 @@ export type TrainingExample = {
   fromDomain: string;
   subject: string;
   aiSuggestion: string | null;
-  userChoice: string;
+  userChoice: TriageFolder;  // Changed from string to TriageFolder
   wasCorrection: boolean;
   source: 'onboarding' | 'review_folder' | 'manual_move';
   createdAt: Date;
@@ -445,3 +445,24 @@ export const DEV_DOMAINS = [
   'github.com', 'gitlab.com', 'bitbucket.org', 'circleci.com',
   'travis-ci.com', 'vercel.com', 'netlify.com'
 ];
+
+// ============================================
+// Embeddings & Vector Search
+// ============================================
+
+export type EmailEmbedding = {
+  id: number;
+  emailId: number;
+  embedding: number[];
+  embeddingModel: string;
+  folder: string;
+  isCorrection: boolean;
+  createdAt: Date;
+};
+
+export type SimilarEmail = {
+  emailId: number;
+  folder: string;
+  similarity: number;
+  wasCorrection: boolean;
+};
