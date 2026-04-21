@@ -5,4 +5,6 @@
  */
 
 export { createClassifier, createAnthropicProvider, resetDailyUsage } from './anthropic';
+export type { AgentTools, SimilarEmailHit, SenderHistorySummary } from './agent-tools';
+export { detectPromptInjection, shouldQuarantine, type InjectionFinding } from './prompt-injection';
 export { createOllamaProvider, createOllamaClassifier, resetOllamaDailyUsage, resetOllamaEmailCount, startOllama, stopOllama } from './ollama';

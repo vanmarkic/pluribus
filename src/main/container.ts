@@ -17,7 +17,7 @@ import { createUseCases, type UseCases, type Deps } from '../core';
 import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup, createAwaitingRepo, createLlmCallsRepo } from '../adapters/db';
 import { logger } from '../adapters/observability';
 import { createMailSync, createImapFolderOps } from '../adapters/imap';
-import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier } from '../adapters/llm';
+import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier, type AgentTools } from '../adapters/llm';
 import { createPatternMatcher, createTrainingRepo, createSenderRulesRepo, createSnoozeRepo, createTriageLogRepo, createTriageClassifier } from '../adapters/triage';
 import { createEmbeddingService } from '../adapters/embeddings/index';
 import { createEmbeddingRepo } from '../adapters/embeddings/embedding-repo';
@@ -190,6 +190,55 @@ export function createContainer(): Container {
     }
   );
 
+  // Agent tools for the Anthropic classifier (#87). Provided to the classifier
+  // so low-confidence classifications can call find_similar_emails and
+  // get_sender_history to gather more evidence.
+  //
+  // Note: `embeddingRepo` and `emails` are declared later in this function;
+  // these tools are looked up lazily via closures so ordering doesn't matter.
+  const buildAgentTools = (): AgentTools => ({
+    async findSimilarEmails(queryText, limit = 5) {
+      const hits = await vectorSearch.findSimilar(queryText, Math.min(Math.max(1, limit), 10));
+      // Enrich with subject + sender for the model. Best-effort; skip hits
+      // whose email row no longer exists.
+      const enriched = await Promise.all(
+        hits.map(async h => {
+          const e = await emails.findById(h.emailId);
+          if (!e) return null;
+          return {
+            folder: h.folder,
+            similarity: h.similarity,
+            subject: e.subject,
+            fromAddress: e.from.address,
+          };
+        })
+      );
+      return enriched.filter((x): x is NonNullable<typeof x> => x !== null);
+    },
+    async getSenderHistory(senderAddress) {
+      const matches = await emails.search(senderAddress, 100);
+      const byFolder: Record<string, number> = {};
+      for (const e of matches) {
+        if (e.from.address.toLowerCase() !== senderAddress.toLowerCase()) continue;
+        const state = await classificationState.getState(e.id);
+        if (!state?.suggestedFolder) continue;
+        byFolder[state.suggestedFolder] = (byFolder[state.suggestedFolder] ?? 0) + 1;
+      }
+      const total = Object.values(byFolder).reduce((a, b) => a + b, 0);
+      return { total, byFolder };
+    },
+  });
+
+  // Prompt-injection audit sink (#102). Logs high-signal findings to the
+  // structured logger; #98 will route these to a dedicated audit table.
+  const logInjectionFindings = (emailId: number, findings: ReturnType<typeof import('../adapters/llm').detectPromptInjection>) => {
+    logger.warn({
+      component: 'prompt-injection',
+      emailId,
+      findings: findings.map(f => ({ category: f.category, severity: f.severity, matched: f.matched })),
+    }, 'prompt-injection.detected');
+  };
+
   // Dynamic classifier that delegates based on current provider setting
   const classifier: import('../core/ports').Classifier = {
     async classify(email, body) {
@@ -205,7 +254,13 @@ export function createContainer(): Container {
             dailyEmailLimit: cfg.dailyEmailLimit,
           },
           secrets,
-          { onCall: recordLlmCall }
+          {
+            onCall: recordLlmCall,
+            agentTools: buildAgentTools(),
+            agentConfidenceThreshold: 0.6,
+            agentMaxIterations: 3,
+            onInjectionFindings: logInjectionFindings,
+          }
         );
         return anthClassifier.classify(email, body);
       }
@@ -218,7 +273,7 @@ export function createContainer(): Container {
       // Anthropic budget - create fresh instance
       const anthClassifier = createClassifier(
         {
-          model: cfg.model as 'claude-sonnet-4-20250514' | 'claude-haiku-4-20250514',
+          model: cfg.model,
           dailyBudget: cfg.dailyBudget,
           dailyEmailLimit: cfg.dailyEmailLimit,
         },
@@ -233,7 +288,7 @@ export function createContainer(): Container {
       }
       const anthClassifier = createClassifier(
         {
-          model: cfg.model as 'claude-sonnet-4-20250514' | 'claude-haiku-4-20250514',
+          model: cfg.model,
           dailyBudget: cfg.dailyBudget,
           dailyEmailLimit: cfg.dailyEmailLimit,
         },

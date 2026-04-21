@@ -7,10 +7,13 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import type { MessageParam, ToolUseBlock } from '@anthropic-ai/sdk/resources/messages/messages';
 import * as crypto from 'crypto';
 import type { Classifier, SecureStorage, LLMProvider, LLMModel } from '../../core/ports';
 import type { Email, EmailBody, Classification, TriageFolder } from '../../core/domain';
 import { extractDomain } from '../../core/domain';
+import { AGENT_TOOL_DEFINITIONS, executeToolCall, type AgentTools } from './agent-tools';
+import { detectPromptInjection, shouldQuarantine, type InjectionFinding } from './prompt-injection';
 
 const PROMPT_VERSION = '3.0';
 
@@ -160,7 +163,47 @@ export type ClassifierOptions = {
   onCall?: (record: LlmCallRecord) => void;
   /** Cache TTL for prompt caching: '5m' (default) or '1h' for high-volume syncs. */
   cacheTtl?: '5m' | '1h';
+  /** Tools available to the agent loop. When provided, low-confidence
+   *  classifications escalate to a tool-use loop (#87). */
+  agentTools?: AgentTools;
+  /** Confidence below which the agent loop kicks in. Default 0.6. */
+  agentConfidenceThreshold?: number;
+  /** Max agent iterations (tool → tool_result round trips). Default 3. */
+  agentMaxIterations?: number;
+  /** Callback for prompt-injection findings (#102). Default: no-op. */
+  onInjectionFindings?: (emailId: number, findings: InjectionFinding[]) => void;
 };
+
+/** Parse Claude's JSON reply into a Classification, falling back to INBOX on error. */
+function parseClassification(content: string): { result: Classification; parseError: string | null } {
+  const validFolders = Object.keys(TRIAGE_FOLDER_DESCRIPTIONS);
+  try {
+    const parsed = JSON.parse(content);
+    const folder = parsed.folder as TriageFolder;
+    if (!validFolders.includes(folder)) {
+      const parseError = `Unknown folder "${folder}" in response`;
+      return {
+        result: { suggestedFolder: 'INBOX', confidence: 0.5, reasoning: parseError, priority: 'normal' },
+        parseError,
+      };
+    }
+    return {
+      result: {
+        suggestedFolder: folder,
+        confidence: parsed.confidence || 0,
+        reasoning: parsed.reasoning || '',
+        priority: parsed.priority || 'normal',
+      },
+      parseError: null,
+    };
+  } catch {
+    const parseError = 'Parse error';
+    return {
+      result: { suggestedFolder: 'INBOX', confidence: 0, reasoning: parseError, priority: 'normal' },
+      parseError,
+    };
+  }
+}
 
 export function createClassifier(
   config: Config,
@@ -170,6 +213,9 @@ export function createClassifier(
   let client: Anthropic | null = null;
   const onCall = options.onCall;
   const cacheTtl = options.cacheTtl ?? '5m';
+  const agentTools = options.agentTools;
+  const agentConfidenceThreshold = options.agentConfidenceThreshold ?? 0.6;
+  const agentMaxIterations = options.agentMaxIterations ?? 3;
 
   async function getClient(): Promise<Anthropic> {
     if (!client) {
@@ -178,6 +224,157 @@ export function createClassifier(
       client = new Anthropic({ apiKey });
     }
     return client;
+  }
+
+  /**
+   * Multi-turn agent loop (#87). Called when a first-pass classification
+   * returns confidence < threshold. Starts from the initial user message,
+   * offers Claude the agent tools, and iterates up to agentMaxIterations
+   * tool_use → tool_result round trips before forcing a final JSON answer.
+   *
+   * Returns the best available Classification — the latest parseable one,
+   * or the original low-confidence result if the model never improves it.
+   */
+  async function runAgentLoop(
+    email: Email,
+    seed: MessageParam[],
+    tools: AgentTools,
+    fallback: Classification,
+  ): Promise<Classification> {
+    // Rebuild history — the first message (user email) is the only seed; the
+    // initial assistant response is discarded so the model can re-reason with
+    // tools available from the start.
+    const history: MessageParam[] = [...seed];
+    let best: Classification = fallback;
+
+    for (let i = 0; i < agentMaxIterations; i++) {
+      const { response } = await runOneCall(email, history, AGENT_TOOL_DEFINITIONS);
+
+      // If the model produced a text block, try to parse it as the final answer.
+      const textBlock = response.content.find(c => c.type === 'text');
+      if (textBlock && textBlock.type === 'text' && textBlock.text.trim()) {
+        const { result } = parseClassification(textBlock.text);
+        if (result.confidence > best.confidence) {
+          best = result;
+        }
+      }
+
+      if (response.stop_reason !== 'tool_use') {
+        // Model is done (either answered or ran out of ideas).
+        return best;
+      }
+
+      // Execute every tool_use block in this turn and send all results back
+      // in a single user turn, as the Messages API requires.
+      const toolUses = response.content.filter((c): c is ToolUseBlock => c.type === 'tool_use');
+      const toolResults = await Promise.all(toolUses.map(tu => executeToolCall(tu, tools)));
+
+      history.push({ role: 'assistant', content: response.content as any });
+      history.push({
+        role: 'user',
+        content: toolResults.map(tr => ({
+          type: 'tool_result' as const,
+          tool_use_id: tr.tool_use_id,
+          content: tr.content,
+          is_error: tr.is_error,
+        })),
+      });
+    }
+
+    // Budget exhausted: force one final turn without tools so the model commits.
+    history.push({
+      role: 'user',
+      content:
+        'Based on everything above, give your final classification now as JSON only. ' +
+        'Do not call any more tools.',
+    });
+    const { response: finalResponse } = await runOneCall(email, history);
+    const finalText = finalResponse.content.find(c => c.type === 'text');
+    if (finalText && finalText.type === 'text') {
+      const { result } = parseClassification(finalText.text);
+      if (result.confidence > best.confidence) best = result;
+    }
+    return best;
+  }
+
+  function buildSystemBlocks(): any[] {
+    return [
+      {
+        type: 'text',
+        text: buildSystemPromptText(),
+        cache_control: cacheTtl === '1h' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' },
+      },
+    ];
+  }
+
+  // Issue one Anthropic call, emit one llm_calls row, return (result, rawResponse).
+  // `extraTools` adds the agent tool definitions; when set, the response may
+  // arrive as stop_reason: 'tool_use' instead of an end-of-turn text block.
+  async function runOneCall(
+    email: Email,
+    messages: MessageParam[],
+    extraTools?: typeof AGENT_TOOL_DEFINITIONS,
+  ): Promise<{ response: Anthropic.Messages.Message; costUsd: number; cacheHit: boolean }> {
+    const started = Date.now();
+    const anthropic = await getClient();
+
+    let response: Anthropic.Messages.Message;
+    try {
+      response = await anthropic.messages.create({
+        model: config.model,
+        max_tokens: 1024,
+        temperature: 0.2,
+        system: buildSystemBlocks(),
+        messages,
+        ...(extraTools && extraTools.length > 0 ? { tools: extraTools } : {}),
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      onCall?.({
+        provider: 'anthropic',
+        model: config.model,
+        promptVersion: PROMPT_VERSION,
+        emailId: email.id,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheCreationTokens: 0,
+        cacheReadTokens: 0,
+        latencyMs: Date.now() - started,
+        costUsd: 0,
+        cacheHit: false,
+        stopReason: null,
+        error: msg,
+      });
+      throw err;
+    }
+
+    const inputTokens = response.usage.input_tokens ?? 0;
+    const outputTokens = response.usage.output_tokens ?? 0;
+    const cacheCreationTokens = (response.usage as any).cache_creation_input_tokens ?? 0;
+    const cacheReadTokens = (response.usage as any).cache_read_input_tokens ?? 0;
+    todayUsage += inputTokens + outputTokens;
+
+    const costUsd = computeCostUsd(
+      config.model, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens
+    );
+
+    onCall?.({
+      provider: 'anthropic',
+      model: config.model,
+      promptVersion: PROMPT_VERSION,
+      emailId: email.id,
+      inputTokens,
+      outputTokens,
+      cacheCreationTokens,
+      cacheReadTokens,
+      latencyMs: Date.now() - started,
+      costUsd,
+      cacheHit: cacheReadTokens > 0,
+      stopReason: response.stop_reason ?? null,
+      error: null,
+    });
+
+    return { response, costUsd, cacheHit: cacheReadTokens > 0 };
   }
 
   return {
@@ -195,120 +392,46 @@ export function createClassifier(
         return cached;
       }
 
-      const started = Date.now();
-      const anthropic = await getClient();
-
-      // System prompt as a cacheable block. `ttl: '1h'` requires the
-      // extended-cache opt-in; default (5m) works on standard accounts.
-      const systemBlocks: any[] = [
-        {
-          type: 'text',
-          text: buildSystemPromptText(),
-          cache_control: cacheTtl === '1h'
-            ? { type: 'ephemeral', ttl: '1h' }
-            : { type: 'ephemeral' },
-        },
-      ];
-
-      let response: Anthropic.Messages.Message;
-      try {
-        response = await anthropic.messages.create({
-          model: config.model,
-          max_tokens: 512,
-          temperature: 0.2,
-          system: systemBlocks,
-          messages: [{ role: 'user', content: buildUserMessage(email, body) }],
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        onCall?.({
-          provider: 'anthropic',
-          model: config.model,
-          promptVersion: PROMPT_VERSION,
-          emailId: email.id,
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheCreationTokens: 0,
-          cacheReadTokens: 0,
-          latencyMs: Date.now() - started,
-          costUsd: 0,
-          cacheHit: false,
-          stopReason: null,
-          error: msg,
-        });
-        throw err;
+      // Prompt-injection scan on input (#102). Findings don't block the call
+      // — they disable caching so a poisoned classification can't persist,
+      // and flow to the audit callback for logging.
+      const injectionFindings = detectPromptInjection(
+        email.subject,
+        body?.text ?? email.snippet ?? ''
+      );
+      if (injectionFindings.length > 0) {
+        options.onInjectionFindings?.(email.id, injectionFindings);
       }
+      const quarantined = shouldQuarantine(injectionFindings);
 
-      // Track usage for rate limiting
-      const inputTokens = response.usage.input_tokens ?? 0;
-      const outputTokens = response.usage.output_tokens ?? 0;
-      const cacheCreationTokens = (response.usage as any).cache_creation_input_tokens ?? 0;
-      const cacheReadTokens = (response.usage as any).cache_read_input_tokens ?? 0;
-      todayUsage += inputTokens + outputTokens;
+      // First turn: no tools, fully cacheable.
+      const messages: MessageParam[] = [
+        { role: 'user', content: buildUserMessage(email, body) },
+      ];
+      const initial = await runOneCall(email, messages);
+
+      const textContent = initial.response.content.find(c => c.type === 'text');
+      const content = textContent && textContent.type === 'text' ? textContent.text : '';
+      let { result } = parseClassification(content);
       todayEmailCount++;
 
-      const costUsd = computeCostUsd(
-        config.model,
-        inputTokens,
-        outputTokens,
-        cacheCreationTokens,
-        cacheReadTokens
-      );
-
-      // Parse response
-      const textContent = response.content.find(c => c.type === 'text');
-      const content = textContent && textContent.type === 'text' ? textContent.text : '';
-
-      let result: Classification;
-      let parseError: string | null = null;
-      try {
-        const parsed = JSON.parse(content);
-        const folder = parsed.folder as TriageFolder;
-        const validFolders = Object.keys(TRIAGE_FOLDER_DESCRIPTIONS);
-        if (!validFolders.includes(folder)) {
-          parseError = `Unknown folder "${folder}" in response`;
-          result = {
-            suggestedFolder: 'INBOX',
-            confidence: 0.5,
-            reasoning: parseError,
-            priority: 'normal',
-          };
-        } else {
-          result = {
-            suggestedFolder: folder,
-            confidence: parsed.confidence || 0,
-            reasoning: parsed.reasoning || '',
-            priority: parsed.priority || 'normal',
-          };
-        }
-      } catch {
-        parseError = 'Parse error';
-        result = {
-          suggestedFolder: 'INBOX',
-          confidence: 0,
-          reasoning: parseError,
-          priority: 'normal',
-        };
+      // Agent refinement: only when confidence is too low AND tools are wired.
+      // The model gets the same system prompt + message history and may call
+      // find_similar_emails / get_sender_history to gather more evidence.
+      if (
+        agentTools &&
+        result.confidence < agentConfidenceThreshold &&
+        initial.response.stop_reason !== 'tool_use'
+      ) {
+        result = await runAgentLoop(email, messages, agentTools, result);
+      } else if (initial.response.stop_reason === 'tool_use') {
+        // The first call didn't have tools — this branch should be rare,
+        // but defensively replay with tools.
+        if (agentTools) result = await runAgentLoop(email, messages, agentTools, result);
       }
 
-      onCall?.({
-        provider: 'anthropic',
-        model: config.model,
-        promptVersion: PROMPT_VERSION,
-        emailId: email.id,
-        inputTokens,
-        outputTokens,
-        cacheCreationTokens,
-        cacheReadTokens,
-        latencyMs: Date.now() - started,
-        costUsd,
-        cacheHit: cacheReadTokens > 0,
-        stopReason: response.stop_reason ?? null,
-        error: parseError,
-      });
-
-      // Cache if confident
-      if (result.confidence > 0.5) {
+      // Cache if confident AND not quarantined.
+      if (result.confidence > 0.5 && !quarantined) {
         cache.set(hash, result);
       }
 
