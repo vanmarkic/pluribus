@@ -19,6 +19,7 @@ import { setupContentHandlers } from './content-handlers';
 import { setupSystemHandlers } from './system-handlers';
 import { setupTriageHandlers } from './triage-handlers';
 import { setupAwaitingHandlers } from './awaiting-handlers';
+import { setupLlmCallsHandlers } from './llm-calls-handlers';
 
 // Re-export for external use
 export { getTempFiles };
@@ -48,6 +49,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   setupSystemHandlers(container);
   setupTriageHandlers(container);
   setupAwaitingHandlers(container);
+  setupLlmCallsHandlers(container);
 }
 
 // Re-export validation helpers for testing

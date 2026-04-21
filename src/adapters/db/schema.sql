@@ -312,3 +312,30 @@ CREATE TABLE IF NOT EXISTS email_embeddings (
 CREATE INDEX IF NOT EXISTS idx_embeddings_email ON email_embeddings(email_id);
 CREATE INDEX IF NOT EXISTS idx_embeddings_folder ON email_embeddings(folder);
 CREATE INDEX IF NOT EXISTS idx_embeddings_correction ON email_embeddings(is_correction) WHERE is_correction = 1;
+
+-- ============================================
+-- LLM Call Log (cost & latency observability)
+-- ============================================
+
+-- One row per Anthropic / Ollama classify call. Drives the cost dashboard.
+CREATE TABLE IF NOT EXISTS llm_calls (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL DEFAULT (datetime('now')),
+  provider TEXT NOT NULL,                        -- 'anthropic' | 'ollama'
+  model TEXT NOT NULL,
+  prompt_version TEXT,
+  email_id INTEGER,                              -- nullable; not FK to allow history after email deletion
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+  latency_ms INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  cache_hit INTEGER NOT NULL DEFAULT 0,          -- 1 if cache_read_tokens > 0
+  stop_reason TEXT,
+  error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_calls_ts ON llm_calls(ts DESC);
+CREATE INDEX IF NOT EXISTS idx_llm_calls_model ON llm_calls(model);
+CREATE INDEX IF NOT EXISTS idx_llm_calls_email ON llm_calls(email_id) WHERE email_id IS NOT NULL;

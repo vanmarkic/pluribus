@@ -476,6 +476,24 @@ export function createMockApi(): MailAPI {
       selectDiverseTrainingEmails: async () => mockEmails.slice(0, 12),
     },
 
+    llmCalls: {
+      getStats: async () => ({
+        totalCalls: 0,
+        totalCostUsd: 0,
+        todayCalls: 0,
+        todayCostUsd: 0,
+        monthCostUsd: 0,
+        cacheHitRate: 0,
+        avgLatencyMs: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        totalCacheReadTokens: 0,
+        totalCacheCreationTokens: 0,
+      }),
+      listRecent: async () => [],
+      getDailyCost: async () => [],
+    },
+
     on: (channel, callback) => {
       if (!listeners.has(channel)) listeners.set(channel, new Set());
       listeners.get(channel)!.add(callback);

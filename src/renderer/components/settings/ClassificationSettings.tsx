@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { LlmUsageStats } from './LlmUsageStats';
 
 /**
  * Classification Settings Component
@@ -530,6 +531,14 @@ export function ClassificationSettings() {
             <span>→</span>
           </a>
         )}
+      </div>
+
+      {/* Cost & performance dashboard (#94) */}
+      <div className="pt-4 border-t" style={{ borderColor: 'var(--color-border)' }}>
+        <div className="font-medium mb-3" style={{ color: 'var(--color-text-primary)' }}>
+          Cost &amp; performance
+        </div>
+        <LlmUsageStats />
       </div>
     </div>
   );

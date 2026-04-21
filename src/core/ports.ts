@@ -506,6 +506,59 @@ export type VectorSearch = {
 };
 
 // ============================================
+// LLM Call Log (observability)
+// ============================================
+
+export type LlmCallEntry = {
+  provider: 'anthropic' | 'ollama';
+  model: string;
+  promptVersion?: string | null;
+  emailId?: number | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  latencyMs: number;
+  costUsd: number;
+  cacheHit: boolean;
+  stopReason?: string | null;
+  error?: string | null;
+};
+
+export type LlmCallRow = LlmCallEntry & {
+  id: number;
+  ts: Date;
+};
+
+export type LlmUsageStats = {
+  totalCalls: number;
+  totalCostUsd: number;
+  todayCalls: number;
+  todayCostUsd: number;
+  monthCostUsd: number;
+  cacheHitRate: number;       // 0..1
+  avgLatencyMs: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheCreationTokens: number;
+};
+
+export type LlmDailyCost = {
+  day: string;   // 'YYYY-MM-DD'
+  model: string;
+  calls: number;
+  costUsd: number;
+};
+
+export type LlmCallsRepo = {
+  record: (entry: LlmCallEntry) => Promise<void>;
+  listRecent: (limit?: number) => Promise<LlmCallRow[]>;
+  getStats: () => Promise<LlmUsageStats>;
+  getDailyCost: (days?: number) => Promise<LlmDailyCost[]>;
+};
+
+// ============================================
 // All Dependencies (for DI)
 // ============================================
 
@@ -542,4 +595,6 @@ export type Deps = {
   embeddingService: EmbeddingService;
   embeddingRepo: EmbeddingRepo;
   vectorSearch: VectorSearch;
+  // Observability
+  llmCalls: LlmCallsRepo;
 };

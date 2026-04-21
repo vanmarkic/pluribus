@@ -141,6 +141,43 @@ declare global {
         getRecent: (limit?: number) => Promise<RecentContact[]>;
         search: (query: string, limit?: number) => Promise<RecentContact[]>;
       };
+      llmCalls: {
+        getStats: () => Promise<{
+          totalCalls: number;
+          totalCostUsd: number;
+          todayCalls: number;
+          todayCostUsd: number;
+          monthCostUsd: number;
+          cacheHitRate: number;
+          avgLatencyMs: number;
+          totalInputTokens: number;
+          totalOutputTokens: number;
+          totalCacheReadTokens: number;
+          totalCacheCreationTokens: number;
+        }>;
+        listRecent: (limit?: number) => Promise<Array<{
+          id: number;
+          ts: string;
+          provider: string;
+          model: string;
+          emailId: number | null;
+          inputTokens: number;
+          outputTokens: number;
+          cacheReadTokens: number;
+          cacheCreationTokens: number;
+          latencyMs: number;
+          costUsd: number;
+          cacheHit: boolean;
+          stopReason: string | null;
+          error: string | null;
+        }>>;
+        getDailyCost: (days?: number) => Promise<Array<{
+          day: string;
+          model: string;
+          calls: number;
+          costUsd: number;
+        }>>;
+      };
       db: {
         checkIntegrity: (full?: boolean) => Promise<{ isHealthy: boolean; errors: string[] }>;
         backup: () => Promise<string>;

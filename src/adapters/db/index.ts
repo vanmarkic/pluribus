@@ -22,3 +22,6 @@ export { createClassificationStateRepo } from './classification-state';
 
 // Awaiting reply
 export { createAwaitingRepo } from './awaiting-repo';
+
+// LLM call log (observability)
+export { createLlmCallsRepo } from './llm-calls-repo';

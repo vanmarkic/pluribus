@@ -65,6 +65,44 @@ const api = {
     clearTask: (taskId: string) => ipcRenderer.invoke('llm:clearTask', taskId) as Promise<void>,
   },
 
+  llmCalls: {
+    getStats: () => ipcRenderer.invoke('llmCalls:getStats') as Promise<{
+      totalCalls: number;
+      totalCostUsd: number;
+      todayCalls: number;
+      todayCostUsd: number;
+      monthCostUsd: number;
+      cacheHitRate: number;
+      avgLatencyMs: number;
+      totalInputTokens: number;
+      totalOutputTokens: number;
+      totalCacheReadTokens: number;
+      totalCacheCreationTokens: number;
+    }>,
+    listRecent: (limit?: number) => ipcRenderer.invoke('llmCalls:listRecent', limit) as Promise<Array<{
+      id: number;
+      ts: string;
+      provider: string;
+      model: string;
+      emailId: number | null;
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      cacheCreationTokens: number;
+      latencyMs: number;
+      costUsd: number;
+      cacheHit: boolean;
+      stopReason: string | null;
+      error: string | null;
+    }>>,
+    getDailyCost: (days?: number) => ipcRenderer.invoke('llmCalls:getDailyCost', days) as Promise<Array<{
+      day: string;
+      model: string;
+      calls: number;
+      costUsd: number;
+    }>>,
+  },
+
   aiSort: {
     getPendingReview: (opts?: { limit?: number; offset?: number; sortBy?: 'confidence' | 'date' | 'sender'; accountId?: number }) =>
       ipcRenderer.invoke('aiSort:getPendingReview', opts),

@@ -14,7 +14,8 @@ import { createUseCases, type UseCases, type Deps } from '../core';
 
 // Adapters
 // Tags removed - using folders for organization (Issue #54)
-import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup, createAwaitingRepo } from '../adapters/db';
+import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup, createAwaitingRepo, createLlmCallsRepo } from '../adapters/db';
+import { logger } from '../adapters/observability';
 import { createMailSync, createImapFolderOps } from '../adapters/imap';
 import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier } from '../adapters/llm';
 import { createPatternMatcher, createTrainingRepo, createSenderRulesRepo, createSnoozeRepo, createTriageLogRepo, createTriageClassifier } from '../adapters/triage';
@@ -127,6 +128,46 @@ export function createContainer(): Container {
   const drafts = createDraftRepo();
   const contacts = createContactRepo();
   const classificationState = createClassificationStateRepo(getDb);
+  const llmCalls = createLlmCallsRepo(getDb);
+
+  // Observability sink: records every classify call for the cost dashboard (#94)
+  // and emits a structured pino log line.
+  const recordLlmCall = (record: {
+    provider: 'anthropic' | 'ollama';
+    model: string;
+    promptVersion: string;
+    emailId?: number;
+    inputTokens: number;
+    outputTokens: number;
+    cacheCreationTokens: number;
+    cacheReadTokens: number;
+    latencyMs: number;
+    costUsd: number;
+    cacheHit: boolean;
+    stopReason: string | null;
+    error?: string | null;
+  }) => {
+    llmCalls.record({
+      provider: record.provider,
+      model: record.model,
+      promptVersion: record.promptVersion,
+      emailId: record.emailId ?? null,
+      inputTokens: record.inputTokens,
+      outputTokens: record.outputTokens,
+      cacheReadTokens: record.cacheReadTokens,
+      cacheCreationTokens: record.cacheCreationTokens,
+      latencyMs: record.latencyMs,
+      costUsd: record.costUsd,
+      cacheHit: record.cacheHit,
+      stopReason: record.stopReason,
+      error: record.error ?? null,
+    }).catch(err => logger.error({ err }, 'Failed to persist llm_calls row'));
+
+    logger.info({
+      component: 'llm',
+      ...record,
+    }, 'llm.call');
+  };
 
   // Create services (with dependencies)
   const sync = createMailSync(emails, attachments, folders, secrets);
@@ -159,11 +200,12 @@ export function createContainer(): Container {
         // Create fresh Anthropic classifier with current config
         const anthClassifier = createClassifier(
           {
-            model: cfg.model as 'claude-sonnet-4-20250514' | 'claude-haiku-4-20250514',
+            model: cfg.model,
             dailyBudget: cfg.dailyBudget,
             dailyEmailLimit: cfg.dailyEmailLimit,
           },
-          secrets
+          secrets,
+          { onCall: recordLlmCall }
         );
         return anthClassifier.classify(email, body);
       }
@@ -355,6 +397,8 @@ export function createContainer(): Container {
     embeddingService,
     embeddingRepo,
     vectorSearch,
+    // Observability
+    llmCalls,
   };
   
   // Create use cases
