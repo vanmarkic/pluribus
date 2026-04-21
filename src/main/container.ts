@@ -17,7 +17,7 @@ import { createUseCases, type UseCases, type Deps } from '../core';
 import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup, createAwaitingRepo, createLlmCallsRepo } from '../adapters/db';
 import { logger } from '../adapters/observability';
 import { createMailSync, createImapFolderOps } from '../adapters/imap';
-import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier, type AgentTools } from '../adapters/llm';
+import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier, createFallbackClassifier, type AgentTools, type FallbackTransition } from '../adapters/llm';
 import { chooseVersion, challengerPercentFromEnv } from '../adapters/llm/prompts/loader';
 import { createPatternMatcher, createTrainingRepo, createSenderRulesRepo, createSnoozeRepo, createTriageLogRepo, createTriageClassifier } from '../adapters/triage';
 import { createEmbeddingService } from '../adapters/embeddings/index';
@@ -246,35 +246,74 @@ export function createContainer(): Container {
     logger.info({ component: 'prompt-ab', challengerPercent }, 'prompt-ab.enabled');
   }
 
-  // Dynamic classifier that delegates based on current provider setting
+  // Fallback-chain transitions (#95): logged via pino and counted in memory
+  // so the cost dashboard can surface fallback rate later.
+  let fallbackCount = 0;
+  const logFallbackTransition = (t: FallbackTransition) => {
+    fallbackCount++;
+    logger.warn({
+      component: 'fallback',
+      ...t,
+    }, 'classifier.fallback');
+  };
+
+  // Dynamic classifier that delegates based on current provider setting.
+  // For Anthropic, we wrap the user's configured model in a 2-tier fallback
+  // chain so transient 5xx / timeout / overloaded errors automatically
+  // degrade to Haiku 4.5 instead of surfacing to the user (#95).
+  const HAIKU_FALLBACK_MODEL = 'claude-haiku-4-5-20251001';
   const classifier: import('../core/ports').Classifier = {
     async classify(email, body) {
       const cfg = configStore.get('llm');
       if (cfg.provider === 'ollama') {
         return ollamaClassifier.classify(email, body);
-      } else {
-        // Create fresh Anthropic classifier with current config. The prompt
-        // version is chosen deterministically per email so reclassifications
-        // see the same version (#91).
-        const promptVersion = chooseVersion(email.id, challengerPercent);
-        const anthClassifier = createClassifier(
-          {
-            model: cfg.model,
-            dailyBudget: cfg.dailyBudget,
-            dailyEmailLimit: cfg.dailyEmailLimit,
-          },
-          secrets,
-          {
-            onCall: recordLlmCall,
-            agentTools: buildAgentTools(),
-            agentConfidenceThreshold: 0.6,
-            agentMaxIterations: 3,
-            onInjectionFindings: logInjectionFindings,
-            promptVersion,
-          }
-        );
-        return anthClassifier.classify(email, body);
       }
+
+      // Prompt version chosen deterministically per email so retries and
+      // reclassifications see the same version (#91). Applies to every tier.
+      const promptVersion = chooseVersion(email.id, challengerPercent);
+      const classifierOptsFor = (model: string) => ({
+        onCall: recordLlmCall,
+        agentTools: buildAgentTools(),
+        agentConfidenceThreshold: 0.6,
+        agentMaxIterations: 3,
+        onInjectionFindings: logInjectionFindings,
+        promptVersion,
+        // Observability records tier via the llm_calls row's model column;
+        // no per-tier state needed on the classifier itself.
+        ...(model === HAIKU_FALLBACK_MODEL ? { cacheTtl: '5m' as const } : {}),
+      });
+
+      const primary = createClassifier(
+        { model: cfg.model, dailyBudget: cfg.dailyBudget, dailyEmailLimit: cfg.dailyEmailLimit },
+        secrets,
+        classifierOptsFor(cfg.model),
+      );
+      // Only add the Haiku fallback when the user isn't already on Haiku —
+      // no point falling back to the same model we just failed on.
+      const tiers =
+        cfg.model === HAIKU_FALLBACK_MODEL
+          ? [{ label: `anthropic:${cfg.model}`, classifier: primary }]
+          : [
+              { label: `anthropic:${cfg.model}`, classifier: primary },
+              {
+                label: `anthropic:${HAIKU_FALLBACK_MODEL}`,
+                classifier: createClassifier(
+                  {
+                    model: HAIKU_FALLBACK_MODEL,
+                    dailyBudget: cfg.dailyBudget,
+                    dailyEmailLimit: cfg.dailyEmailLimit,
+                  },
+                  secrets,
+                  classifierOptsFor(HAIKU_FALLBACK_MODEL),
+                ),
+              },
+            ];
+
+      const fallbackClassifier = createFallbackClassifier(tiers, {
+        onTransition: logFallbackTransition,
+      });
+      return fallbackClassifier.classify(email, body);
     },
     getBudget() {
       const cfg = configStore.get('llm');
