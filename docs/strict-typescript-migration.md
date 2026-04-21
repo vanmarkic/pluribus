@@ -12,48 +12,38 @@ codebase is expected to carry: `noImplicitOverride`,
 | Flag | `tsconfig.main.json` | `tsconfig.evals.json` |
 |---|---|---|
 | `strict` | ✓ | ✓ |
-| `noImplicitOverride` | **✓ (this commit)** | **✓ (this commit)** |
-| `noUncheckedIndexedAccess` | open | **✓ (this commit)** |
-| `exactOptionalPropertyTypes` | open | **✓ (this commit)** |
+| `noImplicitOverride` | ✓ | ✓ |
+| `noUncheckedIndexedAccess` | ✓ | ✓ |
+| `exactOptionalPropertyTypes` | ✓ | ✓ |
 
-The evals path is the leading edge — smaller surface, newer code, no
-legacy. The main project is the trailing edge and carries ~100 errors
-under the remaining two flags, distributed across renderer stores and
-a few long-lived adapters (db/mappers, imap, triage).
+All three post-`strict` flags now enforced project-wide across
+core / adapters / main. The initial audit found 29 errors; all fixed
+and the flags landed together in the commit that opens this doc.
 
-## Why split?
+## Categories the 29 fixes fell into
 
-Enabling `noUncheckedIndexedAccess` across `src/main/**` and
-`src/adapters/**` produces ~105 errors. Each one is a real correctness
-improvement (array indexing, map lookups, record-key access) but the
-fixes are individually tiny and the review load for a single 100-file
-commit would be disproportionate to the risk.
+- **`Object possibly undefined` after index access** (7): tight loops
+  (`a[i]`), entries destructuring (`entries[0]`), tier selection
+  (`tiers[tierIdx]`) — fixed with `!` where the surrounding logic
+  guarantees the index, `?.` + fallback where it doesn't.
+- **`{foo: undefined}` against optional field** (16): every time we
+  built an output object by writing `foo: maybeUndefined` instead of
+  conditionally adding the key. `exactOptionalPropertyTypes` rejects
+  this because the target type is `{foo?: T}` not `{foo?: T | undefined}`
+  — a semantic distinction TS 2026 enforces. Fixed with conditional
+  spreads `...(x !== undefined ? { foo: x } : {})`.
+- **Record lookup with fallback key** (1): `PROVIDER_FOLDERS[provider]
+  || PROVIDER_FOLDERS.default` tightened to
+  `PROVIDER_FOLDERS[provider] ?? PROVIDER_FOLDERS['default']!` so the
+  bracket access doesn't leak `undefined`.
+- **Missing null guards at render boundaries** (5): protocol handlers
+  and mailbox listers where an optional path segment could be
+  undefined; surfaced with explicit early returns.
 
-The plan is to migrate one adapter at a time, each under its own
-commit with a commit message of the form `tsconfig: enable
-noUncheckedIndexedAccess on <path>`. Once every subtree is clean, the
-flag graduates to the project root.
+## Open items (renderer-side)
 
-## Rough migration order
-
-1. `src/adapters/observability/**` — tiny.
-2. `src/adapters/keychain/**` — medium.
-3. `src/adapters/llm/**` — already mostly clean (prompts, streaming,
-   calibration, fallback, risk-tier, prompt-injection were written under
-   the strict flag).
-4. `src/adapters/db/**` — the bulk of the errors live here, in the
-   mappers and the classification-state repo's long SELECT statements.
-5. `src/core/**` — tests depend on `Partial<Deps>` patterns that need
-   re-examining first.
-6. `src/main/**`.
-7. `src/renderer/**`.
-
-## How to help
-
-1. Pick an unmigrated subtree from the list above.
-2. Add the flag to a scoped tsconfig (or patch the main one) and count
-   errors: `npx tsc --noEmit -p tsconfig.main.json 2>&1 | head`.
-3. Fix with nullish-coalescing / index guards.
-4. Check the flag in for that subtree only (either via a scoped
-   tsconfig or by waiting until the whole project is clean).
-5. Run `npm test`.
+`src/renderer/**` is excluded from both tsconfigs for build reasons
+unrelated to strictness — the renderer is compiled through Vite, not
+tsc. A future commit can plug the flags into `tsconfig.json` (the
+renderer-facing config that's also composite-referenced from the main
+one) once the renderer's jsx/vite pipeline is audited.

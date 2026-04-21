@@ -25,7 +25,9 @@ export function setupCalibrationHandlers(container: Container): void {
 
   ipcMain.handle('calibration:recalibrate', async (_event, opts?: unknown) => {
     const parsed = parseInput(RecalibrateInput, opts, 'opts');
-    return useCases.recalibrateConfidence(parsed ?? {});
+    return useCases.recalibrateConfidence(
+      parsed?.minSamples !== undefined ? { minSamples: parsed.minSamples } : {},
+    );
   });
 
   ipcMain.handle('calibration:getLatest', async () => {

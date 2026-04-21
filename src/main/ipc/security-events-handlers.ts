@@ -17,10 +17,10 @@ export function setupSecurityEventsHandlers(container: Container): void {
   ipcMain.handle('securityEvents:listRecent', async (_event, opts?: unknown) => {
     const parsed = parseInput(SecurityEventsListRecentInput, opts, 'opts') ?? {};
     return deps.securityEvents.listRecent({
-      limit: parsed.limit,
-      eventType: parsed.eventType,
-      severity: parsed.severity,
-      sinceTs: parsed.sinceTs ? new Date(parsed.sinceTs) : undefined,
+      ...(parsed.limit !== undefined ? { limit: parsed.limit } : {}),
+      ...(parsed.eventType !== undefined ? { eventType: parsed.eventType } : {}),
+      ...(parsed.severity !== undefined ? { severity: parsed.severity } : {}),
+      ...(parsed.sinceTs ? { sinceTs: new Date(parsed.sinceTs) } : {}),
     });
   });
 

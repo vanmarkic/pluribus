@@ -76,14 +76,20 @@ export const backfillEmbeddings = (deps: BackfillDeps) =>
 
     // Page through emails in reverse-chronological order and collect the
     // un-indexed ones. List() supports accountId via standard options.
-    const listed = await deps.emails.list({ limit, accountId: options.accountId });
-    const toIndex: Array<{ emailId: number; folder: string; subject: string; snippet: string | null | undefined }> = [];
+    const listed = await deps.emails.list(
+      options.accountId !== undefined ? { limit, accountId: options.accountId } : { limit },
+    );
+    const toIndex: Array<{ emailId: number; folder: string; subject: string; snippet?: string | null }> = [];
     for (const email of listed) {
       const existing = await deps.embeddingRepo.findByEmail(email.id, model);
       if (existing) continue;
       const state = await deps.classificationState.getState(email.id);
       const folder = state?.suggestedFolder ?? 'INBOX';
-      toIndex.push({ emailId: email.id, folder, subject: email.subject, snippet: email.snippet });
+      toIndex.push(
+        email.snippet !== undefined
+          ? { emailId: email.id, folder, subject: email.subject, snippet: email.snippet }
+          : { emailId: email.id, folder, subject: email.subject },
+      );
     }
 
     const taskId = crypto.randomUUID();

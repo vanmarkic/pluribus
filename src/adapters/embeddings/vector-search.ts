@@ -101,7 +101,7 @@ export function createVectorSearch(
       }
 
       entries.sort(([, a], [, b]) => b - a);
-      const [topFolder, topWeight] = entries[0];
+      const [topFolder, topWeight] = entries[0]!;
 
       // Confidence is the proportion of total weight
       const confidence = totalWeight > 0 ? topWeight / totalWeight : 0;

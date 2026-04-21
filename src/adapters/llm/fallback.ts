@@ -98,7 +98,7 @@ export function createFallbackClassifier(
       let lastErr: unknown = new Error('No tiers attempted');
 
       for (let tierIdx = 0; tierIdx < tiers.length; tierIdx++) {
-        const tier = tiers[tierIdx];
+        const tier = tiers[tierIdx]!;
         let attempt = 0;
         let attemptsInThisTier = 0;
 
@@ -147,12 +147,13 @@ export function createFallbackClassifier(
 
     getBudget() {
       // Budget/rate-limit display tracks the primary tier only; fallback
-      // is invisible to the cost dashboard's daily-usage line.
-      return tiers[0].classifier.getBudget();
+      // is invisible to the cost dashboard's daily-usage line. The tier
+      // list is guaranteed non-empty by the constructor guard.
+      return tiers[0]!.classifier.getBudget();
     },
 
     getEmailBudget() {
-      return tiers[0].classifier.getEmailBudget();
+      return tiers[0]!.classifier.getEmailBudget();
     },
   };
 }

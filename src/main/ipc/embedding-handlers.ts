@@ -17,7 +17,7 @@ export function setupEmbeddingHandlers(container: Container): void {
     const parsed = parseInput(EmbeddingsBackfillInput, opts, 'opts') ?? {};
     return useCases.backfillEmbeddings({
       limit: parsed.limit ?? 5000,
-      accountId: parsed.accountId,
+      ...(parsed.accountId !== undefined ? { accountId: parsed.accountId } : {}),
     });
   });
 }

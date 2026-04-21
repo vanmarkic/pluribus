@@ -48,6 +48,7 @@ function registerCachedImageProtocol(): void {
 
     const emailId = pathParts[1];
     const filename = pathParts.slice(2).join('/');
+    if (!emailId) return new Response('Missing email id', { status: 400 });
 
     // Construct the file path
     const cacheDir = path.join(app.getPath('userData'), 'cache', 'images', emailId);

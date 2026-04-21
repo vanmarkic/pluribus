@@ -105,11 +105,11 @@ export function createTriageClassifier(llmClient: LLMClient): TriageClassifier {
           folder: parsed.folder as TriageFolder,
           tags: parsed.tags || [],
           confidence: parsed.confidence,
-          snoozeUntil: parsed.snoozeUntil ? new Date(parsed.snoozeUntil) : undefined,
-          autoDeleteAfter: parsed.autoDeleteMinutes,
           patternHint: patternHint.folder,
           patternAgreed: parsed.patternAgreed,
           reasoning: parsed.reasoning,
+          ...(parsed.snoozeUntil ? { snoozeUntil: new Date(parsed.snoozeUntil) } : {}),
+          ...(parsed.autoDeleteMinutes !== undefined ? { autoDeleteAfter: parsed.autoDeleteMinutes } : {}),
         };
       } catch (error) {
         // LLM failed - return pattern hint with low confidence
