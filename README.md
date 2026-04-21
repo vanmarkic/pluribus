@@ -1,5 +1,7 @@
 # Pluribus Mail Client
 
+[![CI](https://github.com/vanmarkic/pluribus/actions/workflows/ci.yml/badge.svg)](https://github.com/vanmarkic/pluribus/actions/workflows/ci.yml)
+
 A privacy-focused Electron mail client with LLM-powered email triage and intelligent classification.
 
 ## 🌟 Features

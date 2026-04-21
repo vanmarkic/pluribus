@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs when a new commit lands on the same branch/PR.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Opt out of noisy Husky hooks and Electron download during CI installs.
+  HUSKY: 0
+  ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+
+jobs:
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: tsc (main)
+        run: npx tsc --noEmit -p tsconfig.main.json
+      - name: tsc (evals)
+        run: npx tsc --noEmit -p tsconfig.evals.json
+
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      # better-sqlite3 ships prebuilt binaries; rebuild:node only matters for
+      # the Electron runtime, not for Node-based tests.
+      - name: Run vitest
+        run: npx vitest run --reporter=default
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  eval:
+    name: Classifier eval
+    runs-on: ubuntu-latest
+    # Only run on PRs that touched LLM code or the dataset, plus every
+    # push to main so we always have a fresh baseline on the trunk.
+    if: |
+      github.event_name == 'push' ||
+      contains(join(github.event.pull_request.labels.*.name, ','), 'ai') ||
+      contains(join(github.event.pull_request.labels.*.name, ','), 'eval')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      # Gate: the stub classifier comfortably beats 0.75 on the committed
+      # dataset. A drop below this means the harness is broken or the
+      # dataset changed without a corresponding rule update.
+      - name: Run eval (stub classifier, macro-F1 ≥ 0.75)
+        env:
+          EVAL_MIN_MACRO_F1: '0.75'
+          EVAL_MIN_ACCURACY: '0.75'
+        run: npm run eval
+      - name: Upload eval history
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-history
+          path: evals/history.jsonl
+          if-no-files-found: ignore
+          retention-days: 30

@@ -404,7 +404,7 @@ export function createContainer(): Container {
   const triageClassifier = createEnhancedTriageClassifier(triageLlmClient, vectorSearch);
 
   // Awaiting reply adapters
-  const awaiting = createAwaitingRepo(getDb);
+  const awaiting = createAwaitingRepo();
 
   // LLM text generator for awaiting classification (uses qwen2.5:1.5b by default)
   const llmGenerator = createOllamaTextGenerator(() => {
