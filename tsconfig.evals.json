@@ -10,16 +10,14 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "composite": true
+    "sourceMap": true
   },
   "include": [
-    "src/core/**/*",
-    "src/adapters/**/*",
-    "src/main/**/*",
-    "src/evals/**/*"
+    "src/evals/**/*",
+    "src/core/domain.ts",
+    "src/adapters/llm/anthropic.ts",
+    "src/adapters/llm/agent-tools.ts",
+    "src/adapters/llm/prompt-injection.ts"
   ],
-  "exclude": ["node_modules", "dist", "src/renderer", "**/*.test.ts"]
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }

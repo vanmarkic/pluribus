@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "npm run rebuild:node && vitest run",
     "test:watch": "npm run rebuild:node && vitest",
+    "eval": "tsc -p tsconfig.evals.json && node dist/evals/run-eval.js",
     "dist": "npm run build && npm run rebuild:electron && electron-builder --mac",
     "dist:dmg": "npm run build && npm run rebuild:electron && electron-builder --mac dmg",
     "rebuild:electron": "electron-rebuild",
