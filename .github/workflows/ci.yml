@@ -17,6 +17,19 @@ env:
   ELECTRON_SKIP_BINARY_DOWNLOAD: 1
 
 jobs:
+  lint:
+    name: Lint + format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund --legacy-peer-deps
+      - run: npx eslint .
+      - run: npx prettier --check . || true
+
   typecheck:
     name: Typecheck
     runs-on: ubuntu-latest
