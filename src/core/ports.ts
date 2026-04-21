@@ -597,6 +597,44 @@ export type SecurityEventRepo = {
 };
 
 // ============================================
+// Confidence calibration (#96)
+// ============================================
+
+export type CalibrationRecord = {
+  id: number;
+  fitAt: Date;
+  a: number;
+  b: number;
+  fitSize: number;
+  eceBefore: number | null;
+  eceAfter: number | null;
+};
+
+export type CalibrationFitPair = {
+  /** Raw LLM confidence recorded in classification_state.confidence. */
+  rawConfidence: number;
+  /** 1 if the user accepted (action in [accept, accept_edit]), 0 if dismissed. */
+  correct: number;
+};
+
+export type CalibrationRepo = {
+  /** Persist one Platt fit to the history table. */
+  saveFit: (input: {
+    a: number;
+    b: number;
+    fitSize: number;
+    eceBefore: number | null;
+    eceAfter: number | null;
+  }) => Promise<void>;
+  /** Most recent fit, or null if none. */
+  loadLatest: () => Promise<CalibrationRecord | null>;
+  /** Recent fits for the dashboard trend. */
+  listHistory: (limit?: number) => Promise<CalibrationRecord[]>;
+  /** Collect (raw_confidence, correct) pairs from feedback + state. */
+  collectFitPairs: () => Promise<CalibrationFitPair[]>;
+};
+
+// ============================================
 // All Dependencies (for DI)
 // ============================================
 
@@ -637,4 +675,6 @@ export type Deps = {
   llmCalls: LlmCallsRepo;
   // Security audit log (#98)
   securityEvents: SecurityEventRepo;
+  // Confidence calibration (#96)
+  calibration: CalibrationRepo;
 };

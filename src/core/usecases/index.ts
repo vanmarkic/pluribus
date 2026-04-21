@@ -38,5 +38,8 @@ export * from './awaiting';
 // Embedding / semantic-search use cases (#88)
 export * from './embedding-usecases';
 
+// Confidence calibration (#96)
+export * from './calibration-usecases';
+
 // Factory (createUseCases, UseCases type)
 export * from './factory';

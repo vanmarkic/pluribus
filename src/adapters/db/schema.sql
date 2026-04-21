@@ -362,3 +362,21 @@ CREATE TABLE IF NOT EXISTS security_events (
 CREATE INDEX IF NOT EXISTS idx_security_events_ts ON security_events(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_security_events_type ON security_events(event_type);
 CREATE INDEX IF NOT EXISTS idx_security_events_severity ON security_events(severity);
+
+-- ============================================
+-- Confidence calibration models (#96)
+-- ============================================
+
+-- Append-only history of Platt-scaling fits. The most recent row is the
+-- active model; older rows stay for trend analysis in the dashboard.
+CREATE TABLE IF NOT EXISTS calibration_models (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  fit_at TEXT NOT NULL DEFAULT (datetime('now')),
+  a REAL NOT NULL,
+  b REAL NOT NULL,
+  fit_size INTEGER NOT NULL,
+  ece_before REAL,
+  ece_after REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_calibration_models_fit_at ON calibration_models(fit_at DESC);

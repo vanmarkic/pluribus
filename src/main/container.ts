@@ -14,7 +14,7 @@ import { createUseCases, type UseCases, type Deps } from '../core';
 
 // Adapters
 // Tags removed - using folders for organization (Issue #54)
-import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup, createAwaitingRepo, createLlmCallsRepo, createSecurityEventRepo } from '../adapters/db';
+import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup, createAwaitingRepo, createLlmCallsRepo, createSecurityEventRepo, createCalibrationRepo } from '../adapters/db';
 import { logger } from '../adapters/observability';
 import { wrapSecureStorageWithAudit } from '../adapters/keychain/audit';
 import { createMailSync, createImapFolderOps } from '../adapters/imap';
@@ -129,6 +129,7 @@ export function createContainer(): Container {
   const classificationState = createClassificationStateRepo(getDb);
   const llmCalls = createLlmCallsRepo(getDb);
   const securityEvents = createSecurityEventRepo(getDb);
+  const calibration = createCalibrationRepo(getDb);
 
   // Security audit sink (#98). Centralised so every security-relevant event
   // emitter in the container funnels through one write path. Defensive:
@@ -554,6 +555,8 @@ export function createContainer(): Container {
     llmCalls,
     // Security audit log (#98)
     securityEvents,
+    // Confidence calibration (#96)
+    calibration,
   };
   
   // Create use cases

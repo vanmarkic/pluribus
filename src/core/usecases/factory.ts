@@ -18,6 +18,7 @@ import * as databaseUseCases from './database-usecases';
 import * as triageUseCases from './triage-usecases';
 import * as awaitingUseCases from './awaiting';
 import * as embeddingUseCases from './embedding-usecases';
+import * as calibrationUseCases from './calibration-usecases';
 
 /**
  * Create all use cases with dependencies
@@ -146,6 +147,10 @@ export function createUseCases(deps: Deps) {
     indexClassifiedBatch: embeddingUseCases.indexClassifiedBatch(deps),
     backfillEmbeddings: embeddingUseCases.backfillEmbeddings(deps),
     getEmbeddingIndexStats: embeddingUseCases.getEmbeddingIndexStats(deps),
+
+    // Confidence calibration (#96)
+    recalibrateConfidence: calibrationUseCases.recalibrateConfidence(deps),
+    loadActiveCalibration: calibrationUseCases.loadActiveCalibration(deps),
   };
 }
 

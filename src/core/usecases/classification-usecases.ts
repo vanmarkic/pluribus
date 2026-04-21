@@ -20,6 +20,8 @@ import { extractDomain, extractSubjectPattern } from '../domain';
 import { triageAndMoveEmail } from './triage-usecases';
 // #88: auto-index classified emails into the semantic-search corpus
 import { indexEmailForSearch } from './embedding-usecases';
+// #96: post-classification confidence calibration
+import { loadActiveCalibration, calibrateConfidence } from './calibration-usecases';
 
 // ============================================
 // Classification Use Cases
@@ -87,7 +89,7 @@ export const classifyAndTriage = (deps: Pick<Deps, 'emails' | 'classifier' | 'cl
  * - Uses pattern matching + training examples (triage system)
  * - Keeps classificationState in sync for ReviewQueue UI
  */
-export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'classifier' | 'classificationState' | 'accounts' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'config' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService'>) =>
+export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'classifier' | 'classificationState' | 'accounts' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'config' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService' | 'calibration'>) =>
   async (emailIds: number[], confidenceThreshold = 0.85): Promise<{ classified: number; skipped: number; triaged: number }> => {
     const budget = deps.classifier.getEmailBudget();
 
@@ -112,6 +114,15 @@ export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'classifier' | 'cl
     const emailsToClassify = sortedEmails.slice(0, remainingBudget);
     const skipped = emailIds.length - emailsToClassify.length;
 
+    // Load the active Platt calibration once per batch (#96). All emails
+    // in the batch share the same calibrated mapping, which keeps the
+    // classification decisions consistent across a single sync. Tolerates
+    // a missing `calibration` dep so existing tests that pass a trimmed
+    // Deps shape keep working — falls back to identity calibration.
+    const calibrationModel = deps.calibration
+      ? await loadActiveCalibration(deps)()
+      : { a: 1, b: 0, fitSize: 0 };
+
     let classified = 0;
     let triaged = 0;
 
@@ -123,16 +134,22 @@ export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'classifier' | 'cl
           confidenceThreshold: Math.min(confidenceThreshold, 0.7), // Use lower of the two thresholds
         });
 
+        // Apply calibration (#96) — the raw LLM confidence is typically
+        // over-confident; the fitted Platt model maps it to an empirical
+        // probability. Identity passthrough when no model has been fit
+        // yet.
+        const calibratedConfidence = calibrateConfidence(triageResult.confidence, calibrationModel);
+
         // Sync triage result to classificationState for ReviewQueue UI
-        const status = triageResult.confidence >= confidenceThreshold
+        const status = calibratedConfidence >= confidenceThreshold
           ? 'classified'
           : 'pending_review';
 
         await deps.classificationState.setState({
           emailId: email.id,
           status,
-          confidence: triageResult.confidence,
-          priority: triageResult.confidence >= 0.9 ? 'high' : triageResult.confidence >= 0.7 ? 'normal' : 'low',
+          confidence: calibratedConfidence,
+          priority: calibratedConfidence >= 0.9 ? 'high' : calibratedConfidence >= 0.7 ? 'normal' : 'low',
           suggestedFolder: triageResult.folder,
           reasoning: triageResult.reasoning,
           classifiedAt: new Date(),
@@ -755,7 +772,7 @@ export const getPendingReviewCount = (deps: Pick<Deps, 'classificationState'>) =
     return counts.pending_review;
   };
 
-export const classifyUnprocessed = (deps: Pick<Deps, 'emails' | 'classifier' | 'classificationState' | 'config' | 'accounts' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService'>) =>
+export const classifyUnprocessed = (deps: Pick<Deps, 'emails' | 'classifier' | 'classificationState' | 'config' | 'accounts' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService' | 'calibration'>) =>
   async (): Promise<{ classified: number; skipped: number }> => {
     const llmConfig = deps.config.getLLMConfig();
 

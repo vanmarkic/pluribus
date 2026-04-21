@@ -480,6 +480,11 @@ export function createMockApi(): MailAPI {
       listRecent: async () => [],
       countByType: async () => ({}),
     },
+    calibration: {
+      recalibrate: async () => ({ fitSize: 0, eceBefore: 0, eceAfter: 0, fitted: false }),
+      getLatest: async () => null,
+      getHistory: async () => [],
+    },
     embeddings: {
       getStats: async () => ({ totalEmails: 0, indexed: 0, coverage: 0, model: 'all-MiniLM-L6-v2' }),
       backfill: async () => ({ taskId: 'mock', total: 0 }),

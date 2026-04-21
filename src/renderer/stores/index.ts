@@ -168,6 +168,32 @@ declare global {
         }>>;
         countByType: (sinceTs?: string) => Promise<Record<string, number>>;
       };
+      calibration: {
+        recalibrate: (opts?: { minSamples?: number }) => Promise<{
+          fitSize: number;
+          eceBefore: number;
+          eceAfter: number;
+          fitted: boolean;
+        }>;
+        getLatest: () => Promise<{
+          id: number;
+          fitAt: string;
+          a: number;
+          b: number;
+          fitSize: number;
+          eceBefore: number | null;
+          eceAfter: number | null;
+        } | null>;
+        getHistory: (limit?: number) => Promise<Array<{
+          id: number;
+          fitAt: string;
+          a: number;
+          b: number;
+          fitSize: number;
+          eceBefore: number | null;
+          eceAfter: number | null;
+        }>>;
+      };
       embeddings: {
         getStats: () => Promise<{
           totalEmails: number;

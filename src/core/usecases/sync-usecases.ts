@@ -82,7 +82,7 @@ export const syncAllMailboxes = (deps: Pick<Deps, 'accounts' | 'sync'>) =>
     return { newCount: total, newEmailIds: allNewEmailIds };
   };
 
-export const syncWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails' | 'classifier' | 'classificationState' | 'config' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService'>) =>
+export const syncWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails' | 'classifier' | 'classificationState' | 'config' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService' | 'calibration'>) =>
   async (accountId: number, options: SyncOptions = {}): Promise<SyncResult & { classified?: number; skipped?: number; triaged?: number }> => {
     // First, sync the mailbox
     const syncResult = await syncMailbox(deps)(accountId, options);
@@ -118,7 +118,7 @@ export const syncWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'ema
     }
   };
 
-export const syncAllWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails' | 'classifier' | 'classificationState' | 'config' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService'>) =>
+export const syncAllWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails' | 'classifier' | 'classificationState' | 'config' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService' | 'calibration'>) =>
   async (options: SyncOptions = {}): Promise<SyncResult & { classified?: number; skipped?: number; triaged?: number }> => {
     // First, sync all mailboxes
     const syncResult = await syncAllMailboxes(deps)(options);

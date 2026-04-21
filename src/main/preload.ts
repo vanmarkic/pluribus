@@ -112,6 +112,35 @@ const api = {
       ipcRenderer.invoke('securityEvents:countByType', sinceTs) as Promise<Record<string, number>>,
   },
 
+  calibration: {
+    recalibrate: (opts?: { minSamples?: number }) =>
+      ipcRenderer.invoke('calibration:recalibrate', opts) as Promise<{
+        fitSize: number;
+        eceBefore: number;
+        eceAfter: number;
+        fitted: boolean;
+      }>,
+    getLatest: () => ipcRenderer.invoke('calibration:getLatest') as Promise<{
+      id: number;
+      fitAt: string;
+      a: number;
+      b: number;
+      fitSize: number;
+      eceBefore: number | null;
+      eceAfter: number | null;
+    } | null>,
+    getHistory: (limit?: number) =>
+      ipcRenderer.invoke('calibration:getHistory', limit) as Promise<Array<{
+        id: number;
+        fitAt: string;
+        a: number;
+        b: number;
+        fitSize: number;
+        eceBefore: number | null;
+        eceAfter: number | null;
+      }>>,
+  },
+
   embeddings: {
     getStats: () => ipcRenderer.invoke('embeddings:getStats') as Promise<{
       totalEmails: number;

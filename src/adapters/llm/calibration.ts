@@ -62,10 +62,12 @@ export function fitPlattScaling(
   const minSamples = options.minSamples ?? 50;
   if (pairs.length < minSamples) return IDENTITY_CALIBRATION;
 
-  // Degenerate label check.
+  // Degenerate label check. fitSize stays at 0 so downstream code has a
+  // single 'no real fit' signal — identity is identity regardless of how
+  // many samples produced it.
   const positives = pairs.filter(p => p.correct === 1).length;
   if (positives === 0 || positives === pairs.length) {
-    return { ...IDENTITY_CALIBRATION, fitSize: pairs.length };
+    return IDENTITY_CALIBRATION;
   }
 
   const iterations = options.iterations ?? 2000;

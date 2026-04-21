@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { LlmUsageStats } from './LlmUsageStats';
 import { SemanticIndexPanel } from './SemanticIndexPanel';
+import { CalibrationPanel } from './CalibrationPanel';
 
 /**
  * Classification Settings Component
@@ -548,6 +549,14 @@ export function ClassificationSettings() {
           Semantic index
         </div>
         <SemanticIndexPanel />
+      </div>
+
+      {/* Confidence calibration (#96) */}
+      <div className="pt-4 border-t" style={{ borderColor: 'var(--color-border)' }}>
+        <div className="font-medium mb-3" style={{ color: 'var(--color-text-primary)' }}>
+          Confidence calibration
+        </div>
+        <CalibrationPanel />
       </div>
     </div>
   );

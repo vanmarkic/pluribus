@@ -28,3 +28,6 @@ export { createLlmCallsRepo } from './llm-calls-repo';
 
 // Security audit log (#98)
 export { createSecurityEventRepo } from './security-event-repo';
+
+// Confidence calibration (#96)
+export { createCalibrationRepo } from './calibration-repo';

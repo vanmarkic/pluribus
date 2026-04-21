@@ -33,12 +33,10 @@ describe('fitPlattScaling', () => {
     expect(fitPlattScaling(pairs)).toBe(IDENTITY_CALIBRATION);
   });
 
-  it('returns identity (but records fitSize) when every sample is the same class', () => {
+  it('returns IDENTITY_CALIBRATION when every sample is the same class', () => {
     const pairs = Array.from({ length: 100 }, (_, i) => ({ rawConfidence: i / 100, correct: 1 }));
     const model = fitPlattScaling(pairs);
-    expect(model.a).toBe(1);
-    expect(model.b).toBe(0);
-    expect(model.fitSize).toBe(100);
+    expect(model).toBe(IDENTITY_CALIBRATION);
   });
 
   it('recovers a known logistic on synthetic data', () => {
