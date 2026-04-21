@@ -141,6 +141,24 @@ declare global {
         getRecent: (limit?: number) => Promise<RecentContact[]>;
         search: (query: string, limit?: number) => Promise<RecentContact[]>;
       };
+      securityEvents: {
+        listRecent: (opts?: {
+          limit?: number;
+          eventType?: string;
+          severity?: 'info' | 'warn' | 'alert';
+          sinceTs?: string;
+        }) => Promise<Array<{
+          id: number;
+          ts: string;
+          eventType: string;
+          severity: 'info' | 'warn' | 'alert';
+          actor: string;
+          target: string | null;
+          success: boolean;
+          metadata: Record<string, unknown>;
+        }>>;
+        countByType: (sinceTs?: string) => Promise<Record<string, number>>;
+      };
       embeddings: {
         getStats: () => Promise<{
           totalEmails: number;

@@ -65,6 +65,26 @@ const api = {
     clearTask: (taskId: string) => ipcRenderer.invoke('llm:clearTask', taskId) as Promise<void>,
   },
 
+  securityEvents: {
+    listRecent: (opts?: {
+      limit?: number;
+      eventType?: string;
+      severity?: 'info' | 'warn' | 'alert';
+      sinceTs?: string;
+    }) => ipcRenderer.invoke('securityEvents:listRecent', opts) as Promise<Array<{
+      id: number;
+      ts: string;
+      eventType: string;
+      severity: 'info' | 'warn' | 'alert';
+      actor: string;
+      target: string | null;
+      success: boolean;
+      metadata: Record<string, unknown>;
+    }>>,
+    countByType: (sinceTs?: string) =>
+      ipcRenderer.invoke('securityEvents:countByType', sinceTs) as Promise<Record<string, number>>,
+  },
+
   embeddings: {
     getStats: () => ipcRenderer.invoke('embeddings:getStats') as Promise<{
       totalEmails: number;

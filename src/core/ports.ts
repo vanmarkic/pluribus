@@ -559,6 +559,44 @@ export type LlmCallsRepo = {
 };
 
 // ============================================
+// Security Audit Log (#98)
+// ============================================
+
+export type SecuritySeverity = 'info' | 'warn' | 'alert';
+
+export type SecurityEvent = {
+  id: number;
+  ts: Date;
+  eventType: string;
+  severity: SecuritySeverity;
+  actor: string;
+  target: string | null;
+  success: boolean;
+  metadata: Record<string, unknown>;
+};
+
+export type SecurityEventEntry = {
+  eventType: string;
+  severity: SecuritySeverity;
+  actor: string;
+  target?: string | null;
+  success?: boolean;
+  metadata?: Record<string, unknown>;
+};
+
+export type SecurityEventRepo = {
+  record: (entry: SecurityEventEntry) => Promise<void>;
+  listRecent: (options?: {
+    limit?: number;
+    eventType?: string;
+    severity?: SecuritySeverity;
+    sinceTs?: Date;
+  }) => Promise<SecurityEvent[]>;
+  countByType: (options?: { sinceTs?: Date }) => Promise<Record<string, number>>;
+  prune: (keepDays: number) => Promise<number>;
+};
+
+// ============================================
 // All Dependencies (for DI)
 // ============================================
 
@@ -597,4 +635,6 @@ export type Deps = {
   vectorSearch: VectorSearch;
   // Observability
   llmCalls: LlmCallsRepo;
+  // Security audit log (#98)
+  securityEvents: SecurityEventRepo;
 };

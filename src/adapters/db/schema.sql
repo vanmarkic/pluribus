@@ -339,3 +339,26 @@ CREATE TABLE IF NOT EXISTS llm_calls (
 CREATE INDEX IF NOT EXISTS idx_llm_calls_ts ON llm_calls(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_model ON llm_calls(model);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_email ON llm_calls(email_id) WHERE email_id IS NOT NULL;
+
+-- ============================================
+-- Security Audit Log (#98)
+-- ============================================
+
+-- One row per security-relevant event: credential access, prompt-injection
+-- findings, classifier fallback transitions, rate-limit hits. Append-only
+-- from the app's perspective; a retention policy prunes the oldest rows
+-- asynchronously. Drives the Security > Audit log settings panel.
+CREATE TABLE IF NOT EXISTS security_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL DEFAULT (datetime('now')),
+  event_type TEXT NOT NULL,         -- e.g. 'prompt_injection.detected', 'credential.api_key.read'
+  severity TEXT NOT NULL,           -- 'info' | 'warn' | 'alert'
+  actor TEXT NOT NULL,              -- 'main' | 'renderer' | 'classifier' | 'keychain' | ...
+  target TEXT,                      -- 'anthropic' | 'email:123' | ...
+  success INTEGER NOT NULL DEFAULT 1,
+  metadata TEXT                     -- JSON blob with event-specific fields
+);
+
+CREATE INDEX IF NOT EXISTS idx_security_events_ts ON security_events(ts DESC);
+CREATE INDEX IF NOT EXISTS idx_security_events_type ON security_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_security_events_severity ON security_events(severity);

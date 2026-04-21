@@ -25,3 +25,6 @@ export { createAwaitingRepo } from './awaiting-repo';
 
 // LLM call log (observability)
 export { createLlmCallsRepo } from './llm-calls-repo';
+
+// Security audit log (#98)
+export { createSecurityEventRepo } from './security-event-repo';

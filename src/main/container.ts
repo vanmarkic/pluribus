@@ -14,8 +14,9 @@ import { createUseCases, type UseCases, type Deps } from '../core';
 
 // Adapters
 // Tags removed - using folders for organization (Issue #54)
-import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup, createAwaitingRepo, createLlmCallsRepo } from '../adapters/db';
+import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup, createAwaitingRepo, createLlmCallsRepo, createSecurityEventRepo } from '../adapters/db';
 import { logger } from '../adapters/observability';
+import { wrapSecureStorageWithAudit } from '../adapters/keychain/audit';
 import { createMailSync, createImapFolderOps } from '../adapters/imap';
 import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier, createFallbackClassifier, type AgentTools, type FallbackTransition } from '../adapters/llm';
 import { chooseVersion, challengerPercentFromEnv } from '../adapters/llm/prompts/loader';
@@ -116,10 +117,7 @@ export function createContainer(): Container {
   const schemaPath = require('fs').existsSync(packagedSchemaPath) ? packagedSchemaPath : devSchemaPath;
 
   initDb(dbPath, schemaPath);
-  
-  // Create secure storage (OS keychain)
-  const secrets = createSecureStorage();
-  
+
   // Create repositories
   const emails = createEmailRepo();
   const attachments = createAttachmentRepo();
@@ -130,6 +128,22 @@ export function createContainer(): Container {
   const contacts = createContactRepo();
   const classificationState = createClassificationStateRepo(getDb);
   const llmCalls = createLlmCallsRepo(getDb);
+  const securityEvents = createSecurityEventRepo(getDb);
+
+  // Security audit sink (#98). Centralised so every security-relevant event
+  // emitter in the container funnels through one write path. Defensive:
+  // a sink failure is logged but must never break the originating flow.
+  const recordSecurityEvent = (entry: import('../core/ports').SecurityEventEntry) => {
+    securityEvents.record(entry).catch(err =>
+      logger.error({ err, entry }, 'Failed to persist security_events row'),
+    );
+  };
+
+  // Keychain: OS-backed storage wrapped with the audit decorator so every
+  // credential read/write/delete lands in security_events (#98).
+  const secrets = wrapSecureStorageWithAudit(createSecureStorage(), securityEvents, {
+    onSinkError: err => logger.error({ err }, 'security audit sink failed'),
+  });
 
   // Observability sink: records every classify call for the cost dashboard (#94)
   // and emits a structured pino log line.
@@ -230,14 +244,25 @@ export function createContainer(): Container {
     },
   });
 
-  // Prompt-injection audit sink (#102). Logs high-signal findings to the
-  // structured logger; #98 will route these to a dedicated audit table.
+  // Prompt-injection audit sink (#102 → #98). Logs high-signal findings to
+  // the structured logger AND to the security audit log.
   const logInjectionFindings = (emailId: number, findings: ReturnType<typeof import('../adapters/llm').detectPromptInjection>) => {
+    const findingSummary = findings.map(f => ({ category: f.category, severity: f.severity, matched: f.matched }));
     logger.warn({
       component: 'prompt-injection',
       emailId,
-      findings: findings.map(f => ({ category: f.category, severity: f.severity, matched: f.matched })),
+      findings: findingSummary,
     }, 'prompt-injection.detected');
+    const worstSeverity = findings.some(f => f.severity === 'high') ? 'alert'
+      : findings.some(f => f.severity === 'medium') ? 'warn'
+      : 'info';
+    recordSecurityEvent({
+      eventType: 'prompt_injection.detected',
+      severity: worstSeverity,
+      actor: 'classifier',
+      target: `email:${emailId}`,
+      metadata: { findings: findingSummary, count: findings.length },
+    });
   };
 
   // Read once; the env var is process-level config, not per-request state.
@@ -246,8 +271,8 @@ export function createContainer(): Container {
     logger.info({ component: 'prompt-ab', challengerPercent }, 'prompt-ab.enabled');
   }
 
-  // Fallback-chain transitions (#95): logged via pino and counted in memory
-  // so the cost dashboard can surface fallback rate later.
+  // Fallback-chain transitions (#95 → #98): logged via pino, counted in
+  // memory, and persisted to the security audit log.
   let fallbackCount = 0;
   const logFallbackTransition = (t: FallbackTransition) => {
     fallbackCount++;
@@ -255,6 +280,19 @@ export function createContainer(): Container {
       component: 'fallback',
       ...t,
     }, 'classifier.fallback');
+    recordSecurityEvent({
+      eventType: 'classifier.fallback',
+      severity: t.reason === 'budget_exhausted' ? 'alert' : 'warn',
+      actor: 'classifier',
+      target: `email:${t.emailId}`,
+      metadata: {
+        fromTier: t.fromTier,
+        toTier: t.toTier,
+        reason: t.reason,
+        attemptsInPreviousTier: t.attemptsInPreviousTier,
+        errorMessage: t.errorMessage,
+      },
+    });
   };
 
   // Dynamic classifier that delegates based on current provider setting.
@@ -504,6 +542,8 @@ export function createContainer(): Container {
     vectorSearch,
     // Observability
     llmCalls,
+    // Security audit log (#98)
+    securityEvents,
   };
   
   // Create use cases

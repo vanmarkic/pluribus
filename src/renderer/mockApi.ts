@@ -476,6 +476,10 @@ export function createMockApi(): MailAPI {
       selectDiverseTrainingEmails: async () => mockEmails.slice(0, 12),
     },
 
+    securityEvents: {
+      listRecent: async () => [],
+      countByType: async () => ({}),
+    },
     embeddings: {
       getStats: async () => ({ totalEmails: 0, indexed: 0, coverage: 0, model: 'all-MiniLM-L6-v2' }),
       backfill: async () => ({ taskId: 'mock', total: 0 }),

@@ -21,6 +21,7 @@ import { setupTriageHandlers } from './triage-handlers';
 import { setupAwaitingHandlers } from './awaiting-handlers';
 import { setupLlmCallsHandlers } from './llm-calls-handlers';
 import { setupEmbeddingHandlers } from './embedding-handlers';
+import { setupSecurityEventsHandlers } from './security-events-handlers';
 
 // Re-export for external use
 export { getTempFiles };
@@ -52,6 +53,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   setupAwaitingHandlers(container);
   setupLlmCallsHandlers(container);
   setupEmbeddingHandlers(container);
+  setupSecurityEventsHandlers(container);
 }
 
 // Re-export validation helpers for testing
