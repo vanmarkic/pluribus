@@ -11,7 +11,7 @@ function percentile(sortedAsc: number[], p: number): number {
   if (sortedAsc.length === 0) return 0;
   const clamped = Math.max(0, Math.min(1, p));
   const idx = Math.min(sortedAsc.length - 1, Math.floor(clamped * sortedAsc.length));
-  return sortedAsc[idx];
+  return sortedAsc[idx] ?? 0;
 }
 
 function safeDiv(n: number, d: number): number {
@@ -39,9 +39,9 @@ export function computeReport(
     confusion[f] = Object.fromEntries(folders.map(x => [x, 0]));
   }
   for (const r of results) {
-    if (!confusion[r.expected]) confusion[r.expected] = Object.fromEntries(folders.map(x => [x, 0]));
-    if (confusion[r.expected][r.actual] === undefined) confusion[r.expected][r.actual] = 0;
-    confusion[r.expected][r.actual]++;
+    const row = confusion[r.expected] ?? Object.fromEntries(folders.map(x => [x, 0]));
+    confusion[r.expected] = row;
+    row[r.actual] = (row[r.actual] ?? 0) + 1;
   }
 
   // Per-folder precision / recall / F1.

@@ -264,12 +264,15 @@ export function createClassifier(
       history.push({ role: 'assistant', content: response.content as any });
       history.push({
         role: 'user',
-        content: toolResults.map(tr => ({
-          type: 'tool_result' as const,
-          tool_use_id: tr.tool_use_id,
-          content: tr.content,
-          is_error: tr.is_error,
-        })),
+        content: toolResults.map(tr => {
+          // exactOptionalPropertyTypes: only set is_error when it's a boolean.
+          const base = {
+            type: 'tool_result' as const,
+            tool_use_id: tr.tool_use_id,
+            content: tr.content,
+          };
+          return tr.is_error === undefined ? base : { ...base, is_error: tr.is_error };
+        }),
       });
     }
 
