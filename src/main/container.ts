@@ -14,9 +14,10 @@ import { createUseCases, type UseCases, type Deps } from '../core';
 
 // Adapters
 // Tags removed - using folders for organization (Issue #54)
-import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup, createAwaitingRepo, createLlmCallsRepo, createSecurityEventRepo, createCalibrationRepo } from '../adapters/db';
+import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup, createAwaitingRepo, createLlmCallsRepo, createSecurityEventRepo, createCalibrationRepo, wrapEmailRepoWithEncryption } from '../adapters/db';
 import { logger } from '../adapters/observability';
 import { wrapSecureStorageWithAudit } from '../adapters/keychain/audit';
+import { loadOrCreateBodyKey } from '../adapters/keychain/body-passphrase';
 import { createMailSync, createImapFolderOps } from '../adapters/imap';
 import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier, createFallbackClassifier, scoreEmailRiskTier, type AgentTools, type FallbackTransition } from '../adapters/llm';
 import { chooseVersion, challengerPercentFromEnv } from '../adapters/llm/prompts/loader';
@@ -118,8 +119,39 @@ export function createContainer(): Container {
 
   initDb(dbPath, schemaPath);
 
-  // Create repositories
-  const emails = createEmailRepo();
+  // Create repositories. EmailRepo is decorated with envelope encryption
+  // (#99) when the PLURIBUS_ENCRYPT_BODIES env flag is set. The container
+  // is synchronous, so the bootstrap promise is awaited lazily on the
+  // first saveBody/getBody call — downstream callers await that on their
+  // regular async path, so the lazy init is invisible.
+  const encryptionEnabled = process.env.PLURIBUS_ENCRYPT_BODIES === '1';
+  const rawEmails = createEmailRepo();
+  let emails = rawEmails;
+  if (encryptionEnabled) {
+    let wrappedPromise: Promise<ReturnType<typeof wrapEmailRepoWithEncryption>> | null = null;
+    const getWrapped = (secretsForKey: import('../core/ports').SecureStorage) => {
+      if (!wrappedPromise) {
+        wrappedPromise = loadOrCreateBodyKey(secretsForKey).then(key =>
+          wrapEmailRepoWithEncryption(rawEmails, key),
+        );
+      }
+      return wrappedPromise;
+    };
+    // Defined below once `secrets` is in scope. The proxy stays in the
+    // `emails` binding, and the real wrapper resolves on first use.
+    emails = {
+      ...rawEmails,
+      async saveBody(id, body) {
+        const w = await getWrapped(secrets);
+        return w.saveBody(id, body);
+      },
+      async getBody(id) {
+        const w = await getWrapped(secrets);
+        return w.getBody(id);
+      },
+    };
+    logger.info({ component: 'body-encryption' }, 'body-encryption.enabled');
+  }
   const attachments = createAttachmentRepo();
   // Tags removed - using folders for organization (Issue #54)
   const accounts = createAccountRepo();

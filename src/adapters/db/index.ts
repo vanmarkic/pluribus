@@ -11,6 +11,7 @@ export type { InitDbOptions, IntegrityCheckResult } from './connection';
 
 // Repository implementations
 export { createEmailRepo } from './email-repo';
+export { wrapEmailRepoWithEncryption } from './email-repo-encryption';
 export { createAttachmentRepo } from './attachment-repo';
 export { createAccountRepo } from './account-repo';
 export { createFolderRepo } from './folder-repo';

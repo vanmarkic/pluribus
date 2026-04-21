@@ -70,7 +70,7 @@ as adversarial.
 | Email body leaks through rendered HTML (CSS `url()`, `javascript:`, tracking pixels) | DOMPurify + explicit CSS vector strip; remote images blocked by default | `src/main/index.ts` CSP, image cache adapter |
 | LLM vendor logs sensitive content | Scope-limited prompt: subject + first 2 KB of body + delimited `<email_content>` block; no attachments forwarded | `src/adapters/llm/anthropic.ts` `buildUserMessage` |
 | Audit log itself leaks secrets | Keychain decorator records only service/account identifier, never the secret value; this invariant has a unit test | `src/adapters/keychain/audit.ts`, `src/adapters/keychain/audit.test.ts` (`'never forwards the secret value into the audit row'`) |
-| At-rest cache of emails is plaintext | ⚠ **open** — tracked in #99 (field-level AES-GCM). Filesystem permissions + FileVault are the only line today. | — |
+| At-rest cache of emails is plaintext | ✅ AES-256-GCM envelope per row (iv‖ciphertext‖tag, base64, `v1:` prefix), passphrase in OS keychain, opt-in via `PLURIBUS_ENCRYPT_BODIES=1` so existing databases don't need a forced migration — legacy plaintext rows decrypt as pass-through. | `src/adapters/keychain/body-cipher.ts`, `src/adapters/db/email-repo-encryption.ts`, `src/adapters/keychain/body-passphrase.ts` |
 
 ### D — Denial of service
 
@@ -91,11 +91,15 @@ as adversarial.
 
 ## Residual risks (known, accepted or tracked)
 
-1. **Email bodies at rest** — plaintext in SQLite. Tracked in #99.
-2. **Stricter CSP** — `'unsafe-inline'` on `style-src` still allowed for
-   DOMPurify-sanitised email rendering. Tracked in #100.
-3. **Zod coverage at IPC** — partial; remaining handlers use handwritten
-   assertions. Tracked in #97.
+1. **Stricter CSP** — `'unsafe-inline'` on `style-src` still allowed for
+   DOMPurify-sanitised email rendering. See `docs/security/csp.md` for
+   the migration plan.
+2. **Zod coverage at IPC** — three most-recently added handlers migrated;
+   older handlers still use handwritten assertions. Tracked under #97.
+3. **Body encryption default-on** — currently opt-in via
+   `PLURIBUS_ENCRYPT_BODIES=1` so existing databases keep working
+   unchanged. Graduating to default-on needs a user-facing migration
+   UX (progress bar + recovery if the keychain entry is lost).
 4. **Ollama fallback tier** — not yet part of the fallback chain. Minor,
    tracked as future work to #95.
 5. **Supply-chain risk on `@xenova/transformers` model download** —
