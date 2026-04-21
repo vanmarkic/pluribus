@@ -52,3 +52,4 @@ temp/
 tsconfig.main.tsbuildinfo
 .worktrees/
 tsconfig.tsbuildinfo
+tsconfig.strict.tsbuildinfo
