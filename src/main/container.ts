@@ -18,6 +18,7 @@ import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAc
 import { logger } from '../adapters/observability';
 import { createMailSync, createImapFolderOps } from '../adapters/imap';
 import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier, type AgentTools } from '../adapters/llm';
+import { chooseVersion, challengerPercentFromEnv } from '../adapters/llm/prompts/loader';
 import { createPatternMatcher, createTrainingRepo, createSenderRulesRepo, createSnoozeRepo, createTriageLogRepo, createTriageClassifier } from '../adapters/triage';
 import { createEmbeddingService } from '../adapters/embeddings/index';
 import { createEmbeddingRepo } from '../adapters/embeddings/embedding-repo';
@@ -239,6 +240,12 @@ export function createContainer(): Container {
     }, 'prompt-injection.detected');
   };
 
+  // Read once; the env var is process-level config, not per-request state.
+  const challengerPercent = challengerPercentFromEnv();
+  if (challengerPercent > 0) {
+    logger.info({ component: 'prompt-ab', challengerPercent }, 'prompt-ab.enabled');
+  }
+
   // Dynamic classifier that delegates based on current provider setting
   const classifier: import('../core/ports').Classifier = {
     async classify(email, body) {
@@ -246,7 +253,10 @@ export function createContainer(): Container {
       if (cfg.provider === 'ollama') {
         return ollamaClassifier.classify(email, body);
       } else {
-        // Create fresh Anthropic classifier with current config
+        // Create fresh Anthropic classifier with current config. The prompt
+        // version is chosen deterministically per email so reclassifications
+        // see the same version (#91).
+        const promptVersion = chooseVersion(email.id, challengerPercent);
         const anthClassifier = createClassifier(
           {
             model: cfg.model,
@@ -260,6 +270,7 @@ export function createContainer(): Container {
             agentConfidenceThreshold: 0.6,
             agentMaxIterations: 3,
             onInjectionFindings: logInjectionFindings,
+            promptVersion,
           }
         );
         return anthClassifier.classify(email, body);
