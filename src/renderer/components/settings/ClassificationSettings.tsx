@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { LlmUsageStats } from './LlmUsageStats';
+import { SemanticIndexPanel } from './SemanticIndexPanel';
 
 /**
  * Classification Settings Component
@@ -539,6 +540,14 @@ export function ClassificationSettings() {
           Cost &amp; performance
         </div>
         <LlmUsageStats />
+      </div>
+
+      {/* Semantic index (#88) */}
+      <div className="pt-4 border-t" style={{ borderColor: 'var(--color-border)' }}>
+        <div className="font-medium mb-3" style={{ color: 'var(--color-text-primary)' }}>
+          Semantic index
+        </div>
+        <SemanticIndexPanel />
       </div>
     </div>
   );

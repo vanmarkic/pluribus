@@ -35,5 +35,8 @@ export * from './thread-usecases';
 // Awaiting reply use cases
 export * from './awaiting';
 
+// Embedding / semantic-search use cases (#88)
+export * from './embedding-usecases';
+
 // Factory (createUseCases, UseCases type)
 export * from './factory';

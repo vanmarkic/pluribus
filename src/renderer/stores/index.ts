@@ -141,6 +141,15 @@ declare global {
         getRecent: (limit?: number) => Promise<RecentContact[]>;
         search: (query: string, limit?: number) => Promise<RecentContact[]>;
       };
+      embeddings: {
+        getStats: () => Promise<{
+          totalEmails: number;
+          indexed: number;
+          coverage: number;
+          model: string;
+        }>;
+        backfill: (opts?: { limit?: number; accountId?: number }) => Promise<{ taskId: string; total: number }>;
+      };
       llmCalls: {
         getStats: () => Promise<{
           totalCalls: number;

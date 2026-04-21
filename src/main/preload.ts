@@ -65,6 +65,17 @@ const api = {
     clearTask: (taskId: string) => ipcRenderer.invoke('llm:clearTask', taskId) as Promise<void>,
   },
 
+  embeddings: {
+    getStats: () => ipcRenderer.invoke('embeddings:getStats') as Promise<{
+      totalEmails: number;
+      indexed: number;
+      coverage: number;
+      model: string;
+    }>,
+    backfill: (opts?: { limit?: number; accountId?: number }) =>
+      ipcRenderer.invoke('embeddings:backfill', opts) as Promise<{ taskId: string; total: number }>,
+  },
+
   llmCalls: {
     getStats: () => ipcRenderer.invoke('llmCalls:getStats') as Promise<{
       totalCalls: number;

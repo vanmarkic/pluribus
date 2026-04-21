@@ -18,6 +18,8 @@ import { extractDomain, extractSubjectPattern } from '../domain';
 
 // Import triage function (will be resolved after barrel export)
 import { triageAndMoveEmail } from './triage-usecases';
+// #88: auto-index classified emails into the semantic-search corpus
+import { indexEmailForSearch } from './embedding-usecases';
 
 // ============================================
 // Classification Use Cases
@@ -85,7 +87,7 @@ export const classifyAndTriage = (deps: Pick<Deps, 'emails' | 'classifier' | 'cl
  * - Uses pattern matching + training examples (triage system)
  * - Keeps classificationState in sync for ReviewQueue UI
  */
-export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'classifier' | 'classificationState' | 'accounts' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'config'>) =>
+export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'classifier' | 'classificationState' | 'accounts' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'config' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService'>) =>
   async (emailIds: number[], confidenceThreshold = 0.85): Promise<{ classified: number; skipped: number; triaged: number }> => {
     const budget = deps.classifier.getEmailBudget();
 
@@ -139,6 +141,12 @@ export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'classifier' | 'cl
 
         classified++;
         triaged++;
+
+        // Auto-index into the RAG corpus (#88). Fire-and-forget so a slow
+        // embedding pass doesn't delay the next classification; failures
+        // are logged, not thrown.
+        void indexEmailForSearch(deps)(email.id, triageResult.folder, false)
+          .catch(err => console.warn(`Embedding index failed for email ${email.id}:`, err));
       } catch (error) {
         console.error(`Failed to classify email ${email.id}:`, error);
         // Record error state so user can retry
@@ -747,7 +755,7 @@ export const getPendingReviewCount = (deps: Pick<Deps, 'classificationState'>) =
     return counts.pending_review;
   };
 
-export const classifyUnprocessed = (deps: Pick<Deps, 'emails' | 'classifier' | 'classificationState' | 'config' | 'accounts' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps'>) =>
+export const classifyUnprocessed = (deps: Pick<Deps, 'emails' | 'classifier' | 'classificationState' | 'config' | 'accounts' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService'>) =>
   async (): Promise<{ classified: number; skipped: number }> => {
     const llmConfig = deps.config.getLLMConfig();
 
