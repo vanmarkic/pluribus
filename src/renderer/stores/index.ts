@@ -80,6 +80,15 @@ declare global {
         startBackgroundClassification: (emailIds: number[]) => Promise<{ taskId: string; count: number }>;
         getTaskStatus: (taskId: string) => Promise<{ status: 'running' | 'completed' | 'failed'; processed: number; total: number; error?: string } | null>;
         clearTask: (taskId: string) => Promise<void>;
+        streamExplain: (emailId: number) => Promise<{ requestId: string }>;
+        onStreamEvent: (
+          requestId: string,
+          callback: (event:
+            | { type: 'text'; delta: string }
+            | { type: 'done'; fullText: string }
+            | { type: 'error'; message: string }
+          ) => void,
+        ) => () => void;
       };
       config: {
         get: (key: string) => Promise<any>;

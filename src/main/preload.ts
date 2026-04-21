@@ -18,6 +18,12 @@ const listeners = new Map<string, Set<Callback>>();
   });
 });
 
+// Dynamic per-request streaming channels for llm:streamExplain (#89).
+// The renderer registers a listener via mailApi.llm.onStreamEvent(requestId, cb);
+// we forward whatever arrives on `llm:stream:<requestId>` to the callback.
+const streamListeners = new Map<string, (event: unknown) => void>();
+ipcRenderer.on('llm:stream:*' as any, () => {}); // reserve namespace — no-op
+
 // API exposed to renderer
 const api = {
   emails: {
@@ -63,6 +69,27 @@ const api = {
     getTaskStatus: (taskId: string) =>
       ipcRenderer.invoke('llm:getTaskStatus', taskId) as Promise<{ status: 'running' | 'completed' | 'failed'; processed: number; total: number; error?: string } | null>,
     clearTask: (taskId: string) => ipcRenderer.invoke('llm:clearTask', taskId) as Promise<void>,
+    // #89 streaming explain
+    streamExplain: (emailId: number) =>
+      ipcRenderer.invoke('llm:streamExplain', { emailId }) as Promise<{ requestId: string }>,
+    onStreamEvent: (
+      requestId: string,
+      callback: (
+        event:
+          | { type: 'text'; delta: string }
+          | { type: 'done'; fullText: string }
+          | { type: 'error'; message: string },
+      ) => void,
+    ) => {
+      const channel = `llm:stream:${requestId}`;
+      const handler = (_e: unknown, data: unknown) => callback(data as any);
+      ipcRenderer.on(channel, handler);
+      streamListeners.set(requestId, handler as unknown as (event: unknown) => void);
+      return () => {
+        ipcRenderer.removeListener(channel, handler);
+        streamListeners.delete(requestId);
+      };
+    },
   },
 
   securityEvents: {

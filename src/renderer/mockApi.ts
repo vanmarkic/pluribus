@@ -485,6 +485,10 @@ export function createMockApi(): MailAPI {
       backfill: async () => ({ taskId: 'mock', total: 0 }),
     },
 
+    // These two keys extend llm which is already in the surrounding object
+    // earlier in the file — the mock API omits them; the typedef allows it
+    // via any-cast at the bottom.
+
     llmCalls: {
       getStats: async () => ({
         totalCalls: 0,

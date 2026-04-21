@@ -17,4 +17,5 @@ export {
   type FeedbackPair,
   type CalibrationModel,
 } from './calibration';
+export { classifyStreaming, type StreamEvent, type StreamingClassifyInput } from './streaming';
 export { createOllamaProvider, createOllamaClassifier, resetOllamaDailyUsage, resetOllamaEmailCount, startOllama, stopOllama } from './ollama';

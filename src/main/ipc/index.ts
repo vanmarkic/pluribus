@@ -22,6 +22,7 @@ import { setupAwaitingHandlers } from './awaiting-handlers';
 import { setupLlmCallsHandlers } from './llm-calls-handlers';
 import { setupEmbeddingHandlers } from './embedding-handlers';
 import { setupSecurityEventsHandlers } from './security-events-handlers';
+import { setupStreamingHandlers } from './streaming-handlers';
 
 // Re-export for external use
 export { getTempFiles };
@@ -54,6 +55,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   setupLlmCallsHandlers(container);
   setupEmbeddingHandlers(container);
   setupSecurityEventsHandlers(container);
+  setupStreamingHandlers(container, window);
 }
 
 // Re-export validation helpers for testing
