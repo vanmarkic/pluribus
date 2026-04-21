@@ -6,8 +6,14 @@
  */
 
 import { ipcMain } from 'electron';
+import { z } from 'zod';
 import type { Container } from '../container';
-import { assertPositiveInt } from './validation';
+import { parseInput } from './schemas';
+
+// Legacy positional-arg style: listRecent takes `limit` as a scalar, not an
+// options object. Kept backwards-compatible by accepting either shape.
+const LimitArg = z.union([z.undefined(), z.number().int().positive().max(500)]);
+const DaysArg = z.union([z.undefined(), z.number().int().positive().max(365)]);
 
 export function setupLlmCallsHandlers(container: Container): void {
   const { deps } = container;
@@ -17,12 +23,12 @@ export function setupLlmCallsHandlers(container: Container): void {
   });
 
   ipcMain.handle('llmCalls:listRecent', async (_event, limit?: unknown) => {
-    const n = limit === undefined ? 50 : assertPositiveInt(limit, 'limit');
-    return deps.llmCalls.listRecent(Math.min(n, 200));
+    const parsed = parseInput(LimitArg, limit, 'limit');
+    return deps.llmCalls.listRecent(Math.min(parsed ?? 50, 200));
   });
 
   ipcMain.handle('llmCalls:getDailyCost', async (_event, days?: unknown) => {
-    const d = days === undefined ? 30 : assertPositiveInt(days, 'days');
-    return deps.llmCalls.getDailyCost(Math.min(d, 365));
+    const parsed = parseInput(DaysArg, days, 'days');
+    return deps.llmCalls.getDailyCost(parsed ?? 30);
   });
 }

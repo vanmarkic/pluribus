@@ -4,7 +4,7 @@
 
 import { ipcMain } from 'electron';
 import type { Container } from '../container';
-import { assertPositiveInt } from './validation';
+import { EmbeddingsBackfillInput, parseInput } from './schemas';
 
 export function setupEmbeddingHandlers(container: Container): void {
   const { useCases } = container;
@@ -14,9 +14,10 @@ export function setupEmbeddingHandlers(container: Container): void {
   });
 
   ipcMain.handle('embeddings:backfill', async (_event, opts?: unknown) => {
-    const options = (opts ?? {}) as { limit?: unknown; accountId?: unknown };
-    const limit = options.limit === undefined ? 5000 : assertPositiveInt(options.limit, 'limit');
-    const accountId = options.accountId === undefined ? undefined : assertPositiveInt(options.accountId, 'accountId');
-    return useCases.backfillEmbeddings({ limit: Math.min(limit, 50000), accountId });
+    const parsed = parseInput(EmbeddingsBackfillInput, opts, 'opts') ?? {};
+    return useCases.backfillEmbeddings({
+      limit: parsed.limit ?? 5000,
+      accountId: parsed.accountId,
+    });
   });
 }
