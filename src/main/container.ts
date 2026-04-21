@@ -18,7 +18,7 @@ import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAc
 import { logger } from '../adapters/observability';
 import { wrapSecureStorageWithAudit } from '../adapters/keychain/audit';
 import { createMailSync, createImapFolderOps } from '../adapters/imap';
-import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier, createFallbackClassifier, type AgentTools, type FallbackTransition } from '../adapters/llm';
+import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier, createFallbackClassifier, scoreEmailRiskTier, type AgentTools, type FallbackTransition } from '../adapters/llm';
 import { chooseVersion, challengerPercentFromEnv } from '../adapters/llm/prompts/loader';
 import { createPatternMatcher, createTrainingRepo, createSenderRulesRepo, createSnoozeRepo, createTriageLogRepo, createTriageClassifier } from '../adapters/triage';
 import { createEmbeddingService } from '../adapters/embeddings/index';
@@ -310,6 +310,12 @@ export function createContainer(): Container {
       // Prompt version chosen deterministically per email so retries and
       // reclassifications see the same version (#91). Applies to every tier.
       const promptVersion = chooseVersion(email.id, challengerPercent);
+
+      // Extended thinking (#90): high-risk emails (legal / financial /
+      // defence-adjacent sender AND a risk-bearing subject) get a 4000-
+      // token thinking budget on the primary tier. Haiku fallback never
+      // thinks — it's the cheap/fast degraded mode.
+      const risk = scoreEmailRiskTier(email);
       const classifierOptsFor = (model: string) => ({
         onCall: recordLlmCall,
         agentTools: buildAgentTools(),
@@ -317,10 +323,14 @@ export function createContainer(): Container {
         agentMaxIterations: 3,
         onInjectionFindings: logInjectionFindings,
         promptVersion,
-        // Observability records tier via the llm_calls row's model column;
-        // no per-tier state needed on the classifier itself.
         ...(model === HAIKU_FALLBACK_MODEL ? { cacheTtl: '5m' as const } : {}),
+        ...(risk === 'high' && model !== HAIKU_FALLBACK_MODEL
+          ? { thinkingBudgetTokens: 4000 }
+          : {}),
       });
+      if (risk === 'high') {
+        logger.info({ component: 'risk-tier', emailId: email.id, risk }, 'risk.high');
+      }
 
       const primary = createClassifier(
         { model: cfg.model, dailyBudget: cfg.dailyBudget, dailyEmailLimit: cfg.dailyEmailLimit },

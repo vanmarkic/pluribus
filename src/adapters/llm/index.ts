@@ -8,4 +8,5 @@ export { createClassifier, createAnthropicProvider, resetDailyUsage } from './an
 export type { AgentTools, SimilarEmailHit, SenderHistorySummary } from './agent-tools';
 export { detectPromptInjection, shouldQuarantine, type InjectionFinding } from './prompt-injection';
 export { createFallbackClassifier, type FallbackTier, type FallbackTransition, type FallbackOptions } from './fallback';
+export { scoreRiskTier, scoreEmailRiskTier, type RiskTier } from './risk-tier';
 export { createOllamaProvider, createOllamaClassifier, resetOllamaDailyUsage, resetOllamaEmailCount, startOllama, stopOllama } from './ollama';

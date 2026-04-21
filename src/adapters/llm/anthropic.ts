@@ -155,6 +155,11 @@ export type ClassifierOptions = {
    *  loader's PRODUCTION_VERSION. A/B routing lives in the container —
    *  this adapter just renders whichever version it's handed (#91). */
   promptVersion?: PromptVersion;
+  /** Thinking budget in tokens (#90). When >0 and the model supports
+   *  extended thinking (Sonnet 4.6 / Opus 4.7), the classifier enables
+   *  `thinking: { type: 'enabled', budget_tokens }` on the request.
+   *  Temperature is forced to 1.0 as Anthropic requires. */
+  thinkingBudgetTokens?: number;
 };
 
 /** Parse Claude's JSON reply into a Classification, falling back to INBOX on error. */
@@ -200,6 +205,9 @@ export function createClassifier(
   const agentConfidenceThreshold = options.agentConfidenceThreshold ?? 0.6;
   const agentMaxIterations = options.agentMaxIterations ?? 3;
   const promptSpec = loadPrompt(options.promptVersion ?? PRODUCTION_VERSION);
+  const thinkingBudget = options.thinkingBudgetTokens && options.thinkingBudgetTokens > 0
+    ? options.thinkingBudgetTokens
+    : 0;
 
   async function getClient(): Promise<Anthropic> {
     if (!client) {
@@ -304,13 +312,19 @@ export function createClassifier(
 
     let response: Anthropic.Messages.Message;
     try {
+      // Extended thinking (#90): Anthropic requires temperature=1 and
+      // max_tokens > budget_tokens whenever the thinking block is enabled.
+      const thinkingEnabled = thinkingBudget > 0;
       response = await anthropic.messages.create({
         model: config.model,
-        max_tokens: 1024,
-        temperature: 0.2,
+        max_tokens: thinkingEnabled ? thinkingBudget + 1024 : 1024,
+        temperature: thinkingEnabled ? 1 : 0.2,
         system: buildSystemBlocks(),
         messages,
         ...(extraTools && extraTools.length > 0 ? { tools: extraTools } : {}),
+        ...(thinkingEnabled
+          ? { thinking: { type: 'enabled', budget_tokens: thinkingBudget } }
+          : {}),
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
