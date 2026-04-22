@@ -112,6 +112,15 @@ const api = {
       ipcRenderer.invoke('securityEvents:countByType', sinceTs) as Promise<Record<string, number>>,
   },
 
+  bodyMigration: {
+    getStatus: () => ipcRenderer.invoke('bodyMigration:getStatus') as Promise<{
+      total: number;
+      plaintext: number;
+      encrypted: number;
+    }>,
+    start: () => ipcRenderer.invoke('bodyMigration:start') as Promise<{ taskId: string; total: number }>,
+  },
+
   calibration: {
     recalibrate: (opts?: { minSamples?: number }) =>
       ipcRenderer.invoke('calibration:recalibrate', opts) as Promise<{

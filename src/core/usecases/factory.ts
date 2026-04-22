@@ -19,6 +19,7 @@ import * as triageUseCases from './triage-usecases';
 import * as awaitingUseCases from './awaiting';
 import * as embeddingUseCases from './embedding-usecases';
 import * as calibrationUseCases from './calibration-usecases';
+import * as bodyMigrationUseCases from './body-migration-usecases';
 
 /**
  * Create all use cases with dependencies
@@ -151,6 +152,11 @@ export function createUseCases(deps: Deps) {
     // Confidence calibration (#96)
     recalibrateConfidence: calibrationUseCases.recalibrateConfidence(deps),
     loadActiveCalibration: calibrationUseCases.loadActiveCalibration(deps),
+
+    // Body-encryption migration (#99 follow-up). Uses the dedicated
+    // bodyMigration port for raw-body reads so core stays pure.
+    countPlaintextBodies: bodyMigrationUseCases.countPlaintextBodies(deps),
+    migrateEmailBodiesToEncrypted: bodyMigrationUseCases.migrateEmailBodiesToEncrypted(deps),
   };
 }
 

@@ -480,6 +480,10 @@ export function createMockApi(): MailAPI {
       listRecent: async () => [],
       countByType: async () => ({}),
     },
+    bodyMigration: {
+      getStatus: async () => ({ total: 0, plaintext: 0, encrypted: 0 }),
+      start: async () => ({ taskId: 'mock', total: 0 }),
+    },
     calibration: {
       recalibrate: async () => ({ fitSize: 0, eceBefore: 0, eceAfter: 0, fitted: false }),
       getLatest: async () => null,

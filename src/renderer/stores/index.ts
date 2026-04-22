@@ -168,6 +168,10 @@ declare global {
         }>>;
         countByType: (sinceTs?: string) => Promise<Record<string, number>>;
       };
+      bodyMigration: {
+        getStatus: () => Promise<{ total: number; plaintext: number; encrypted: number }>;
+        start: () => Promise<{ taskId: string; total: number }>;
+      };
       calibration: {
         recalibrate: (opts?: { minSamples?: number }) => Promise<{
           fitSize: number;

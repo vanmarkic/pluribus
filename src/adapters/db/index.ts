@@ -32,3 +32,6 @@ export { createSecurityEventRepo } from './security-event-repo';
 
 // Confidence calibration (#96)
 export { createCalibrationRepo } from './calibration-repo';
+
+// Body-encryption migration (#99 follow-up)
+export { createBodyMigrationRepo } from './body-migration-repo';

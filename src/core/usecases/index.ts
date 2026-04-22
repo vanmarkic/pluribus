@@ -41,5 +41,8 @@ export * from './embedding-usecases';
 // Confidence calibration (#96)
 export * from './calibration-usecases';
 
+// Email-body encryption migration (#99 follow-up)
+export * from './body-migration-usecases';
+
 // Factory (createUseCases, UseCases type)
 export * from './factory';

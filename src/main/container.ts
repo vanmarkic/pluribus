@@ -14,7 +14,7 @@ import { createUseCases, type UseCases, type Deps } from '../core';
 
 // Adapters
 // Tags removed - using folders for organization (Issue #54)
-import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup, createAwaitingRepo, createLlmCallsRepo, createSecurityEventRepo, createCalibrationRepo, wrapEmailRepoWithEncryption } from '../adapters/db';
+import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup, createAwaitingRepo, createLlmCallsRepo, createSecurityEventRepo, createCalibrationRepo, createBodyMigrationRepo, wrapEmailRepoWithEncryption } from '../adapters/db';
 import { logger } from '../adapters/observability';
 import { wrapSecureStorageWithAudit } from '../adapters/keychain/audit';
 import { loadOrCreateBodyKey } from '../adapters/keychain/body-passphrase';
@@ -120,11 +120,12 @@ export function createContainer(): Container {
   initDb(dbPath, schemaPath);
 
   // Create repositories. EmailRepo is decorated with envelope encryption
-  // (#99) when the PLURIBUS_ENCRYPT_BODIES env flag is set. The container
-  // is synchronous, so the bootstrap promise is awaited lazily on the
-  // first saveBody/getBody call — downstream callers await that on their
-  // regular async path, so the lazy init is invisible.
-  const encryptionEnabled = process.env.PLURIBUS_ENCRYPT_BODIES === '1';
+  // (#99) by default. The container is synchronous, so the bootstrap
+  // promise is awaited lazily on the first saveBody/getBody call —
+  // downstream callers await that on their regular async path, so the
+  // lazy init is invisible. Set PLURIBUS_ENCRYPT_BODIES=0 to opt out
+  // (useful for debugging / raw-DB inspection).
+  const encryptionEnabled = process.env.PLURIBUS_ENCRYPT_BODIES !== '0';
   const rawEmails = createEmailRepo();
   let emails = rawEmails;
   if (encryptionEnabled) {
@@ -162,6 +163,7 @@ export function createContainer(): Container {
   const llmCalls = createLlmCallsRepo(getDb);
   const securityEvents = createSecurityEventRepo(getDb);
   const calibration = createCalibrationRepo(getDb);
+  const bodyMigration = createBodyMigrationRepo(getDb);
 
   // Security audit sink (#98). Centralised so every security-relevant event
   // emitter in the container funnels through one write path. Defensive:
@@ -589,6 +591,8 @@ export function createContainer(): Container {
     securityEvents,
     // Confidence calibration (#96)
     calibration,
+    // Email-body encryption migration (#99 follow-up)
+    bodyMigration,
   };
   
   // Create use cases

@@ -635,6 +635,23 @@ export type CalibrationRepo = {
 };
 
 // ============================================
+// Body-encryption migration (#99 follow-up)
+// ============================================
+
+export type PlaintextBodyRow = {
+  emailId: number;
+  bodyText: string | null;
+  bodyHtml: string | null;
+};
+
+export type BodyMigrationRepo = {
+  /** Summary counts for the migration progress UI. */
+  countByStatus: () => Promise<{ total: number; plaintext: number; encrypted: number }>;
+  /** Rows that still need to be migrated — filtered by the `v1:` prefix sniff. */
+  listPlaintextRows: () => Promise<PlaintextBodyRow[]>;
+};
+
+// ============================================
 // All Dependencies (for DI)
 // ============================================
 
@@ -677,4 +694,6 @@ export type Deps = {
   securityEvents: SecurityEventRepo;
   // Confidence calibration (#96)
   calibration: CalibrationRepo;
+  // Email-body encryption migration (#99 follow-up)
+  bodyMigration: BodyMigrationRepo;
 };
