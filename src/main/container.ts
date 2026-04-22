@@ -18,6 +18,7 @@ import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAc
 import { logger } from '../adapters/observability';
 import { wrapSecureStorageWithAudit } from '../adapters/keychain/audit';
 import { loadOrCreateBodyKey } from '../adapters/keychain/body-passphrase';
+import { startCalibrationScheduler, type CalibrationScheduler } from './schedulers/calibration-scheduler';
 import { createMailSync, createImapFolderOps } from '../adapters/imap';
 import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier, createFallbackClassifier, scoreEmailRiskTier, type AgentTools, type FallbackTransition } from '../adapters/llm';
 import { chooseVersion, challengerPercentFromEnv } from '../adapters/llm/prompts/loader';
@@ -601,8 +602,20 @@ export function createContainer(): Container {
   // Create OllamaManager for bundled Ollama binary management
   const ollamaManager = createOllamaManager();
 
+  // Nightly calibration scheduler (#96 follow-up). Runs after a 5-minute
+  // settling delay, then every 24h. PLURIBUS_DISABLE_CALIBRATION_JOB=1
+  // opts out (useful for tests / CI / debugging).
+  let calibrationScheduler: CalibrationScheduler | null = null;
+  if (process.env.PLURIBUS_DISABLE_CALIBRATION_JOB !== '1') {
+    calibrationScheduler = startCalibrationScheduler({
+      logger,
+      runOnce: () => useCases.recalibrateConfidence({}),
+    });
+  }
+
   // Shutdown function
   const shutdown = async () => {
+    calibrationScheduler?.stop();
     await sync.disconnect(0); // Disconnect all
     closeDb();
   };
