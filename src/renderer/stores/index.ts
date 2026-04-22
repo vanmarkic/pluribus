@@ -427,7 +427,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       // Auto-select first email if emails are available and nothing is currently selected
       const currentSelectedId = get().selectedId;
       const shouldAutoSelect = finalEmails.length > 0 && !currentSelectedId;
-      const newSelectedId = shouldAutoSelect ? finalEmails[0].id : currentSelectedId;
+      const newSelectedId = shouldAutoSelect ? finalEmails[0]?.id ?? null : currentSelectedId;
 
       set({
         emails: finalEmails,
@@ -843,8 +843,9 @@ export const useAccountStore = create<AccountStore>()(
         // Auto-select first account if none selected or selected account no longer exists
         const { selectedAccountId } = get();
         const accountExists = accounts.some(a => a.id === selectedAccountId);
-        if ((!selectedAccountId || !accountExists) && accounts.length > 0) {
-          set({ selectedAccountId: accounts[0].id });
+        const firstAccount = accounts[0];
+        if ((!selectedAccountId || !accountExists) && firstAccount) {
+          set({ selectedAccountId: firstAccount.id });
         }
       },
 

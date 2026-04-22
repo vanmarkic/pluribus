@@ -247,6 +247,8 @@ export function createMockApi(): MailAPI {
       startBackgroundClassification: async (emailIds) => ({ taskId: 'task-1', count: emailIds.length }),
       getTaskStatus: async () => ({ status: 'completed', processed: 5, total: 5 }),
       clearTask: async () => {},
+      streamExplain: async () => ({ requestId: 'mock' }),
+      onStreamEvent: () => () => {},
     },
 
     aiSort: {

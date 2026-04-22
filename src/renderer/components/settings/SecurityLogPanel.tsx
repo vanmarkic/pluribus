@@ -34,7 +34,7 @@ export function SecurityLogPanel() {
       const [list, byType] = await Promise.all([
         window.mailApi.securityEvents.listRecent({
           limit: 100,
-          severity: severity || undefined,
+          ...(severity ? { severity } : {}),
         }),
         window.mailApi.securityEvents.countByType(),
       ]);

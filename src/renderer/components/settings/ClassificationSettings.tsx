@@ -109,8 +109,9 @@ export function ClassificationSettings() {
 
       // Check cache first
       const cacheKey = config.provider;
-      if (modelCache.current[cacheKey]?.length > 0) {
-        setModels(modelCache.current[cacheKey]);
+      const cached = modelCache.current[cacheKey];
+      if (cached && cached.length > 0) {
+        setModels(cached);
         return;
       }
 
@@ -122,10 +123,11 @@ export function ClassificationSettings() {
         setModels(modelList);
 
         // Auto-select first model if current model is empty or not in list
-        if (modelList.length > 0) {
+        const firstModel = modelList[0];
+        if (firstModel) {
           const currentModelValid = modelList.some(m => m.id === config.model);
           if (!currentModelValid) {
-            updateConfig({ model: modelList[0].id });
+            updateConfig({ model: firstModel.id });
           }
         }
       } catch (error) {
@@ -177,10 +179,11 @@ export function ClassificationSettings() {
         setModels(modelList);
 
         // Auto-select first model if current model is empty or not in list
-        if (modelList.length > 0 && config) {
+        const firstModel = modelList[0];
+        if (firstModel && config) {
           const currentModelValid = modelList.some(m => m.id === config.model);
           if (!currentModelValid) {
-            updateConfig({ model: modelList[0].id });
+            updateConfig({ model: firstModel.id });
           }
         }
       } else {
@@ -207,10 +210,11 @@ export function ClassificationSettings() {
         setModels(modelList);
 
         // Auto-select first model if current model is empty or not in list
-        if (modelList.length > 0 && config) {
+        const firstModel2 = modelList[0];
+        if (firstModel2 && config) {
           const currentModelValid = modelList.some(m => m.id === config.model);
           if (!currentModelValid) {
-            updateConfig({ model: modelList[0].id });
+            updateConfig({ model: firstModel2.id });
           }
         }
       }
@@ -383,7 +387,11 @@ export function ClassificationSettings() {
                         setModels(modelList);
                       }
                     } else {
-                      setOllamaStatus({ connected: false, error: result.error });
+                      setOllamaStatus(
+                        result.error === undefined
+                          ? { connected: false }
+                          : { connected: false, error: result.error },
+                      );
                     }
                     setTestingConnection(false);
                   }}

@@ -155,7 +155,7 @@ export function App() {
       {/* Account Wizard Modal */}
       {showAccountWizard && (
         <AccountWizard
-          editAccountId={editAccountId ?? undefined}
+          {...(editAccountId != null ? { editAccountId } : {})}
           onClose={closeAccountWizard}
           onSuccess={() => {
             loadAccounts();
@@ -171,9 +171,9 @@ export function App() {
       {composeMode && (
         <ComposeModal
           mode={composeMode}
-          originalEmail={composeEmail ?? undefined}
-          originalBody={composeBody ?? undefined}
-          draftId={composeDraftId ?? undefined}
+          {...(composeEmail ? { originalEmail: composeEmail } : {})}
+          {...(composeBody ? { originalBody: composeBody } : {})}
+          {...(composeDraftId != null ? { draftId: composeDraftId } : {})}
           onClose={closeCompose}
           onSent={async () => {
             closeCompose();

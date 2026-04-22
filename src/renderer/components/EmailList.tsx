@@ -81,6 +81,7 @@ const EmailRow = ({ index, style, data }: ListChildComponentProps) => {
     onDragStart
   } = data as EmailRowData;
   const email = emails[index];
+  if (!email) return null;
 
   // In Sent folder, show recipients instead of sender
   const displayName = isSentFolder && email.to.length > 0
