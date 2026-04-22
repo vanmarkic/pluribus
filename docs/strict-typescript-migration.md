@@ -9,16 +9,16 @@ codebase is expected to carry: `noImplicitOverride`,
 
 ## Current state
 
-| Flag | `tsconfig.main.json` | `tsconfig.evals.json` |
-|---|---|---|
-| `strict` | ✓ | ✓ |
-| `noImplicitOverride` | ✓ | ✓ |
-| `noUncheckedIndexedAccess` | ✓ | ✓ |
-| `exactOptionalPropertyTypes` | ✓ | ✓ |
+| Flag | `tsconfig.main.json` | `tsconfig.evals.json` | `tsconfig.json` (renderer) |
+|---|---|---|---|
+| `strict` | ✓ | ✓ | ✓ |
+| `noImplicitOverride` | ✓ | ✓ | ✓ |
+| `noUncheckedIndexedAccess` | ✓ | ✓ | ✓ |
+| `exactOptionalPropertyTypes` | ✓ | ✓ | ✓ |
 
-All three post-`strict` flags now enforced project-wide across
-core / adapters / main. The initial audit found 29 errors; all fixed
-and the flags landed together in the commit that opens this doc.
+All three post-`strict` flags now enforced project-wide across every
+compilation target. The initial audits found 29 errors on the main
+project and 77 on the renderer; all fixed.
 
 ## Categories the 29 fixes fell into
 
@@ -40,10 +40,27 @@ and the flags landed together in the commit that opens this doc.
   and mailbox listers where an optional path segment could be
   undefined; surfaced with explicit early returns.
 
-## Open items (renderer-side)
+## Renderer migration (now done)
 
-`src/renderer/**` is excluded from both tsconfigs for build reasons
-unrelated to strictness — the renderer is compiled through Vite, not
-tsc. A future commit can plug the flags into `tsconfig.json` (the
-renderer-facing config that's also composite-referenced from the main
-one) once the renderer's jsx/vite pipeline is audited.
+A follow-up commit enabled the same three flags on `tsconfig.json`
+(the renderer / composite-root config). The audit surfaced 77
+strict errors across 15 files, plus 21 pre-existing non-strict
+errors that had been masked by a missing `@testing-library/dom`
+peer dep and an absent jest-dom ambient type reference. Fix
+categories mirrored the main project:
+
+- **`Object possibly undefined` after index access**: EmailList
+  (27 errors cleared by one row-null-guard early return),
+  ClassificationSettings, useKeyboardShortcuts, useEmailListKeyboard,
+  stores/index.ts.
+- **`{foo: undefined}` against optional field**: App, AccountWizard,
+  ComposeModal, Sidebar, AISortView, TriageReviewView,
+  SecurityLogPanel, hooks. Fixed with conditional spreads.
+- **jest-dom matchers**: new `src/renderer/vitest.d.ts` triple-slash
+  references the jest-dom types so every `.tsx` test file gets
+  `.toBeInTheDocument` / `.toHaveStyle` on its Assertion type
+  without per-file imports. Installed the missing
+  `@testing-library/dom` peer dep.
+- **mockApi.ts**: stubbed the dynamically-added `streamExplain` /
+  `onStreamEvent` methods so the `as MailAPI` cast holds under
+  `exactOptionalPropertyTypes`.
