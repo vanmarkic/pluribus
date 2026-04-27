@@ -84,12 +84,12 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
         setBody(draft.text || '');
         setShowCc(draft.cc.length > 0 || draft.bcc.length > 0);
         // Restore attachments from draft (they have base64 content, no File)
-        setAttachments(draft.attachments.map(a => ({
+        setAttachments(draft.attachments.map((a): Attachment => ({
           id: String(a.id),
           name: a.filename,
           size: a.size,
-          contentType: a.contentType || undefined,
           content: a.content,
+          ...(a.contentType ? { contentType: a.contentType } : {}),
         })));
         // Preserve reply metadata from the draft
         setDraftInReplyTo(draft.inReplyTo);
@@ -146,12 +146,15 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
 
   // Convert attachments to format for saving
   const convertAttachmentsForSave = async () => {
-    return Promise.all(attachments.map(async (a) => ({
-      filename: a.name,
-      contentType: a.contentType || a.file?.type,
-      size: a.size,
-      content: a.file ? await fileToBase64(a.file) : (a.content || ''),
-    })));
+    return Promise.all(attachments.map(async (a) => {
+      const contentType = a.contentType || a.file?.type;
+      const base: { filename: string; size: number; content: string } = {
+        filename: a.name,
+        size: a.size,
+        content: a.file ? await fileToBase64(a.file) : (a.content || ''),
+      };
+      return contentType ? { ...base, contentType } : base;
+    }));
   };
 
   // Auto-save draft
@@ -171,8 +174,9 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
       // Convert attachments to base64 format for persistence
       const attachmentData = await convertAttachmentsForSave();
 
+      const inReplyTo = originalEmail?.messageId ?? draftInReplyTo;
+      const originalEmailId = originalEmail?.id ?? draftOriginalEmailId;
       const draft = await window.mailApi.drafts.save({
-        id: currentDraftId,
         accountId: account.id,
         // Always send arrays - empty array clears the field, undefined would preserve old value
         to: to.split(',').map(s => s.trim()).filter(Boolean),
@@ -180,10 +184,10 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
         bcc: bcc.split(',').map(s => s.trim()).filter(Boolean),
         subject,
         text: body,
-        // Use originalEmail if available (reply/forward), otherwise preserve from loaded draft
-        inReplyTo: originalEmail?.messageId ?? draftInReplyTo ?? undefined,
-        originalEmailId: originalEmail?.id ?? draftOriginalEmailId ?? undefined,
         attachments: attachmentData,
+        ...(currentDraftId != null ? { id: currentDraftId } : {}),
+        ...(inReplyTo ? { inReplyTo } : {}),
+        ...(originalEmailId != null ? { originalEmailId } : {}),
       });
 
       setCurrentDraftId(draft.id);
@@ -251,7 +255,7 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
       reader.onload = () => {
         const result = reader.result as string;
         // Remove data URL prefix (e.g., "data:application/pdf;base64,")
-        const base64 = result.split(',')[1];
+        const base64 = result.split(',')[1] ?? '';
         resolve(base64);
       };
       reader.onerror = reject;
@@ -386,13 +390,15 @@ export function ComposeModal({ mode, originalEmail, originalBody, draftId, onClo
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    const newAttachments = files.map(file => ({
-      id: Math.random().toString(36).slice(2),
-      name: file.name,
-      size: file.size,
-      contentType: file.type || undefined,
-      file,
-    }));
+    const newAttachments = files.map((file): Attachment => {
+      const base = {
+        id: Math.random().toString(36).slice(2),
+        name: file.name,
+        size: file.size,
+        file,
+      };
+      return file.type ? { ...base, contentType: file.type } : base;
+    });
     setHasUserEdited(true);
     setAttachments(prev => [...prev, ...newAttachments]);
     e.target.value = '';

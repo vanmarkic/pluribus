@@ -129,10 +129,12 @@ export function useKeyboardShortcuts(handlers: {
       e.preventDefault();
       const currentIndex = emails.findIndex(em => em.id === selectedId);
       if (currentIndex < emails.length - 1) {
-        selectEmail(emails[currentIndex + 1].id);
+        const next = emails[currentIndex + 1];
+        if (next) selectEmail(next.id);
       } else if (currentIndex === -1 && emails.length > 0) {
         // No email selected, select first one
-        selectEmail(emails[0].id);
+        const first = emails[0];
+        if (first) selectEmail(first.id);
       }
       return;
     }
@@ -142,10 +144,12 @@ export function useKeyboardShortcuts(handlers: {
       e.preventDefault();
       const currentIndex = emails.findIndex(em => em.id === selectedId);
       if (currentIndex > 0) {
-        selectEmail(emails[currentIndex - 1].id);
+        const prev = emails[currentIndex - 1];
+        if (prev) selectEmail(prev.id);
       } else if (currentIndex === -1 && emails.length > 0) {
         // No email selected, select first one
-        selectEmail(emails[0].id);
+        const first = emails[0];
+        if (first) selectEmail(first.id);
       }
       return;
     }
@@ -170,7 +174,7 @@ export function useKeyboardShortcuts(handlers: {
       setView('inbox');
       if (selectedAccountId) {
         // tagId removed - using folders (Issue #54)
-        setFilter({ folderPath: 'INBOX', unreadOnly: false, starredOnly: false, searchQuery: undefined }, selectedAccountId);
+        setFilter({ folderPath: 'INBOX', unreadOnly: false, starredOnly: false }, selectedAccountId);
       }
       return;
     }

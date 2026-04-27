@@ -1,0 +1,8 @@
+dist
+release
+node_modules
+coverage
+ui-test-screenshots
+evals/history.jsonl
+*.md
+package-lock.json

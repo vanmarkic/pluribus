@@ -11,6 +11,7 @@ export type { InitDbOptions, IntegrityCheckResult } from './connection';
 
 // Repository implementations
 export { createEmailRepo } from './email-repo';
+export { wrapEmailRepoWithEncryption } from './email-repo-encryption';
 export { createAttachmentRepo } from './attachment-repo';
 export { createAccountRepo } from './account-repo';
 export { createFolderRepo } from './folder-repo';
@@ -22,3 +23,15 @@ export { createClassificationStateRepo } from './classification-state';
 
 // Awaiting reply
 export { createAwaitingRepo } from './awaiting-repo';
+
+// LLM call log (observability)
+export { createLlmCallsRepo } from './llm-calls-repo';
+
+// Security audit log (#98)
+export { createSecurityEventRepo } from './security-event-repo';
+
+// Confidence calibration (#96)
+export { createCalibrationRepo } from './calibration-repo';
+
+// Body-encryption migration (#99 follow-up)
+export { createBodyMigrationRepo } from './body-migration-repo';

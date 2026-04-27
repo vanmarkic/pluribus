@@ -17,6 +17,9 @@ import * as contactUseCases from './contact-usecases';
 import * as databaseUseCases from './database-usecases';
 import * as triageUseCases from './triage-usecases';
 import * as awaitingUseCases from './awaiting';
+import * as embeddingUseCases from './embedding-usecases';
+import * as calibrationUseCases from './calibration-usecases';
+import * as bodyMigrationUseCases from './body-migration-usecases';
 
 /**
  * Create all use cases with dependencies
@@ -139,6 +142,21 @@ export function createUseCases(deps: Deps) {
     clearAwaitingByReply: awaitingUseCases.clearAwaitingByReply(deps),
     getAwaitingList: awaitingUseCases.getAwaitingList(deps),
     toggleAwaiting: awaitingUseCases.toggleAwaiting(deps),
+
+    // Embeddings / semantic search (#88)
+    indexEmailForSearch: embeddingUseCases.indexEmailForSearch(deps),
+    indexClassifiedBatch: embeddingUseCases.indexClassifiedBatch(deps),
+    backfillEmbeddings: embeddingUseCases.backfillEmbeddings(deps),
+    getEmbeddingIndexStats: embeddingUseCases.getEmbeddingIndexStats(deps),
+
+    // Confidence calibration (#96)
+    recalibrateConfidence: calibrationUseCases.recalibrateConfidence(deps),
+    loadActiveCalibration: calibrationUseCases.loadActiveCalibration(deps),
+
+    // Body-encryption migration (#99 follow-up). Uses the dedicated
+    // bodyMigration port for raw-body reads so core stays pure.
+    countPlaintextBodies: bodyMigrationUseCases.countPlaintextBodies(deps),
+    migrateEmailBodiesToEncrypted: bodyMigrationUseCases.migrateEmailBodiesToEncrypted(deps),
   };
 }
 

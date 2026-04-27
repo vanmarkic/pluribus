@@ -25,7 +25,9 @@ export function createOllamaProvider(serverUrl = DEFAULT_SERVER_URL): LLMProvide
     async validateKey() {
       // Ollama doesn't need API key, just test connection
       const result = await this.testConnection!();
-      return { valid: result.connected, error: result.error };
+      return result.error === undefined
+        ? { valid: result.connected }
+        : { valid: result.connected, error: result.error };
     },
 
     async listModels() {
@@ -36,11 +38,11 @@ export function createOllamaProvider(serverUrl = DEFAULT_SERVER_URL): LLMProvide
         }
         const data = await response.json() as OllamaTagsResponse;
 
-        return (data.models || []).map((m) => ({
-          id: m.name,
-          displayName: m.name,
-          createdAt: m.modified_at,
-        }));
+        return (data.models || []).map((m): LLMModel => (
+          m.modified_at === undefined
+            ? { id: m.name, displayName: m.name }
+            : { id: m.name, displayName: m.name, createdAt: m.modified_at }
+        ));
       } catch (err) {
         console.error('Failed to list Ollama models:', err);
         return [];

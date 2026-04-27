@@ -208,8 +208,11 @@ export function useEmailListKeyboard(emails: Email[]) {
   // Initialize focus to first email if none focused
   useEffect(() => {
     if (!focusedId && emails.length > 0) {
-      setFocusedId(emails[0].id);
-      lastSelectedRef.current = emails[0].id;
+      const first = emails[0];
+      if (first) {
+        setFocusedId(first.id);
+        lastSelectedRef.current = first.id;
+      }
     }
   }, [emails, focusedId, setFocusedId]);
 

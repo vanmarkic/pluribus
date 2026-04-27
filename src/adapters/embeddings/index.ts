@@ -52,7 +52,7 @@ export function createEmbeddingService(): EmbeddingService {
 
       let dotProduct = 0;
       for (let i = 0; i < a.length; i++) {
-        dotProduct += a[i] * b[i];
+        dotProduct += a[i]! * b[i]!;
       }
 
       // Vectors should already be normalized, but clamp to [-1, 1] for safety

@@ -1,4 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
+import { LlmUsageStats } from './LlmUsageStats';
+import { SemanticIndexPanel } from './SemanticIndexPanel';
+import { CalibrationPanel } from './CalibrationPanel';
 
 /**
  * Classification Settings Component
@@ -106,8 +109,9 @@ export function ClassificationSettings() {
 
       // Check cache first
       const cacheKey = config.provider;
-      if (modelCache.current[cacheKey]?.length > 0) {
-        setModels(modelCache.current[cacheKey]);
+      const cached = modelCache.current[cacheKey];
+      if (cached && cached.length > 0) {
+        setModels(cached);
         return;
       }
 
@@ -119,10 +123,11 @@ export function ClassificationSettings() {
         setModels(modelList);
 
         // Auto-select first model if current model is empty or not in list
-        if (modelList.length > 0) {
+        const firstModel = modelList[0];
+        if (firstModel) {
           const currentModelValid = modelList.some(m => m.id === config.model);
           if (!currentModelValid) {
-            updateConfig({ model: modelList[0].id });
+            updateConfig({ model: firstModel.id });
           }
         }
       } catch (error) {
@@ -174,10 +179,11 @@ export function ClassificationSettings() {
         setModels(modelList);
 
         // Auto-select first model if current model is empty or not in list
-        if (modelList.length > 0 && config) {
+        const firstModel = modelList[0];
+        if (firstModel && config) {
           const currentModelValid = modelList.some(m => m.id === config.model);
           if (!currentModelValid) {
-            updateConfig({ model: modelList[0].id });
+            updateConfig({ model: firstModel.id });
           }
         }
       } else {
@@ -204,10 +210,11 @@ export function ClassificationSettings() {
         setModels(modelList);
 
         // Auto-select first model if current model is empty or not in list
-        if (modelList.length > 0 && config) {
+        const firstModel2 = modelList[0];
+        if (firstModel2 && config) {
           const currentModelValid = modelList.some(m => m.id === config.model);
           if (!currentModelValid) {
-            updateConfig({ model: modelList[0].id });
+            updateConfig({ model: firstModel2.id });
           }
         }
       }
@@ -380,7 +387,11 @@ export function ClassificationSettings() {
                         setModels(modelList);
                       }
                     } else {
-                      setOllamaStatus({ connected: false, error: result.error });
+                      setOllamaStatus(
+                        result.error === undefined
+                          ? { connected: false }
+                          : { connected: false, error: result.error },
+                      );
                     }
                     setTestingConnection(false);
                   }}
@@ -530,6 +541,30 @@ export function ClassificationSettings() {
             <span>→</span>
           </a>
         )}
+      </div>
+
+      {/* Cost & performance dashboard (#94) */}
+      <div className="pt-4 border-t" style={{ borderColor: 'var(--color-border)' }}>
+        <div className="font-medium mb-3" style={{ color: 'var(--color-text-primary)' }}>
+          Cost &amp; performance
+        </div>
+        <LlmUsageStats />
+      </div>
+
+      {/* Semantic index (#88) */}
+      <div className="pt-4 border-t" style={{ borderColor: 'var(--color-border)' }}>
+        <div className="font-medium mb-3" style={{ color: 'var(--color-text-primary)' }}>
+          Semantic index
+        </div>
+        <SemanticIndexPanel />
+      </div>
+
+      {/* Confidence calibration (#96) */}
+      <div className="pt-4 border-t" style={{ borderColor: 'var(--color-border)' }}>
+        <div className="font-medium mb-3" style={{ color: 'var(--color-text-primary)' }}>
+          Confidence calibration
+        </div>
+        <CalibrationPanel />
       </div>
     </div>
   );

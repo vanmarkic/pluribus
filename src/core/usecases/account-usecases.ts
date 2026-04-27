@@ -194,12 +194,12 @@ export const replyToEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'sender' |
 
     const draft: EmailDraft = {
       to,
-      cc: cc.length > 0 ? cc : undefined,
       subject: email.subject.startsWith('Re:') ? email.subject : `Re: ${email.subject}`,
-      text: body.text,
-      html: body.html,
       inReplyTo: email.messageId,
       references: [email.messageId],
+      ...(cc.length > 0 ? { cc } : {}),
+      ...(body.text !== undefined ? { text: body.text } : {}),
+      ...(body.html !== undefined ? { html: body.html } : {}),
     };
 
     return sendEmail(deps)(email.accountId, draft);
@@ -213,8 +213,8 @@ export const forwardEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'sender' |
     const draft: EmailDraft = {
       to,
       subject: email.subject.startsWith('Fwd:') ? email.subject : `Fwd: ${email.subject}`,
-      text: body.text,
-      html: body.html,
+      ...(body.text !== undefined ? { text: body.text } : {}),
+      ...(body.html !== undefined ? { html: body.html } : {}),
     };
 
     return sendEmail(deps)(email.accountId, draft);

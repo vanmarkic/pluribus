@@ -88,7 +88,10 @@ export function Sidebar() {
     setView(id as typeof view);
     if (!selectedAccountId) return;
 
-    const baseFilter = { tagId: undefined, folderPath: undefined, unreadOnly: false, starredOnly: false, searchQuery: undefined };
+    // exactOptionalPropertyTypes: build the filter with only the keys
+    // we actually want to set — omitting is how you clear an optional
+    // under the stricter semantics.
+    const baseFilter = { unreadOnly: false, starredOnly: false };
 
     if (id === 'inbox') {
       setFilter({ ...baseFilter, folderPath: 'INBOX' }, selectedAccountId);
@@ -101,7 +104,7 @@ export function Sidebar() {
     } else if (id === 'trash') {
       setFilter({ ...baseFilter, folderPath: 'Trash' }, selectedAccountId);
     } else if (triageFolderMap[id]) {
-      setFilter({ ...baseFilter, folderPath: triageFolderMap[id] }, selectedAccountId);
+      setFilter({ ...baseFilter, folderPath: triageFolderMap[id]! }, selectedAccountId);
     } else {
       setFilter(baseFilter, selectedAccountId);
     }

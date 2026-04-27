@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "lib": ["ES2022"],
+    "outDir": "dist",
+    "rootDir": "src",
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "sourceMap": true
+  },
+  "include": [
+    "src/evals/**/*",
+    "src/core/domain.ts",
+    "src/adapters/llm/anthropic.ts",
+    "src/adapters/llm/agent-tools.ts",
+    "src/adapters/llm/prompt-injection.ts"
+  ],
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+}

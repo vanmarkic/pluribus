@@ -13,10 +13,25 @@
     "typecheck": "tsc --noEmit",
     "test": "npm run rebuild:node && vitest run",
     "test:watch": "npm run rebuild:node && vitest",
+    "eval": "tsc -p tsconfig.evals.json && node dist/evals/run-eval.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "dist": "npm run build && npm run rebuild:electron && electron-builder --mac",
     "dist:dmg": "npm run build && npm run rebuild:electron && electron-builder --mac dmg",
     "rebuild:electron": "electron-rebuild",
-    "rebuild:node": "npm rebuild better-sqlite3"
+    "rebuild:node": "npm rebuild better-sqlite3",
+    "prepare": "husky || true"
+  },
+  "lint-staged": {
+    "*.{ts,tsx,js}": [
+      "prettier --write",
+      "eslint --fix --max-warnings 0"
+    ],
+    "*.{json,yml,yaml,css,md}": [
+      "prettier --write"
+    ]
   },
   "build": {
     "appId": "com.pluribus.mailclient",
@@ -61,7 +76,7 @@
     }
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.27.0",
+    "@anthropic-ai/sdk": "^0.90.0",
     "@radix-ui/react-dialog": "^1.1.4",
     "@radix-ui/react-scroll-area": "^1.2.2",
     "@radix-ui/react-tooltip": "^1.1.6",
@@ -78,15 +93,19 @@
     "node-machine-id": "^1.1.12",
     "nodemailer": "^7.0.11",
     "obra-icons-react": "^1.23.1",
+    "pino": "^9.5.0",
     "react-window": "^1.8.10",
     "sanitize-filename": "^1.6.3",
     "tailwind-merge": "^2.6.0",
+    "zod": "^4.3.6",
     "zustand": "^4.5.0"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.2",
+    "@eslint/js": "^10.0.1",
     "@tailwindcss/typography": "^0.5.15",
     "@tailwindcss/vite": "^4.0.0",
+    "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.1",
     "@testing-library/user-event": "^14.6.1",
@@ -97,12 +116,21 @@
     "@types/nodemailer": "^6.4.16",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
+    "@typescript-eslint/eslint-plugin": "^8.59.0",
+    "@typescript-eslint/parser": "^8.59.0",
     "@vitejs/plugin-react": "^4.3.0",
     "@vitest/coverage-v8": "^4.0.15",
     "electron": "^35.7.5",
     "electron-builder": "^26.0.12",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "fast-check": "^4.4.0",
+    "husky": "^9.1.7",
     "jsdom": "^27.3.0",
+    "lint-staged": "^16.4.0",
+    "prettier": "^3.8.1",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "sharp": "^0.34.5",

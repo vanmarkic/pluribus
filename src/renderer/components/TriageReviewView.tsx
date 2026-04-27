@@ -64,8 +64,8 @@ export function TriageReviewView() {
         // This matches the dashboard's pendingReview count from getStats()
         // Pass accountId if set, otherwise fetch all accounts (matches AISortView behavior)
         const pendingItems = await window.mailApi.aiSort.getPendingReview({
-          accountId: selectedAccountId || undefined,
           limit: 100,
+          ...(selectedAccountId ? { accountId: selectedAccountId } : {}),
         });
 
         // Map PendingReviewItem to TriageItem format

@@ -586,8 +586,8 @@ export function EmailViewer() {
             style={{ background: email.isStarred ? '#f59e0b' : 'var(--color-accent)' }}
           >
             {isSentFolder && email.to.length > 0
-              ? email.to[0][0].toUpperCase()
-              : (email.from.name || email.from.address)[0].toUpperCase()}
+              ? email.to[0]?.[0]?.toUpperCase() ?? '?'
+              : (email.from.name || email.from.address)[0]?.toUpperCase() ?? '?'}
           </div>
           <div className="flex-1">
             {isSentFolder && email.to.length > 0 ? (

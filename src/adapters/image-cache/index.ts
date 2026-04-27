@@ -117,7 +117,7 @@ async function fetchImage(url: string): Promise<{ data: Buffer; contentType: str
       return null;
     }
 
-    const contentType = response.headers.get('content-type')?.split(';')[0].trim() || null;
+    const contentType = response.headers.get('content-type')?.split(';')[0]?.trim() || null;
 
     // Validate content type
     if (contentType && !ALLOWED_CONTENT_TYPES.has(contentType)) {

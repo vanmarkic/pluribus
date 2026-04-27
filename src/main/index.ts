@@ -48,6 +48,7 @@ function registerCachedImageProtocol(): void {
 
     const emailId = pathParts[1];
     const filename = pathParts.slice(2).join('/');
+    if (!emailId) return new Response('Missing email id', { status: 400 });
 
     // Construct the file path
     const cacheDir = path.join(app.getPath('userData'), 'cache', 'images', emailId);
@@ -106,25 +107,31 @@ function cleanupTempFiles(): void {
   }
 }
 
-// Content Security Policy
-// In development, allow unsafe-inline and localhost for Vite HMR
+// Content Security Policy (#100)
+//
+// 'unsafe-inline' on style-src is the single remaining relaxation — React's
+// inline `style={{}}` props compile to inline style attributes and there is
+// no practical nonce strategy in React 18 without introducing a wrapping
+// layer. Risk is mitigated by (a) DOMPurify on every email body, (b)
+// explicit CSS-vector stripping in EmailViewer.tsx (expression(),
+// javascript:, behavior:, -moz-binding:), and (c) frame-ancestors 'none'
+// which prevents the window from being embedded and used as an injection
+// vector. See docs/security/csp.md for the full rationale and roadmap to
+// remove 'unsafe-inline' entirely.
 const isDev = process.env.NODE_ENV === 'development';
 const CSP = [
   "default-src 'self'",
-  // Vite HMR requires unsafe-inline scripts in development
   isDev ? "script-src 'self' 'unsafe-inline' http://localhost:5173" : "script-src 'self'",
-  // Note: 'unsafe-inline' required for React inline styles (style={}) used extensively for:
-  // - Dynamic values (progress bars, tag colors from database)
-  // - CSS custom properties (var(--color-*) for theming)
-  // - Platform-specific styles (-webkit-app-region for macOS titlebar)
-  // Risk is mitigated by: (1) DOMPurify sanitization of all email HTML, (2) explicit stripping of
-  // CSS attack vectors (expression(), javascript:, behavior:, -moz-binding:) in EmailViewer.tsx
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' https: data: cached-image:",  // Allow local images, HTTPS external images, data URIs, and cached images
+  "img-src 'self' https: data: cached-image:",
   "font-src 'self'",
-  // In development, allow localhost for Vite WebSocket HMR
-  isDev ? "connect-src 'self' https://api.anthropic.com http://localhost:5173 ws://localhost:5173" : "connect-src 'self' https://api.anthropic.com",
+  isDev
+    ? "connect-src 'self' https://api.anthropic.com http://localhost:5173 ws://localhost:5173"
+    : "connect-src 'self' https://api.anthropic.com",
+  "worker-src 'self' blob:",            // xenova/transformers spawns ONNX workers
   "frame-src 'none'",
+  "frame-ancestors 'none'",              // clickjacking defence
+  "form-action 'self'",                  // phishing defence
   "object-src 'none'",
   "base-uri 'self'",
 ].join('; ');

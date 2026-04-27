@@ -1,5 +1,7 @@
 # Pluribus Mail Client
 
+[![CI](https://github.com/vanmarkic/pluribus/actions/workflows/ci.yml/badge.svg)](https://github.com/vanmarkic/pluribus/actions/workflows/ci.yml)
+
 A privacy-focused Electron mail client with LLM-powered email triage and intelligent classification.
 
 ## 🌟 Features
@@ -21,6 +23,9 @@ This project follows a **functional clean architecture** pattern with three dist
 - **Renderer** (`src/renderer/`) - React-based user interface
 
 For detailed architecture information, see [ARCHITECTURE.md](ARCHITECTURE.md).
+For the security posture, see the
+[STRIDE threat model](docs/security/threat-model.md) and the
+[prompt-injection playbook](docs/security/prompt-injection.md).
 
 ## 🛠️ Tech Stack
 

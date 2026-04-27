@@ -506,6 +506,152 @@ export type VectorSearch = {
 };
 
 // ============================================
+// LLM Call Log (observability)
+// ============================================
+
+export type LlmCallEntry = {
+  provider: 'anthropic' | 'ollama';
+  model: string;
+  promptVersion?: string | null;
+  emailId?: number | null;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  latencyMs: number;
+  costUsd: number;
+  cacheHit: boolean;
+  stopReason?: string | null;
+  error?: string | null;
+};
+
+export type LlmCallRow = LlmCallEntry & {
+  id: number;
+  ts: Date;
+};
+
+export type LlmUsageStats = {
+  totalCalls: number;
+  totalCostUsd: number;
+  todayCalls: number;
+  todayCostUsd: number;
+  monthCostUsd: number;
+  cacheHitRate: number;       // 0..1
+  avgLatencyMs: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalCacheReadTokens: number;
+  totalCacheCreationTokens: number;
+};
+
+export type LlmDailyCost = {
+  day: string;   // 'YYYY-MM-DD'
+  model: string;
+  calls: number;
+  costUsd: number;
+};
+
+export type LlmCallsRepo = {
+  record: (entry: LlmCallEntry) => Promise<void>;
+  listRecent: (limit?: number) => Promise<LlmCallRow[]>;
+  getStats: () => Promise<LlmUsageStats>;
+  getDailyCost: (days?: number) => Promise<LlmDailyCost[]>;
+};
+
+// ============================================
+// Security Audit Log (#98)
+// ============================================
+
+export type SecuritySeverity = 'info' | 'warn' | 'alert';
+
+export type SecurityEvent = {
+  id: number;
+  ts: Date;
+  eventType: string;
+  severity: SecuritySeverity;
+  actor: string;
+  target: string | null;
+  success: boolean;
+  metadata: Record<string, unknown>;
+};
+
+export type SecurityEventEntry = {
+  eventType: string;
+  severity: SecuritySeverity;
+  actor: string;
+  target?: string | null;
+  success?: boolean;
+  metadata?: Record<string, unknown>;
+};
+
+export type SecurityEventRepo = {
+  record: (entry: SecurityEventEntry) => Promise<void>;
+  listRecent: (options?: {
+    limit?: number;
+    eventType?: string;
+    severity?: SecuritySeverity;
+    sinceTs?: Date;
+  }) => Promise<SecurityEvent[]>;
+  countByType: (options?: { sinceTs?: Date }) => Promise<Record<string, number>>;
+  prune: (keepDays: number) => Promise<number>;
+};
+
+// ============================================
+// Confidence calibration (#96)
+// ============================================
+
+export type CalibrationRecord = {
+  id: number;
+  fitAt: Date;
+  a: number;
+  b: number;
+  fitSize: number;
+  eceBefore: number | null;
+  eceAfter: number | null;
+};
+
+export type CalibrationFitPair = {
+  /** Raw LLM confidence recorded in classification_state.confidence. */
+  rawConfidence: number;
+  /** 1 if the user accepted (action in [accept, accept_edit]), 0 if dismissed. */
+  correct: number;
+};
+
+export type CalibrationRepo = {
+  /** Persist one Platt fit to the history table. */
+  saveFit: (input: {
+    a: number;
+    b: number;
+    fitSize: number;
+    eceBefore: number | null;
+    eceAfter: number | null;
+  }) => Promise<void>;
+  /** Most recent fit, or null if none. */
+  loadLatest: () => Promise<CalibrationRecord | null>;
+  /** Recent fits for the dashboard trend. */
+  listHistory: (limit?: number) => Promise<CalibrationRecord[]>;
+  /** Collect (raw_confidence, correct) pairs from feedback + state. */
+  collectFitPairs: () => Promise<CalibrationFitPair[]>;
+};
+
+// ============================================
+// Body-encryption migration (#99 follow-up)
+// ============================================
+
+export type PlaintextBodyRow = {
+  emailId: number;
+  bodyText: string | null;
+  bodyHtml: string | null;
+};
+
+export type BodyMigrationRepo = {
+  /** Summary counts for the migration progress UI. */
+  countByStatus: () => Promise<{ total: number; plaintext: number; encrypted: number }>;
+  /** Rows that still need to be migrated — filtered by the `v1:` prefix sniff. */
+  listPlaintextRows: () => Promise<PlaintextBodyRow[]>;
+};
+
+// ============================================
 // All Dependencies (for DI)
 // ============================================
 
@@ -542,4 +688,12 @@ export type Deps = {
   embeddingService: EmbeddingService;
   embeddingRepo: EmbeddingRepo;
   vectorSearch: VectorSearch;
+  // Observability
+  llmCalls: LlmCallsRepo;
+  // Security audit log (#98)
+  securityEvents: SecurityEventRepo;
+  // Confidence calibration (#96)
+  calibration: CalibrationRepo;
+  // Email-body encryption migration (#99 follow-up)
+  bodyMigration: BodyMigrationRepo;
 };

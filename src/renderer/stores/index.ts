@@ -80,6 +80,15 @@ declare global {
         startBackgroundClassification: (emailIds: number[]) => Promise<{ taskId: string; count: number }>;
         getTaskStatus: (taskId: string) => Promise<{ status: 'running' | 'completed' | 'failed'; processed: number; total: number; error?: string } | null>;
         clearTask: (taskId: string) => Promise<void>;
+        streamExplain: (emailId: number) => Promise<{ requestId: string }>;
+        onStreamEvent: (
+          requestId: string,
+          callback: (event:
+            | { type: 'text'; delta: string }
+            | { type: 'done'; fullText: string }
+            | { type: 'error'; message: string }
+          ) => void,
+        ) => () => void;
       };
       config: {
         get: (key: string) => Promise<any>;
@@ -140,6 +149,100 @@ declare global {
       contacts: {
         getRecent: (limit?: number) => Promise<RecentContact[]>;
         search: (query: string, limit?: number) => Promise<RecentContact[]>;
+      };
+      securityEvents: {
+        listRecent: (opts?: {
+          limit?: number;
+          eventType?: string;
+          severity?: 'info' | 'warn' | 'alert';
+          sinceTs?: string;
+        }) => Promise<Array<{
+          id: number;
+          ts: string;
+          eventType: string;
+          severity: 'info' | 'warn' | 'alert';
+          actor: string;
+          target: string | null;
+          success: boolean;
+          metadata: Record<string, unknown>;
+        }>>;
+        countByType: (sinceTs?: string) => Promise<Record<string, number>>;
+      };
+      bodyMigration: {
+        getStatus: () => Promise<{ total: number; plaintext: number; encrypted: number }>;
+        start: () => Promise<{ taskId: string; total: number }>;
+      };
+      calibration: {
+        recalibrate: (opts?: { minSamples?: number }) => Promise<{
+          fitSize: number;
+          eceBefore: number;
+          eceAfter: number;
+          fitted: boolean;
+        }>;
+        getLatest: () => Promise<{
+          id: number;
+          fitAt: string;
+          a: number;
+          b: number;
+          fitSize: number;
+          eceBefore: number | null;
+          eceAfter: number | null;
+        } | null>;
+        getHistory: (limit?: number) => Promise<Array<{
+          id: number;
+          fitAt: string;
+          a: number;
+          b: number;
+          fitSize: number;
+          eceBefore: number | null;
+          eceAfter: number | null;
+        }>>;
+      };
+      embeddings: {
+        getStats: () => Promise<{
+          totalEmails: number;
+          indexed: number;
+          coverage: number;
+          model: string;
+        }>;
+        backfill: (opts?: { limit?: number; accountId?: number }) => Promise<{ taskId: string; total: number }>;
+      };
+      llmCalls: {
+        getStats: () => Promise<{
+          totalCalls: number;
+          totalCostUsd: number;
+          todayCalls: number;
+          todayCostUsd: number;
+          monthCostUsd: number;
+          cacheHitRate: number;
+          avgLatencyMs: number;
+          totalInputTokens: number;
+          totalOutputTokens: number;
+          totalCacheReadTokens: number;
+          totalCacheCreationTokens: number;
+        }>;
+        listRecent: (limit?: number) => Promise<Array<{
+          id: number;
+          ts: string;
+          provider: string;
+          model: string;
+          emailId: number | null;
+          inputTokens: number;
+          outputTokens: number;
+          cacheReadTokens: number;
+          cacheCreationTokens: number;
+          latencyMs: number;
+          costUsd: number;
+          cacheHit: boolean;
+          stopReason: string | null;
+          error: string | null;
+        }>>;
+        getDailyCost: (days?: number) => Promise<Array<{
+          day: string;
+          model: string;
+          calls: number;
+          costUsd: number;
+        }>>;
       };
       db: {
         checkIntegrity: (full?: boolean) => Promise<{ isHealthy: boolean; errors: string[] }>;
@@ -324,7 +427,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
       // Auto-select first email if emails are available and nothing is currently selected
       const currentSelectedId = get().selectedId;
       const shouldAutoSelect = finalEmails.length > 0 && !currentSelectedId;
-      const newSelectedId = shouldAutoSelect ? finalEmails[0].id : currentSelectedId;
+      const newSelectedId = shouldAutoSelect ? finalEmails[0]?.id ?? null : currentSelectedId;
 
       set({
         emails: finalEmails,
@@ -740,8 +843,9 @@ export const useAccountStore = create<AccountStore>()(
         // Auto-select first account if none selected or selected account no longer exists
         const { selectedAccountId } = get();
         const accountExists = accounts.some(a => a.id === selectedAccountId);
-        if ((!selectedAccountId || !accountExists) && accounts.length > 0) {
-          set({ selectedAccountId: accounts[0].id });
+        const firstAccount = accounts[0];
+        if ((!selectedAccountId || !accountExists) && firstAccount) {
+          set({ selectedAccountId: firstAccount.id });
         }
       },
 

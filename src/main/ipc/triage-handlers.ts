@@ -4,6 +4,8 @@
 
 import { ipcMain } from 'electron';
 import type { Container } from '../container';
+import type { TriageFolder } from '../../core/domain';
+import { TRIAGE_FOLDERS } from '../../core/domain';
 import {
   assertPositiveInt,
   assertBoolean,
@@ -11,6 +13,14 @@ import {
   assertOptionalPositiveInt,
   checkRateLimit,
 } from './validation';
+
+function assertTriageFolder(value: unknown, name: string): TriageFolder {
+  const str = assertString(value, name, 50);
+  if (!(TRIAGE_FOLDERS as readonly string[]).includes(str)) {
+    throw new Error(`Invalid ${name}: must be one of the triage folders`);
+  }
+  return str as TriageFolder;
+}
 
 // ==========================================
 // Setup Function
@@ -74,7 +84,7 @@ export function setupTriageHandlers(container: Container): void {
       fromDomain: assertString(e.fromDomain, 'fromDomain', 100),
       subject: assertString(e.subject, 'subject', 500),
       aiSuggestion: e.aiSuggestion ? assertString(e.aiSuggestion, 'aiSuggestion', 50) : null,
-      userChoice: assertString(e.userChoice, 'userChoice', 50),
+      userChoice: assertTriageFolder(e.userChoice, 'userChoice'),
       wasCorrection: assertBoolean(e.wasCorrection, 'wasCorrection'),
       source: assertString(e.source, 'source', 20) as 'onboarding' | 'review_folder' | 'manual_move',
     };

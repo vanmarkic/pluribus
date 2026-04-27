@@ -119,6 +119,11 @@ export function TrainingStep({ accountId, onComplete, onSkip }: TrainingStepProp
   const canComplete = completedCount >= Math.min(6, Math.ceil(items.length / 2)); // Require at least half (min 6 of 12)
   const currentItem = items[currentIndex];
 
+  // noUncheckedIndexedAccess narrowing: if we're past the last item the
+  // parent should have routed to the completion screen; bail out
+  // defensively.
+  if (!currentItem && !loading && items.length > 0) return null;
+
   if (loading) {
     return (
       <div
@@ -173,6 +178,8 @@ export function TrainingStep({ accountId, onComplete, onSkip }: TrainingStepProp
       </div>
     );
   }
+
+  if (!currentItem) return null;
 
   return (
     <div
@@ -249,7 +256,7 @@ export function TrainingStep({ accountId, onComplete, onSkip }: TrainingStepProp
                   color: 'white',
                 }}
               >
-                {currentItem.email.from.name?.[0] || currentItem.email.from.address[0].toUpperCase()}
+                {currentItem.email.from.name?.[0] || currentItem.email.from.address[0]?.toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>

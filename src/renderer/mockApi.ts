@@ -247,6 +247,8 @@ export function createMockApi(): MailAPI {
       startBackgroundClassification: async (emailIds) => ({ taskId: 'task-1', count: emailIds.length }),
       getTaskStatus: async () => ({ status: 'completed', processed: 5, total: 5 }),
       clearTask: async () => {},
+      streamExplain: async () => ({ requestId: 'mock' }),
+      onStreamEvent: () => () => {},
     },
 
     aiSort: {
@@ -474,6 +476,46 @@ export function createMockApi(): MailAPI {
       getLog: async () => [],
       // Issue #55: Select diverse training emails
       selectDiverseTrainingEmails: async () => mockEmails.slice(0, 12),
+    },
+
+    securityEvents: {
+      listRecent: async () => [],
+      countByType: async () => ({}),
+    },
+    bodyMigration: {
+      getStatus: async () => ({ total: 0, plaintext: 0, encrypted: 0 }),
+      start: async () => ({ taskId: 'mock', total: 0 }),
+    },
+    calibration: {
+      recalibrate: async () => ({ fitSize: 0, eceBefore: 0, eceAfter: 0, fitted: false }),
+      getLatest: async () => null,
+      getHistory: async () => [],
+    },
+    embeddings: {
+      getStats: async () => ({ totalEmails: 0, indexed: 0, coverage: 0, model: 'all-MiniLM-L6-v2' }),
+      backfill: async () => ({ taskId: 'mock', total: 0 }),
+    },
+
+    // These two keys extend llm which is already in the surrounding object
+    // earlier in the file — the mock API omits them; the typedef allows it
+    // via any-cast at the bottom.
+
+    llmCalls: {
+      getStats: async () => ({
+        totalCalls: 0,
+        totalCostUsd: 0,
+        todayCalls: 0,
+        todayCostUsd: 0,
+        monthCostUsd: 0,
+        cacheHitRate: 0,
+        avgLatencyMs: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        totalCacheReadTokens: 0,
+        totalCacheCreationTokens: 0,
+      }),
+      listRecent: async () => [],
+      getDailyCost: async () => [],
     },
 
     on: (channel, callback) => {
