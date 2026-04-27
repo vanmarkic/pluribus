@@ -17,7 +17,15 @@ import {
   IconClock3, IconNewspaper, IconNotification, IconMegaphone,
   IconBill, IconBriefcase, IconPlane
 } from 'obra-icons-react';
-import { useUIStore, useEmailStore, useAccountStore } from '../stores';
+import { skipToken } from '@reduxjs/toolkit/query/react';
+import {
+  useUIStore,
+  useEmailUiStore,
+  useAccountStore,
+  useListEmailsQuery,
+  invalidateEmailList,
+  store,
+} from '../stores';
 import { AccountSwitcher } from './AccountSwitcher';
 import { LicenseStatusBadge } from './LicenseActivation';
 
@@ -36,8 +44,12 @@ type TriageFolder =
 
 export function Sidebar() {
   const { view, setView, openCompose } = useUIStore();
-  const { emails, setFilter, loadEmails, filter } = useEmailStore();
+  const filter = useEmailUiStore((s) => s.filter);
+  const setFilter = useEmailUiStore((s) => s.setFilter);
   const { selectedAccountId } = useAccountStore();
+  const { data: emails = [] } = useListEmailsQuery(
+    selectedAccountId ? { accountId: selectedAccountId, ...filter } : skipToken,
+  );
   const [draftCount, setDraftCount] = useState(0);
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
 
@@ -94,19 +106,19 @@ export function Sidebar() {
     const baseFilter = { unreadOnly: false, starredOnly: false };
 
     if (id === 'inbox') {
-      setFilter({ ...baseFilter, folderPath: 'INBOX' }, selectedAccountId);
+      setFilter({ ...baseFilter, folderPath: 'INBOX' });
     } else if (id === 'sent') {
-      setFilter({ ...baseFilter, folderPath: 'Sent' }, selectedAccountId);
+      setFilter({ ...baseFilter, folderPath: 'Sent' });
     } else if (id === 'drafts') {
-      setFilter(baseFilter, selectedAccountId);
+      setFilter(baseFilter);
     } else if (id === 'archive') {
-      setFilter({ ...baseFilter, folderPath: 'Archive' }, selectedAccountId);
+      setFilter({ ...baseFilter, folderPath: 'Archive' });
     } else if (id === 'trash') {
-      setFilter({ ...baseFilter, folderPath: 'Trash' }, selectedAccountId);
+      setFilter({ ...baseFilter, folderPath: 'Trash' });
     } else if (triageFolderMap[id]) {
-      setFilter({ ...baseFilter, folderPath: triageFolderMap[id]! }, selectedAccountId);
+      setFilter({ ...baseFilter, folderPath: triageFolderMap[id]! });
     } else {
-      setFilter(baseFilter, selectedAccountId);
+      setFilter(baseFilter);
     }
   };
 
@@ -144,11 +156,11 @@ export function Sidebar() {
       await window.mailApi.triage.learnFromCorrection(emailId, sourceFolder, targetFolder, selectedAccountId);
 
       // Refresh email list to reflect the move
-      loadEmails(selectedAccountId);
+      store.dispatch(invalidateEmailList());
     } catch (err) {
       console.error('Failed to move email to folder:', err);
     }
-  }, [selectedAccountId, loadEmails, filter.folderPath]);
+  }, [selectedAccountId, filter.folderPath]);
 
   return (
     <aside className="sidebar">

@@ -17,23 +17,64 @@
  */
 
 import { useEffect, useCallback, useRef } from 'react';
-import { useEmailStore, useUIStore } from '../stores';
+import {
+  useEmailUiStore,
+  useUIStore,
+  useBulkArchiveMutation,
+  useBulkTrashMutation,
+  useSetStarredMutation,
+} from '../stores';
+import { useCurrentListArg } from './useCurrentListArg';
 import type { Email } from '../../core/domain';
 
 export function useEmailListKeyboard(emails: Email[]) {
-  const {
-    focusedId,
-    selectedIds,
-    setFocusedId,
-    toggleSelect,
-    selectRange,
-    selectAll,
-    clearSelection,
-    selectEmail,
-    toggleStar,
-    bulkArchive,
-    bulkTrash,
-  } = useEmailStore();
+  const focusedId = useEmailUiStore((s) => s.focusedId);
+  const selectedIds = useEmailUiStore((s) => s.selectedIds);
+  const setFocusedId = useEmailUiStore((s) => s.setFocusedId);
+  const toggleSelect = useEmailUiStore((s) => s.toggleSelect);
+  const selectRangeAction = useEmailUiStore((s) => s.selectRange);
+  const selectAllAction = useEmailUiStore((s) => s.selectAll);
+  const clearSelection = useEmailUiStore((s) => s.clearSelection);
+  const selectEmail = useEmailUiStore((s) => s.selectEmail);
+  const listArg = useCurrentListArg();
+  const [setStarred] = useSetStarredMutation();
+  const [bulkArchiveMutation] = useBulkArchiveMutation();
+  const [bulkTrashMutation] = useBulkTrashMutation();
+
+  const toggleStar = useCallback(
+    (id: number) => {
+      const target = emails.find((e) => e.id === id);
+      if (!target) return;
+      const args =
+        listArg !== undefined
+          ? { id, isStarred: !target.isStarred, listArg }
+          : { id, isStarred: !target.isStarred };
+      setStarred(args);
+    },
+    [emails, listArg, setStarred],
+  );
+  const bulkArchive = useCallback(() => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    bulkArchiveMutation(listArg ? { ids, listArg } : { ids });
+    clearSelection();
+  }, [selectedIds, listArg, bulkArchiveMutation, clearSelection]);
+  const bulkTrash = useCallback(() => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    bulkTrashMutation(listArg ? { ids, listArg } : { ids });
+    clearSelection();
+  }, [selectedIds, listArg, bulkTrashMutation, clearSelection]);
+  const selectRange = useCallback(
+    (fromId: number, toId: number) => {
+      selectRangeAction(emails.map((e) => e.id), fromId, toId);
+    },
+    [emails, selectRangeAction],
+  );
+  const selectAll = useCallback(
+    () => selectAllAction(emails.map((e) => e.id)),
+    [emails, selectAllAction],
+  );
 
   const { openCompose } = useUIStore();
 

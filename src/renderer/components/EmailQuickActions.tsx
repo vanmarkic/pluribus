@@ -4,7 +4,12 @@
  */
 
 import { IconArchiveBox, IconDelete, IconEmail, IconEmailFill } from 'obra-icons-react';
-import { useEmailStore } from '../stores';
+import {
+  useArchiveEmailMutation,
+  useMarkReadMutation,
+  useTrashEmailMutation,
+} from '../stores';
+import { useCurrentListArg } from '../hooks/useCurrentListArg';
 
 interface EmailQuickActionsProps {
   emailId: number;
@@ -13,23 +18,30 @@ interface EmailQuickActionsProps {
 }
 
 export function EmailQuickActions({ emailId, isRead, onAction }: EmailQuickActionsProps) {
-  const { archive, deleteEmail, markRead } = useEmailStore();
+  const listArg = useCurrentListArg();
+  const [archive] = useArchiveEmailMutation();
+  const [trash] = useTrashEmailMutation();
+  const [markRead] = useMarkReadMutation();
 
   const handleArchive = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    await archive(emailId);
+    await archive(listArg ? { id: emailId, listArg } : { id: emailId });
     onAction?.();
   };
 
   const handleTrash = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    await deleteEmail(emailId);
+    await trash(listArg ? { id: emailId, listArg } : { id: emailId });
     onAction?.();
   };
 
   const handleToggleRead = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    await markRead(emailId, !isRead);
+    await markRead(
+      listArg
+        ? { id: emailId, isRead: !isRead, listArg }
+        : { id: emailId, isRead: !isRead },
+    );
     onAction?.();
   };
 

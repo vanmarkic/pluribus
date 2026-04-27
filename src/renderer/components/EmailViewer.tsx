@@ -11,8 +11,21 @@ import {
   IconFavorite, IconArchiveBox, IconDelete, IconCircleBack, IconCircleForward,
   IconAttachment, IconOptionsHorizontal, IconSparkles, IconImage, IconSpinnerBall
 } from 'obra-icons-react';
-// useTagStore removed - using folders for organization (Issue #54)
-import { useEmailStore, useUIStore } from '../stores';
+import { skipToken } from '@reduxjs/toolkit/query/react';
+import {
+  useEmailUiStore,
+  useUIStore,
+  useGetEmailQuery,
+  useGetEmailBodyQuery,
+  useGetEmailAttachmentsQuery,
+  useArchiveEmailMutation,
+  useDownloadAttachmentMutation,
+  useMarkReadMutation,
+  useSetStarredMutation,
+  useTrashEmailMutation,
+  useUnarchiveEmailMutation,
+} from '../stores';
+import { useCurrentListArg } from '../hooks/useCurrentListArg';
 import { formatSender } from '../../core/domain';
 import { ReclassifyConfirmModal } from './ReclassifyConfirmModal';
 
@@ -173,28 +186,73 @@ function sanitizeEmailHtml(html: string, blockRemoteImages = true): { sanitized:
 }
 
 export function EmailViewer() {
-  const {
-    selectedEmail: email,
-    selectedBody: body,
-    // selectedTags removed - using folders (Issue #54)
-    selectedAttachments,
-    loadingBody,
-    toggleStar,
-    archive,
-    unarchive,
-    deleteEmail,
-    downloadAttachment,
-    filter,
-  } = useEmailStore();
+  const selectedId = useEmailUiStore((s) => s.selectedId);
+  const filter = useEmailUiStore((s) => s.filter);
+  const listArg = useCurrentListArg();
+  const { data: email = null } = useGetEmailQuery(selectedId ?? skipToken);
+  const { data: body = null, isFetching: loadingBody } = useGetEmailBodyQuery(
+    selectedId ?? skipToken,
+  );
+  const { data: selectedAttachments = [] } = useGetEmailAttachmentsQuery(
+    selectedId ?? skipToken,
+  );
+
+  const [setStarred] = useSetStarredMutation();
+  const [archiveEmail] = useArchiveEmailMutation();
+  const [unarchiveEmail] = useUnarchiveEmailMutation();
+  const [trashEmail] = useTrashEmailMutation();
+  const [markReadMutation] = useMarkReadMutation();
+  const [downloadAttachmentMutation] = useDownloadAttachmentMutation();
+
+  const toggleStar = useCallback(
+    (id: number) => {
+      if (!email) return;
+      const args =
+        listArg !== undefined
+          ? { id, isStarred: !email.isStarred, listArg }
+          : { id, isStarred: !email.isStarred };
+      setStarred(args);
+    },
+    [email, listArg, setStarred],
+  );
+  const archive = useCallback(
+    (id: number) => archiveEmail(listArg ? { id, listArg } : { id }),
+    [archiveEmail, listArg],
+  );
+  const unarchive = useCallback(
+    (id: number) => unarchiveEmail(listArg ? { id, listArg } : { id }),
+    [unarchiveEmail, listArg],
+  );
+  const deleteEmail = useCallback(
+    (id: number) => trashEmail(listArg ? { id, listArg } : { id }),
+    [trashEmail, listArg],
+  );
+  const downloadAttachment = useCallback(
+    (attachmentId: number, action: 'open' | 'save' = 'open') => {
+      downloadAttachmentMutation({ attachmentId, action }).catch((err) => {
+        console.error('Failed to download attachment:', err);
+      });
+    },
+    [downloadAttachmentMutation],
+  );
 
   // Determine if viewing Sent folder to show recipients instead of sender
   const isSentFolder = filter.folderPath?.toLowerCase().includes('sent');
 
-  // isArchived check removed - using folders (Issue #54)
   const isArchived = filter.folderPath?.toLowerCase() === 'archive';
 
-  // Tags removed - using folders for organization (Issue #54)
   const { openCompose } = useUIStore();
+
+  // Mark as read when an unread email is opened.
+  useEffect(() => {
+    if (email && !email.isRead && selectedId !== null) {
+      const args =
+        listArg !== undefined
+          ? { id: selectedId, isRead: true, listArg }
+          : { id: selectedId, isRead: true };
+      markReadMutation(args);
+    }
+  }, [email, selectedId, listArg, markReadMutation]);
 
   // Tag dropdown/feedback state removed - using folders (Issue #54)
 

@@ -4,12 +4,37 @@
  */
 
 import { IconArchiveBox, IconDelete, IconEmail, IconClose } from 'obra-icons-react';
-import { useEmailStore } from '../stores';
+import {
+  useEmailUiStore,
+  useBulkArchiveMutation,
+  useBulkMarkReadMutation,
+  useBulkTrashMutation,
+} from '../stores';
+import { useCurrentListArg } from '../hooks/useCurrentListArg';
 
 export function BulkActionBar() {
-  const { selectedIds, clearSelection, bulkArchive, bulkTrash, bulkMarkRead } = useEmailStore();
+  const selectedIds = useEmailUiStore((s) => s.selectedIds);
+  const clearSelection = useEmailUiStore((s) => s.clearSelection);
+  const listArg = useCurrentListArg();
+  const [bulkArchiveMutation] = useBulkArchiveMutation();
+  const [bulkTrashMutation] = useBulkTrashMutation();
+  const [bulkMarkReadMutation] = useBulkMarkReadMutation();
 
   if (selectedIds.size === 0) return null;
+
+  const ids = Array.from(selectedIds);
+  const bulkArchive = async () => {
+    await bulkArchiveMutation(listArg ? { ids, listArg } : { ids });
+    clearSelection();
+  };
+  const bulkTrash = async () => {
+    await bulkTrashMutation(listArg ? { ids, listArg } : { ids });
+    clearSelection();
+  };
+  const bulkMarkRead = async (isRead: boolean) => {
+    await bulkMarkReadMutation(listArg ? { ids, isRead, listArg } : { ids, isRead });
+    clearSelection();
+  };
 
   return (
     <div
