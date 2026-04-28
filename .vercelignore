@@ -1,0 +1,23 @@
+# Vercel only deploys the renderer + serverless functions.
+# These dirs are produced by the Electron desktop build path.
+
+node_modules
+dist
+release
+out
+build
+storybook-static
+coverage
+.vercel
+.git
+*.dmg
+*.asar
+*.sqlite
+*.sqlite3
+*.tsbuildinfo
+.env
+.env.*
+secrets
+ui-test-screenshots
+docs
+evals/history.jsonl

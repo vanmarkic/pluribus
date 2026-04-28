@@ -54,3 +54,9 @@ tsconfig.main.tsbuildinfo
 .worktrees/
 tsconfig.tsbuildinfo
 tsconfig.strict.tsbuildinfo
+.vercel
+
+# SOPS — only encrypted files (*.enc) are committed
+secrets/*
+!secrets/*.enc
+.env.local
