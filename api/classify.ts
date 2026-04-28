@@ -1,16 +1,17 @@
 /**
- * Vercel serverless function — classifies a single email via Claude.
+ * Vercel serverless function — classifies a single email via the
+ * Vercel AI Gateway.
  *
- * Used only by the public demo (`mockApi.callRealClassifier`). The desktop
- * Electron app talks to its own LLM adapter inside the main process and
- * never hits this endpoint.
+ * Used only by the public demo (`mockApi.callRealClassifier`). The
+ * desktop Electron app talks to its own LLM adapter inside the main
+ * process and never hits this endpoint.
  *
- * Auth model: none. Fictional demo data only. Rate limit is best-effort
- * (each function instance keeps its own counter). For a production demo
- * swap this for `@upstash/ratelimit` against Vercel KV.
+ * Auth model: OIDC. On Vercel, `VERCEL_OIDC_TOKEN` is auto-provisioned
+ * and refreshed; locally, run `vercel env pull .env.local`. No
+ * `ANTHROPIC_API_KEY` needed.
  */
 
-import Anthropic from '@anthropic-ai/sdk';
+import { generateText, APICallError } from 'ai';
 
 const TRIAGE_FOLDERS = [
   'INBOX',
@@ -40,8 +41,9 @@ type ClassifyResponse = {
   reasoning: string;
 };
 
-// Per-instance rate limit. Vercel may run many parallel instances, so the
-// effective ceiling is higher; this is enough to deter casual abuse.
+// Per-instance rate limit. Fluid Compute reuses instances, so this
+// catches abuse from a single function instance; the dashboard's
+// per-user gateway rate limit is the real enforcement.
 const RATE_LIMIT_PER_HOUR = 30;
 const ipBuckets = new Map<string, { count: number; resetAt: number }>();
 
@@ -57,7 +59,9 @@ function rateLimitOk(ip: string): boolean {
   return true;
 }
 
-const PROMPT_TEMPLATE = (req: ClassifyRequest) => `You are an email triage classifier. Pick exactly one folder for this email from:
+const PROMPT = (
+  req: ClassifyRequest,
+) => `You are an email triage classifier. Pick exactly one folder for this email from:
 
 ${TRIAGE_FOLDERS.join(', ')}
 
@@ -81,18 +85,16 @@ Snippet: ${req.snippet ?? ''}
 Reply with strict JSON only, no prose:
 {"folder":"<one of the folders above>","confidence":<number 0-1>,"priority":"<high|normal|low>","reasoning":"<one sentence>"}`;
 
-function safeFolder(value: unknown): Folder {
-  return TRIAGE_FOLDERS.includes(value as Folder) ? (value as Folder) : 'INBOX';
-}
+const safeFolder = (v: unknown): Folder =>
+  TRIAGE_FOLDERS.includes(v as Folder) ? (v as Folder) : 'INBOX';
 
-function safePriority(value: unknown): 'high' | 'normal' | 'low' {
-  return value === 'high' || value === 'low' ? value : 'normal';
-}
+const safePriority = (v: unknown): 'high' | 'normal' | 'low' =>
+  v === 'high' || v === 'low' ? v : 'normal';
 
-function clampConfidence(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return 0.6;
-  return Math.max(0, Math.min(1, value));
-}
+const clampConfidence = (v: unknown): number => {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return 0.6;
+  return Math.max(0, Math.min(1, v));
+};
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -100,13 +102,10 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    res.status(503).json({ error: 'Classifier not configured' });
-    return;
-  }
-
-  const ip = String(req.headers['x-forwarded-for'] ?? '').split(',')[0]?.trim() || 'unknown';
+  const ip =
+    String(req.headers['x-forwarded-for'] ?? '')
+      .split(',')[0]
+      ?.trim() || 'unknown';
   if (!rateLimitOk(ip)) {
     res.status(429).json({ error: 'Rate limit exceeded — try again in an hour' });
     return;
@@ -118,18 +117,21 @@ export default async function handler(req: any, res: any) {
     return;
   }
 
-  const client = new Anthropic({ apiKey });
   try {
-    const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 256,
-      messages: [{ role: 'user', content: PROMPT_TEMPLATE(body) }],
+    // Plain "provider/model" string routes through the AI Gateway via
+    // the OIDC token Vercel provisions automatically. No SDK wrapper or
+    // explicit client needed.
+    const { text } = await generateText({
+      model: 'anthropic/claude-haiku-4.5',
+      prompt: PROMPT(body),
+      providerOptions: {
+        gateway: {
+          tags: ['feature:classify', 'env:demo'],
+          // Fail over to a different provider if Anthropic is unavailable.
+          models: ['openai/gpt-5.4'],
+        },
+      },
     });
-
-    const text = response.content
-      .map((block) => (block.type === 'text' ? block.text : ''))
-      .join('')
-      .trim();
 
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) {
@@ -147,6 +149,12 @@ export default async function handler(req: any, res: any) {
     res.setHeader('cache-control', 'no-store');
     res.status(200).json(result);
   } catch (err) {
+    if (APICallError.isInstance(err)) {
+      // 402: budget hit; 429: gateway-level user rate limit; 503: providers down.
+      const status = err.statusCode ?? 500;
+      res.status(status).json({ error: err.message });
+      return;
+    }
     console.error('[/api/classify] failed', err);
     res.status(500).json({ error: err instanceof Error ? err.message : 'unknown error' });
   }
