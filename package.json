@@ -9,6 +9,7 @@
     "dev": "vite",
     "dev:electron": "npm run rebuild:electron && tsc -p tsconfig.main.json && mkdir -p dist/adapters/db && cp src/adapters/db/schema.sql dist/adapters/db/ && electron .",
     "build": "rm -f tsconfig.main.tsbuildinfo && tsc -p tsconfig.main.json && cp src/adapters/db/schema.sql dist/adapters/db/ && vite build",
+    "build:demo": "vite build --mode demo",
     "start": "npm run rebuild:electron && electron .",
     "typecheck": "tsc --noEmit",
     "test": "npm run rebuild:node && vitest run",

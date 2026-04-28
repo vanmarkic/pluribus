@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { skipToken } from '@reduxjs/toolkit/query/react';
 import { AccountWizard } from './components/AccountWizard';
 import { ComposeModal } from './components/ComposeModal';
+import { DemoBanner } from './components/DemoBanner';
 import { LicenseActivationModal } from './components/LicenseActivation';
 import { SetupWizard } from './components/SetupWizard';
 import { useKeyboardShortcuts, KeyboardShortcutsHelp } from './hooks/useKeyboardShortcuts';
@@ -150,6 +151,9 @@ export function App() {
 
   return (
     <div className="flex flex-col h-screen" style={{ background: 'var(--color-bg)' }}>
+      {/* Demo-only banner (no-op in Electron) */}
+      <DemoBanner />
+
       {/* macOS Title Bar */}
       <TitleBar classificationProgress={classificationProgress} />
 
