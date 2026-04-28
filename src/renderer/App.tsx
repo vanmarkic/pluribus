@@ -6,12 +6,24 @@
  */
 
 import { useEffect, useState } from 'react';
+import { skipToken } from '@reduxjs/toolkit/query/react';
 import { AccountWizard } from './components/AccountWizard';
 import { ComposeModal } from './components/ComposeModal';
+import { DemoBanner } from './components/DemoBanner';
 import { LicenseActivationModal } from './components/LicenseActivation';
 import { SetupWizard } from './components/SetupWizard';
 import { useKeyboardShortcuts, KeyboardShortcutsHelp } from './hooks/useKeyboardShortcuts';
-import { useUIStore, useSyncStore, useAccountStore, useEmailStore, useLicenseStore } from './stores';
+import {
+  useUIStore,
+  useSyncStore,
+  useAccountStore,
+  useEmailUiStore,
+  useLicenseStore,
+  useGetEmailQuery,
+  useGetEmailBodyQuery,
+  invalidateEmailList,
+  store,
+} from './stores';
 import { TitleBar } from './layouts/TitleBar';
 import { MainLayout } from './layouts/MainLayout';
 import type { SyncProgress } from '../core/domain';
@@ -20,7 +32,9 @@ export function App() {
   const { view, showAccountWizard, editAccountId, composeMode, composeEmailId, composeDraftId, closeAccountWizard, closeCompose, openCompose, classificationTaskId, classificationProgress, updateClassificationProgress, clearClassificationTask } = useUIStore();
   const { startSync, truncationInfo, dismissTruncationInfo } = useSyncStore();
   const { loadAccounts, selectedAccountId } = useAccountStore();
-  const { selectedEmail, selectedBody, loadEmails } = useEmailStore();
+  const selectedId = useEmailUiStore((s) => s.selectedId);
+  const { data: selectedEmail = null } = useGetEmailQuery(selectedId ?? skipToken);
+  const { data: selectedBody } = useGetEmailBodyQuery(selectedId ?? skipToken);
   const { loadState: loadLicenseState } = useLicenseStore();
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
@@ -48,12 +62,8 @@ export function App() {
     checkSetupComplete();
   }, []);
 
-  // Reload emails when selected account changes
-  useEffect(() => {
-    if (selectedAccountId) {
-      loadEmails(selectedAccountId);
-    }
-  }, [selectedAccountId, loadEmails]);
+  // Email list query auto-fetches when accountId/filter change; no explicit
+  // reload needed here.
 
   // Wire keyboard shortcuts
   useKeyboardShortcuts({
@@ -75,7 +85,7 @@ export function App() {
     },
     onRefresh: () => {
       if (selectedAccountId) {
-        startSync(selectedAccountId).then(() => loadEmails(selectedAccountId));
+        startSync(selectedAccountId).then(() => store.dispatch(invalidateEmailList()));
       }
     },
   });
@@ -103,10 +113,7 @@ export function App() {
 
       // Reload emails when sync completes or is cancelled
       if (progress.phase === 'complete' || progress.phase === 'cancelled') {
-        const accountId = useAccountStore.getState().selectedAccountId;
-        if (accountId) {
-          useEmailStore.getState().loadEmails(accountId);
-        }
+        store.dispatch(invalidateEmailList());
       }
     };
 
@@ -131,9 +138,7 @@ export function App() {
         await window.mailApi.llm.clearTask(classificationTaskId);
         clearClassificationTask();
         // Refresh emails to show new tags
-        if (selectedAccountId) {
-          loadEmails(selectedAccountId);
-        }
+        store.dispatch(invalidateEmailList());
       }
     }, 1000);
 
@@ -146,6 +151,9 @@ export function App() {
 
   return (
     <div className="flex flex-col h-screen" style={{ background: 'var(--color-bg)' }}>
+      {/* Demo-only banner (no-op in Electron) */}
+      <DemoBanner />
+
       {/* macOS Title Bar */}
       <TitleBar classificationProgress={classificationProgress} />
 
@@ -183,8 +191,7 @@ export function App() {
             if (selectedAccountId) {
               try {
                 await startSync(selectedAccountId);
-                // Reload emails to refresh the view
-                await loadEmails(selectedAccountId);
+                store.dispatch(invalidateEmailList());
               } catch (err) {
                 console.error('Failed to sync after send:', err);
               }

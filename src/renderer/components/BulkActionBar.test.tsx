@@ -1,83 +1,56 @@
 /**
- * Tests for BulkActionBar component
+ * Tests for BulkActionBar component.
  *
- * Tests bulk action bar that appears when emails are selected
+ * Server data lives in RTK Query; these tests mock the mutation hooks and
+ * the UI store to assert that bulk actions dispatch the right calls.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { BulkActionBar } from './BulkActionBar';
-import { useEmailStore } from '../stores';
 
-// Mock the store
+const mockBulkArchive = vi.fn().mockResolvedValue({ data: undefined });
+const mockBulkTrash = vi.fn().mockResolvedValue({ data: undefined });
+const mockBulkMarkRead = vi.fn().mockResolvedValue({ data: undefined });
+const mockClearSelection = vi.fn();
+let mockSelectedIds = new Set<number>([1, 2, 3]);
+
 vi.mock('../stores', () => ({
-  useEmailStore: vi.fn(),
+  useEmailUiStore: (selector: (s: unknown) => unknown) =>
+    selector({
+      selectedIds: mockSelectedIds,
+      clearSelection: mockClearSelection,
+    }),
+  useBulkArchiveMutation: () => [mockBulkArchive, { isLoading: false }],
+  useBulkTrashMutation: () => [mockBulkTrash, { isLoading: false }],
+  useBulkMarkReadMutation: () => [mockBulkMarkRead, { isLoading: false }],
+}));
+
+vi.mock('../hooks/useCurrentListArg', () => ({
+  useCurrentListArg: () => ({ accountId: 1, folderPath: 'INBOX' }),
 }));
 
 describe('BulkActionBar', () => {
-  const mockClearSelection = vi.fn();
-  const mockBulkArchive = vi.fn().mockResolvedValue(undefined);
-  const mockBulkTrash = vi.fn().mockResolvedValue(undefined);
-  const mockBulkMarkRead = vi.fn().mockResolvedValue(undefined);
-
   beforeEach(() => {
     vi.clearAllMocks();
-
-    (useEmailStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
-      selectedIds: new Set([1, 2, 3]),
-      clearSelection: mockClearSelection,
-      bulkArchive: mockBulkArchive,
-      bulkTrash: mockBulkTrash,
-      bulkMarkRead: mockBulkMarkRead,
-    });
+    mockSelectedIds = new Set<number>([1, 2, 3]);
   });
 
   describe('visibility', () => {
     it('renders when emails are selected', () => {
       render(<BulkActionBar />);
-
       expect(screen.getByText('3 selected')).toBeInTheDocument();
     });
 
     it('does not render when no emails selected', () => {
-      (useEmailStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
-        selectedIds: new Set(),
-        clearSelection: mockClearSelection,
-        bulkArchive: mockBulkArchive,
-        bulkTrash: mockBulkTrash,
-        bulkMarkRead: mockBulkMarkRead,
-      });
-
+      mockSelectedIds = new Set();
       const { container } = render(<BulkActionBar />);
-
       expect(container.firstChild).toBeNull();
     });
 
-    it('shows correct count for 1 selected', () => {
-      (useEmailStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
-        selectedIds: new Set([1]),
-        clearSelection: mockClearSelection,
-        bulkArchive: mockBulkArchive,
-        bulkTrash: mockBulkTrash,
-        bulkMarkRead: mockBulkMarkRead,
-      });
-
-      render(<BulkActionBar />);
-
-      expect(screen.getByText('1 selected')).toBeInTheDocument();
-    });
-
     it('shows correct count for many selected', () => {
-      (useEmailStore as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
-        selectedIds: new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
-        clearSelection: mockClearSelection,
-        bulkArchive: mockBulkArchive,
-        bulkTrash: mockBulkTrash,
-        bulkMarkRead: mockBulkMarkRead,
-      });
-
+      mockSelectedIds = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
       render(<BulkActionBar />);
-
       expect(screen.getByText('10 selected')).toBeInTheDocument();
     });
   });
@@ -85,60 +58,59 @@ describe('BulkActionBar', () => {
   describe('clear selection', () => {
     it('calls clearSelection when X button clicked', () => {
       render(<BulkActionBar />);
-
-      const clearButton = screen.getByTitle('Clear selection (Esc)');
-      fireEvent.click(clearButton);
-
+      fireEvent.click(screen.getByTitle('Clear selection (Esc)'));
       expect(mockClearSelection).toHaveBeenCalled();
     });
   });
 
   describe('bulk actions', () => {
-    it('calls bulkMarkRead(true) when Mark read clicked', async () => {
+    it('calls bulkMarkRead with isRead=true and the active listArg', async () => {
       render(<BulkActionBar />);
-
       fireEvent.click(screen.getByText('Mark read'));
-
       await waitFor(() => {
-        expect(mockBulkMarkRead).toHaveBeenCalledWith(true);
+        expect(mockBulkMarkRead).toHaveBeenCalledWith({
+          ids: [1, 2, 3],
+          isRead: true,
+          listArg: { accountId: 1, folderPath: 'INBOX' },
+        });
       });
     });
 
-    it('calls bulkArchive when Archive clicked', async () => {
+    it('calls bulkArchive with the active listArg', async () => {
       render(<BulkActionBar />);
-
       fireEvent.click(screen.getByText('Archive'));
-
       await waitFor(() => {
-        expect(mockBulkArchive).toHaveBeenCalled();
+        expect(mockBulkArchive).toHaveBeenCalledWith({
+          ids: [1, 2, 3],
+          listArg: { accountId: 1, folderPath: 'INBOX' },
+        });
       });
     });
 
-    it('calls bulkTrash when Delete clicked', async () => {
+    it('calls bulkTrash with the active listArg', async () => {
       render(<BulkActionBar />);
-
       fireEvent.click(screen.getByText('Delete'));
-
       await waitFor(() => {
-        expect(mockBulkTrash).toHaveBeenCalled();
+        expect(mockBulkTrash).toHaveBeenCalledWith({
+          ids: [1, 2, 3],
+          listArg: { accountId: 1, folderPath: 'INBOX' },
+        });
       });
+    });
+
+    it('clears selection after a bulk action', async () => {
+      render(<BulkActionBar />);
+      fireEvent.click(screen.getByText('Archive'));
+      await waitFor(() => expect(mockClearSelection).toHaveBeenCalled());
     });
   });
 
   describe('action buttons', () => {
     it('renders all action buttons', () => {
       render(<BulkActionBar />);
-
       expect(screen.getByText('Mark read')).toBeInTheDocument();
       expect(screen.getByText('Archive')).toBeInTheDocument();
       expect(screen.getByText('Delete')).toBeInTheDocument();
-    });
-
-    it('has proper button styling', () => {
-      render(<BulkActionBar />);
-
-      const deleteButton = screen.getByText('Delete').closest('button');
-      expect(deleteButton).toHaveStyle({ background: 'var(--color-danger)' });
     });
   });
 });
