@@ -438,6 +438,7 @@ export function createMockApi(): MailAPI {
         { id: 'mistral:7b', name: 'Mistral 7B', description: 'Excellent for French & European languages', size: '4.1 GB', sizeBytes: 4100000000 },
         { id: 'phi3:mini', name: 'Phi-3 Mini', description: 'Smaller, faster, good for older machines', size: '2.2 GB', sizeBytes: 2200000000 },
       ],
+      getServerUrl: async () => 'http://127.0.0.1:11435',
     },
 
     license: {

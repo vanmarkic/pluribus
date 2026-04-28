@@ -20,7 +20,7 @@ export function createEmailRepo(): EmailRepo {
 
     async list(options: ListEmailsOptions = {}) {
       // tagId removed - using folders for organization (Issue #54)
-      const { accountId, folderId, folderPath, unreadOnly, starredOnly, limit = 100, offset = 0 } = options;
+      const { accountId, folderId, folderPath, unreadOnly, starredOnly, awaitingOnly, limit = 100, offset = 0 } = options;
 
       const conditions: string[] = [];
       const params: any[] = [];
@@ -44,6 +44,7 @@ export function createEmailRepo(): EmailRepo {
       }
       if (unreadOnly) conditions.push('e.is_read = 0');
       if (starredOnly) conditions.push('e.is_starred = 1');
+      if (awaitingOnly) conditions.push('e.awaiting_reply = 1');
 
       const joinClause = joins.length ? joins.join(' ') : '';
       const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';

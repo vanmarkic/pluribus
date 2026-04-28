@@ -281,6 +281,7 @@ type EmailStore = {
     folderPath?: string;  // Filter by folder path (e.g., 'Sent', 'INBOX')
     unreadOnly?: boolean;
     starredOnly?: boolean;
+    awaitingOnly?: boolean;  // Filter to emails awaiting reply
     searchQuery?: string;
   };
 
@@ -352,6 +353,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
           folderPath: filter.folderPath,
           unreadOnly: filter.unreadOnly,
           starredOnly: filter.starredOnly,
+          awaitingOnly: filter.awaitingOnly,
           limit: 100,
         });
       }
@@ -405,6 +407,7 @@ export const useEmailStore = create<EmailStore>((set, get) => ({
           folderPath: filter.folderPath,
           unreadOnly: filter.unreadOnly,
           starredOnly: filter.starredOnly,
+          awaitingOnly: filter.awaitingOnly,
           limit: 100,
           offset: newOffset,
         });
@@ -813,7 +816,7 @@ export const useAccountStore = create<AccountStore>()(
 // ============================================
 
 type View = 'inbox' | 'sent' | 'starred' | 'archive' | 'trash' | 'drafts' | 'settings' | 'ai-sort'
-  | 'planning' | 'review' | 'feed' | 'social' | 'promotions'
+  | 'planning' | 'review' | 'feed' | 'social' | 'promotions' | 'awaiting'
   | 'paper-trail/invoices' | 'paper-trail/admin' | 'paper-trail/travel';
 type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward' | null;
 

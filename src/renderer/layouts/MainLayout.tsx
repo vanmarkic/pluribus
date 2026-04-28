@@ -8,7 +8,7 @@ import { SettingsView } from '../views/SettingsView';
 
 // Match the View type from stores - must be kept in sync
 type View = 'inbox' | 'sent' | 'starred' | 'archive' | 'trash' | 'drafts' | 'settings' | 'ai-sort'
-  | 'planning' | 'review' | 'feed' | 'social' | 'promotions'
+  | 'planning' | 'review' | 'feed' | 'social' | 'promotions' | 'awaiting'
   | 'paper-trail/invoices' | 'paper-trail/admin' | 'paper-trail/travel';
 
 type MainLayoutProps = {

@@ -305,7 +305,7 @@ export function createOllamaManager(): OllamaManager {
 
     async listLocalModels(): Promise<OllamaModel[]> {
       try {
-        const response = await fetch(`${SERVER_URL}/api/tags`, {
+        const response = await fetch(`${this.getServerUrl()}/api/tags`, {
           method: 'GET',
           signal: AbortSignal.timeout(5000),
         });
@@ -339,7 +339,7 @@ export function createOllamaManager(): OllamaManager {
         await this.start();
       }
 
-      const response = await fetch(`${SERVER_URL}/api/pull`, {
+      const response = await fetch(`${this.getServerUrl()}/api/pull`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, stream: true }),
@@ -400,7 +400,7 @@ export function createOllamaManager(): OllamaManager {
     async deleteModel(name: string): Promise<void> {
       console.log('[OllamaManager] Deleting model:', name);
 
-      const response = await fetch(`${SERVER_URL}/api/delete`, {
+      const response = await fetch(`${this.getServerUrl()}/api/delete`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),

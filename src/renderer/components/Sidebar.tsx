@@ -15,9 +15,9 @@ import {
   IconInbox, IconSend, IconDocument, IconArchiveBox, IconDelete,
   IconSettings, IconPen, IconSparkles, IconChecklist,
   IconClock3, IconNewspaper, IconNotification, IconMegaphone,
-  IconBill, IconBriefcase, IconPlane
+  IconBill, IconBriefcase, IconPlane, IconTimer
 } from 'obra-icons-react';
-import { useUIStore, useEmailStore, useAccountStore, useOllamaSetupStore } from '../stores';
+import { useUIStore, useEmailStore, useAccountStore, useOllamaSetupStore, useAwaitingStore } from '../stores';
 import { AccountSwitcher } from './AccountSwitcher';
 import { LicenseStatusBadge } from './LicenseActivation';
 
@@ -39,11 +39,15 @@ export function Sidebar() {
   const { emails, setFilter, loadEmails, filter } = useEmailStore();
   const { selectedAccountId } = useAccountStore();
   const { isReady: isOllamaReady, phase: ollamaPhase } = useOllamaSetupStore();
+  const { awaitingEmails, fetchAwaitingEmails } = useAwaitingStore();
   const [draftCount, setDraftCount] = useState(0);
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
 
   // Classification is disabled when Ollama is not ready (downloading/starting)
   const isClassificationDisabled = !isOllamaReady && ollamaPhase !== 'skipped';
+
+  // Awaiting reply count
+  const awaitingCount = awaitingEmails.length;
 
   useEffect(() => {
     loadDraftCount();
@@ -63,6 +67,13 @@ export function Sidebar() {
       loadDraftCount();
     }
   }, [view, selectedAccountId]);
+
+  // Load awaiting reply count when account changes
+  useEffect(() => {
+    if (selectedAccountId) {
+      fetchAwaitingEmails(selectedAccountId);
+    }
+  }, [selectedAccountId, fetchAwaitingEmails]);
 
   const loadDraftCount = async () => {
     try {
@@ -92,7 +103,7 @@ export function Sidebar() {
     setView(id as typeof view);
     if (!selectedAccountId) return;
 
-    const baseFilter = { tagId: undefined, folderPath: undefined, unreadOnly: false, starredOnly: false, searchQuery: undefined };
+    const baseFilter = { tagId: undefined, folderPath: undefined, unreadOnly: false, starredOnly: false, awaitingOnly: false, searchQuery: undefined };
 
     if (id === 'inbox') {
       setFilter({ ...baseFilter, folderPath: 'INBOX' }, selectedAccountId);
@@ -104,6 +115,8 @@ export function Sidebar() {
       setFilter({ ...baseFilter, folderPath: 'Archive' }, selectedAccountId);
     } else if (id === 'trash') {
       setFilter({ ...baseFilter, folderPath: 'Trash' }, selectedAccountId);
+    } else if (id === 'awaiting') {
+      setFilter({ ...baseFilter, awaitingOnly: true }, selectedAccountId);
     } else if (triageFolderMap[id]) {
       setFilter({ ...baseFilter, folderPath: triageFolderMap[id] }, selectedAccountId);
     } else {
@@ -242,6 +255,17 @@ export function Sidebar() {
         >
           <IconChecklist className="w-4 h-4" />
           <span className="flex-1 text-left">Review</span>
+        </button>
+
+        <button
+          onClick={() => handleNavClick('awaiting')}
+          className={`sidebar-item w-full ${view === 'awaiting' ? 'active' : ''}`}
+        >
+          <IconTimer className="w-4 h-4" />
+          <span className="flex-1 text-left">Awaiting Reply</span>
+          {awaitingCount > 0 && (
+            <span className="sidebar-item-count">{awaitingCount}</span>
+          )}
         </button>
 
         {/* Triage Folders */}

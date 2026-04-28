@@ -700,11 +700,14 @@ describe('syncAllMailboxes', () => {
     const accounts = createMockAccountRepo({ findAll: vi.fn().mockResolvedValue([testAccount]) });
     const sync = createMockSync({
       sync: vi.fn().mockResolvedValue({ newCount: 1, newEmailIds: [1] }),
+      getDefaultFolders: vi.fn().mockImplementation(() => ['INBOX', 'Sent']),
     });
 
     await syncAllMailboxes({ accounts, sync })({ folders: ['INBOX'] });
 
-    expect(sync.getDefaultFolders).not.toHaveBeenCalled();
+    // getDefaultFolders is called to get sent folder path for awaiting detection
+    expect(sync.getDefaultFolders).toHaveBeenCalled();
+    // But only the provided folder is synced
     expect(sync.sync).toHaveBeenCalledTimes(1);
     expect(sync.sync).toHaveBeenCalledWith(testAccount, { folders: ['INBOX'], folder: 'INBOX' });
   });

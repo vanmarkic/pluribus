@@ -147,6 +147,7 @@ export type ListEmailsOptions = {
   folderPath?: string;  // Filter by folder path pattern (e.g., 'Sent' matches 'Sent', 'Sent Items', etc.)
   unreadOnly?: boolean;
   starredOnly?: boolean;
+  awaitingOnly?: boolean;  // Filter to emails awaiting reply
   limit?: number;
   offset?: number;
 };
