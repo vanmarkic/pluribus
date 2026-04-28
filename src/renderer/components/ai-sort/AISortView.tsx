@@ -14,7 +14,7 @@ export function AISortView() {
     try {
       const items = await window.mailApi.aiSort.getPendingReview({
         limit: 100,
-        accountId: selectedAccountId || undefined,
+        ...(selectedAccountId ? { accountId: selectedAccountId } : {}),
       });
       setReviewItems(items);
     } catch (err) {
@@ -70,7 +70,7 @@ export function AISortView() {
           <AIDashboard
             onClassifyUnprocessed={handleClassifyUnprocessed}
             onClearCache={handleClearCache}
-            accountId={selectedAccountId || undefined}
+            {...(selectedAccountId ? { accountId: selectedAccountId } : {})}
           />
         </div>
       </div>

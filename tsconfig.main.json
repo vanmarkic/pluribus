@@ -7,6 +7,9 @@
     "outDir": "dist",
     "rootDir": "src",
     "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
@@ -18,7 +21,8 @@
   "include": [
     "src/core/**/*",
     "src/adapters/**/*",
-    "src/main/**/*"
+    "src/main/**/*",
+    "src/evals/**/*"
   ],
   "exclude": ["node_modules", "dist", "src/renderer", "**/*.test.ts"]
 }

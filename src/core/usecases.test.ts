@@ -122,7 +122,7 @@ const testAccount2: Account = {
 
 const defaultLLMConfig: LLMConfig = {
   provider: 'anthropic',
-  model: 'claude-haiku-4-20250514',
+  model: 'claude-haiku-4-5-20251001',
   dailyBudget: 1.0,
   dailyEmailLimit: 50,
   autoClassify: true,

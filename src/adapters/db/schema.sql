@@ -292,3 +292,91 @@ CREATE TABLE IF NOT EXISTS triage_log (
 
 CREATE INDEX IF NOT EXISTS idx_triage_log_email ON triage_log(email_id);
 CREATE INDEX IF NOT EXISTS idx_triage_log_created ON triage_log(created_at DESC);
+
+-- ============================================
+-- Embedding + Vector Search
+-- ============================================
+
+-- Email embeddings (for semantic similarity search)
+CREATE TABLE IF NOT EXISTS email_embeddings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email_id INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+  embedding BLOB NOT NULL,
+  embedding_model TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+  folder TEXT NOT NULL,
+  is_correction INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(email_id, embedding_model)
+);
+
+CREATE INDEX IF NOT EXISTS idx_embeddings_email ON email_embeddings(email_id);
+CREATE INDEX IF NOT EXISTS idx_embeddings_folder ON email_embeddings(folder);
+CREATE INDEX IF NOT EXISTS idx_embeddings_correction ON email_embeddings(is_correction) WHERE is_correction = 1;
+
+-- ============================================
+-- LLM Call Log (cost & latency observability)
+-- ============================================
+
+-- One row per Anthropic / Ollama classify call. Drives the cost dashboard.
+CREATE TABLE IF NOT EXISTS llm_calls (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL DEFAULT (datetime('now')),
+  provider TEXT NOT NULL,                        -- 'anthropic' | 'ollama'
+  model TEXT NOT NULL,
+  prompt_version TEXT,
+  email_id INTEGER,                              -- nullable; not FK to allow history after email deletion
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
+  latency_ms INTEGER NOT NULL DEFAULT 0,
+  cost_usd REAL NOT NULL DEFAULT 0,
+  cache_hit INTEGER NOT NULL DEFAULT 0,          -- 1 if cache_read_tokens > 0
+  stop_reason TEXT,
+  error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_calls_ts ON llm_calls(ts DESC);
+CREATE INDEX IF NOT EXISTS idx_llm_calls_model ON llm_calls(model);
+CREATE INDEX IF NOT EXISTS idx_llm_calls_email ON llm_calls(email_id) WHERE email_id IS NOT NULL;
+
+-- ============================================
+-- Security Audit Log (#98)
+-- ============================================
+
+-- One row per security-relevant event: credential access, prompt-injection
+-- findings, classifier fallback transitions, rate-limit hits. Append-only
+-- from the app's perspective; a retention policy prunes the oldest rows
+-- asynchronously. Drives the Security > Audit log settings panel.
+CREATE TABLE IF NOT EXISTS security_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts TEXT NOT NULL DEFAULT (datetime('now')),
+  event_type TEXT NOT NULL,         -- e.g. 'prompt_injection.detected', 'credential.api_key.read'
+  severity TEXT NOT NULL,           -- 'info' | 'warn' | 'alert'
+  actor TEXT NOT NULL,              -- 'main' | 'renderer' | 'classifier' | 'keychain' | ...
+  target TEXT,                      -- 'anthropic' | 'email:123' | ...
+  success INTEGER NOT NULL DEFAULT 1,
+  metadata TEXT                     -- JSON blob with event-specific fields
+);
+
+CREATE INDEX IF NOT EXISTS idx_security_events_ts ON security_events(ts DESC);
+CREATE INDEX IF NOT EXISTS idx_security_events_type ON security_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_security_events_severity ON security_events(severity);
+
+-- ============================================
+-- Confidence calibration models (#96)
+-- ============================================
+
+-- Append-only history of Platt-scaling fits. The most recent row is the
+-- active model; older rows stay for trend analysis in the dashboard.
+CREATE TABLE IF NOT EXISTS calibration_models (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  fit_at TEXT NOT NULL DEFAULT (datetime('now')),
+  a REAL NOT NULL,
+  b REAL NOT NULL,
+  fit_size INTEGER NOT NULL,
+  ece_before REAL,
+  ece_after REAL
+);
+
+CREATE INDEX IF NOT EXISTS idx_calibration_models_fit_at ON calibration_models(fit_at DESC);

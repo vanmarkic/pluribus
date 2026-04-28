@@ -22,6 +22,12 @@ import { setupAwaitingHandlers } from './awaiting-handlers';
 import { setupThreadHandlers } from './thread-handlers';
 import { setupUnsubscribeHandlers } from './unsubscribe-handlers';
 import { setupSendQueueHandlers } from './send-queue-handlers';
+import { setupLlmCallsHandlers } from './llm-calls-handlers';
+import { setupEmbeddingHandlers } from './embedding-handlers';
+import { setupSecurityEventsHandlers } from './security-events-handlers';
+import { setupStreamingHandlers } from './streaming-handlers';
+import { setupCalibrationHandlers } from './calibration-handlers';
+import { setupBodyMigrationHandlers } from './body-migration-handlers';
 
 // Re-export for external use
 export { getTempFiles };
@@ -58,6 +64,12 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   setupThreadHandlers(container);
   setupUnsubscribeHandlers(container);
   setupSendQueueHandlers(container.sendQueue);
+  setupLlmCallsHandlers(container);
+  setupEmbeddingHandlers(container);
+  setupSecurityEventsHandlers(container);
+  setupStreamingHandlers(container, window);
+  setupCalibrationHandlers(container);
+  setupBodyMigrationHandlers(container);
 }
 
 // Re-export validation helpers for testing

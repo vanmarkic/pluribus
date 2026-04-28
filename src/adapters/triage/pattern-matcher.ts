@@ -106,7 +106,7 @@ export function createPatternMatcher(): PatternMatcher {
 
 function extractDomain(email: string): string {
   const match = email.match(/@([^>]+)/);
-  return match ? match[1].toLowerCase() : '';
+  return match?.[1] ? match[1].toLowerCase() : '';
 }
 
 function isSocialDomain(domain: string): boolean {

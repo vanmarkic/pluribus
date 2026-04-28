@@ -1,13 +1,36 @@
 /**
- * Zustand Stores
- * 
- * State management connecting UI to backend via IPC.
+ * Renderer state.
+ *
+ * Server data (emails) → RTK Query (`emailsApi`).
+ * UI state (selection/focus/filter) → `useEmailUiStore`.
+ * Other domain state (accounts, sync, view, license) → Zustand stores below.
  */
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-// Tags removed - using folders for organization (Issue #54)
 import type { Email, EmailBody, Attachment, Account, SyncProgress, Draft, DraftInput, ClassificationStats, ClassificationFeedback, ConfusedPattern, ClassificationState, RecentContact } from '../../core/domain';
+
+export { useEmailUiStore } from './emailUiStore';
+export type { EmailFilter } from './emailUiStore';
+export {
+  emailsApi,
+  invalidateEmailList,
+  useListEmailsQuery,
+  useGetEmailQuery,
+  useGetEmailBodyQuery,
+  useGetEmailAttachmentsQuery,
+  useMarkReadMutation,
+  useSetStarredMutation,
+  useArchiveEmailMutation,
+  useUnarchiveEmailMutation,
+  useTrashEmailMutation,
+  useBulkMarkReadMutation,
+  useBulkArchiveMutation,
+  useBulkTrashMutation,
+  useDownloadAttachmentMutation,
+} from './emailsApi';
+export type { ListEmailsArg } from './emailsApi';
+export { store } from './store';
 
 // Type for review queue items - matches backend PendingReviewItem
 // ClassificationState fields at top level, email nested
@@ -80,6 +103,15 @@ declare global {
         startBackgroundClassification: (emailIds: number[]) => Promise<{ taskId: string; count: number }>;
         getTaskStatus: (taskId: string) => Promise<{ status: 'running' | 'completed' | 'failed'; processed: number; total: number; error?: string } | null>;
         clearTask: (taskId: string) => Promise<void>;
+        streamExplain: (emailId: number) => Promise<{ requestId: string }>;
+        onStreamEvent: (
+          requestId: string,
+          callback: (event:
+            | { type: 'text'; delta: string }
+            | { type: 'done'; fullText: string }
+            | { type: 'error'; message: string }
+          ) => void,
+        ) => () => void;
       };
       config: {
         get: (key: string) => Promise<any>;
@@ -140,6 +172,100 @@ declare global {
       contacts: {
         getRecent: (limit?: number) => Promise<RecentContact[]>;
         search: (query: string, limit?: number) => Promise<RecentContact[]>;
+      };
+      securityEvents: {
+        listRecent: (opts?: {
+          limit?: number;
+          eventType?: string;
+          severity?: 'info' | 'warn' | 'alert';
+          sinceTs?: string;
+        }) => Promise<Array<{
+          id: number;
+          ts: string;
+          eventType: string;
+          severity: 'info' | 'warn' | 'alert';
+          actor: string;
+          target: string | null;
+          success: boolean;
+          metadata: Record<string, unknown>;
+        }>>;
+        countByType: (sinceTs?: string) => Promise<Record<string, number>>;
+      };
+      bodyMigration: {
+        getStatus: () => Promise<{ total: number; plaintext: number; encrypted: number }>;
+        start: () => Promise<{ taskId: string; total: number }>;
+      };
+      calibration: {
+        recalibrate: (opts?: { minSamples?: number }) => Promise<{
+          fitSize: number;
+          eceBefore: number;
+          eceAfter: number;
+          fitted: boolean;
+        }>;
+        getLatest: () => Promise<{
+          id: number;
+          fitAt: string;
+          a: number;
+          b: number;
+          fitSize: number;
+          eceBefore: number | null;
+          eceAfter: number | null;
+        } | null>;
+        getHistory: (limit?: number) => Promise<Array<{
+          id: number;
+          fitAt: string;
+          a: number;
+          b: number;
+          fitSize: number;
+          eceBefore: number | null;
+          eceAfter: number | null;
+        }>>;
+      };
+      embeddings: {
+        getStats: () => Promise<{
+          totalEmails: number;
+          indexed: number;
+          coverage: number;
+          model: string;
+        }>;
+        backfill: (opts?: { limit?: number; accountId?: number }) => Promise<{ taskId: string; total: number }>;
+      };
+      llmCalls: {
+        getStats: () => Promise<{
+          totalCalls: number;
+          totalCostUsd: number;
+          todayCalls: number;
+          todayCostUsd: number;
+          monthCostUsd: number;
+          cacheHitRate: number;
+          avgLatencyMs: number;
+          totalInputTokens: number;
+          totalOutputTokens: number;
+          totalCacheReadTokens: number;
+          totalCacheCreationTokens: number;
+        }>;
+        listRecent: (limit?: number) => Promise<Array<{
+          id: number;
+          ts: string;
+          provider: string;
+          model: string;
+          emailId: number | null;
+          inputTokens: number;
+          outputTokens: number;
+          cacheReadTokens: number;
+          cacheCreationTokens: number;
+          latencyMs: number;
+          costUsd: number;
+          cacheHit: boolean;
+          stopReason: string | null;
+          error: string | null;
+        }>>;
+        getDailyCost: (days?: number) => Promise<Array<{
+          day: string;
+          model: string;
+          calls: number;
+          costUsd: number;
+        }>>;
       };
       db: {
         checkIntegrity: (full?: boolean) => Promise<{ isHealthy: boolean; errors: string[] }>;
@@ -247,417 +373,6 @@ declare global {
   }
 }
 
-// ============================================
-// Email Store
-// ============================================
-
-// Maximum emails to keep in memory - evict oldest when exceeded
-const MAX_CACHED_EMAILS = 500;
-
-type EmailStore = {
-  emails: Email[];
-  // emailTagsMap removed - using folders for organization (Issue #54)
-  selectedId: number | null;
-  selectedEmail: Email | null;
-  selectedBody: EmailBody | null;
-  // selectedTags removed - using folders for organization (Issue #54)
-  selectedAttachments: Attachment[];
-  loading: boolean;
-  loadingBody: boolean;
-  loadingMore: boolean;
-  error: string | null;
-
-  // Multiselect state
-  selectedIds: Set<number>;
-  focusedId: number | null;  // Keyboard focus (different from selectedId which opens email)
-
-  // Pagination
-  offset: number;
-  hasMore: boolean;
-
-  // Filters
-  filter: {
-    // tagId removed - using folders for organization (Issue #54)
-    folderPath?: string;  // Filter by folder path (e.g., 'Sent', 'INBOX')
-    unreadOnly?: boolean;
-    starredOnly?: boolean;
-    awaitingOnly?: boolean;  // Filter to emails awaiting reply
-    searchQuery?: string;
-  };
-
-  // Actions
-  loadEmails: (accountId?: number) => Promise<void>;
-  loadMore: (accountId: number) => Promise<void>;
-  selectEmail: (id: number | null) => Promise<void>;
-  markRead: (id: number, isRead: boolean) => Promise<void>;
-  toggleStar: (id: number) => Promise<void>;
-  archive: (id: number) => Promise<void>;
-  unarchive: (id: number) => Promise<void>;
-  deleteEmail: (id: number) => Promise<void>;
-  search: (query: string, accountId: number) => Promise<void>;
-  setFilter: (filter: Partial<EmailStore['filter']>, accountId: number) => void;
-  clearFilter: (accountId: number) => void;
-  downloadAttachment: (attachmentId: number, action?: 'open' | 'save') => Promise<void>;
-  // refreshSelectedTags and getEmailTags removed - using folders (Issue #54)
-
-  // Multiselect actions
-  toggleSelect: (id: number) => void;
-  selectRange: (fromId: number, toId: number) => void;
-  selectAll: () => void;
-  clearSelection: () => void;
-  setFocusedId: (id: number | null) => void;
-
-  // Bulk actions
-  bulkArchive: () => Promise<void>;
-  bulkTrash: () => Promise<void>;
-  bulkMarkRead: (isRead: boolean) => Promise<void>;
-};
-
-export const useEmailStore = create<EmailStore>((set, get) => ({
-  emails: [],
-  // emailTagsMap removed (Issue #54)
-  selectedId: null,
-  selectedEmail: null,
-  selectedBody: null,
-  // selectedTags removed (Issue #54)
-  selectedAttachments: [],
-  loading: false,
-  loadingBody: false,
-  loadingMore: false,
-  error: null,
-  selectedIds: new Set(),
-  focusedId: null,
-  offset: 0,
-  hasMore: true,
-  filter: {},
-
-  loadEmails: async (accountId?: number) => {
-    set({ loading: true, error: null });
-    try {
-      const { filter } = get();
-
-      // Don't load if no account provided
-      if (!accountId) {
-        set({ emails: [], loading: false });
-        return;
-      }
-
-      let emails: Email[];
-
-      if (filter.searchQuery) {
-        emails = await window.mailApi.emails.search(filter.searchQuery, 100, accountId);
-      } else {
-        emails = await window.mailApi.emails.list({
-          accountId,
-          // tagId removed - using folders (Issue #54)
-          folderPath: filter.folderPath,
-          unreadOnly: filter.unreadOnly,
-          starredOnly: filter.starredOnly,
-          awaitingOnly: filter.awaitingOnly,
-          limit: 100,
-        });
-      }
-
-      // Tags loading removed - using folders (Issue #54)
-
-      // Apply LRU eviction if we exceed the limit
-      let finalEmails = emails;
-
-      if (finalEmails.length > MAX_CACHED_EMAILS) {
-        // Keep most recent emails (they're already sorted by date desc from backend)
-        finalEmails = finalEmails.slice(0, MAX_CACHED_EMAILS);
-      }
-
-      // Auto-select first email if emails are available and nothing is currently selected
-      const currentSelectedId = get().selectedId;
-      const shouldAutoSelect = finalEmails.length > 0 && !currentSelectedId;
-      const newSelectedId = shouldAutoSelect ? finalEmails[0].id : currentSelectedId;
-
-      set({
-        emails: finalEmails,
-        selectedId: newSelectedId,
-        loading: false,
-        offset: 0,
-        hasMore: emails.length === 100,
-      });
-    } catch (err) {
-      set({ error: String(err), loading: false });
-    }
-  },
-
-  loadMore: async (accountId: number) => {
-    const { emails, filter, offset, hasMore, loadingMore } = get();
-
-    // Don't load if already loading or no more emails
-    if (loadingMore || !hasMore) return;
-
-    set({ loadingMore: true, error: null });
-    try {
-      let moreEmails: Email[];
-      const newOffset = offset + emails.length;
-
-      if (filter.searchQuery) {
-        // For search, we can't use offset, so just return
-        set({ loadingMore: false, hasMore: false });
-        return;
-      } else {
-        moreEmails = await window.mailApi.emails.list({
-          accountId,
-          // tagId removed - using folders (Issue #54)
-          folderPath: filter.folderPath,
-          unreadOnly: filter.unreadOnly,
-          starredOnly: filter.starredOnly,
-          awaitingOnly: filter.awaitingOnly,
-          limit: 100,
-          offset: newOffset,
-        });
-      }
-
-      // Tags loading removed - using folders (Issue #54)
-
-      // Combine with existing emails
-      const combinedEmails = [...emails, ...moreEmails];
-
-      // Apply LRU eviction if we exceed the limit
-      let finalEmails = combinedEmails;
-
-      if (finalEmails.length > MAX_CACHED_EMAILS) {
-        // Keep most recent emails (they're already sorted by date desc from backend)
-        finalEmails = finalEmails.slice(0, MAX_CACHED_EMAILS);
-      }
-
-      set({
-        emails: finalEmails,
-        loadingMore: false,
-        hasMore: moreEmails.length === 100,
-      });
-    } catch (err) {
-      set({ error: String(err), loadingMore: false });
-    }
-  },
-
-  selectEmail: async (id) => {
-    if (id === null) {
-      set({ selectedId: null, selectedEmail: null, selectedBody: null, selectedAttachments: [] });
-      return;
-    }
-
-    set({ selectedId: id, loadingBody: true });
-
-    try {
-      // Tags loading removed - using folders (Issue #54)
-      const [email, body, attachments] = await Promise.all([
-        window.mailApi.emails.get(id),
-        window.mailApi.emails.getBody(id),
-        window.mailApi.attachments.getForEmail(id),
-      ]);
-
-      set({
-        selectedEmail: email,
-        selectedBody: body,
-        // selectedTags removed (Issue #54)
-        selectedAttachments: attachments,
-        loadingBody: false,
-      });
-
-      // Mark as read
-      if (email && !email.isRead) {
-        await window.mailApi.emails.markRead(id, true);
-        set(state => ({
-          emails: state.emails.map(e => e.id === id ? { ...e, isRead: true } : e),
-          selectedEmail: state.selectedEmail ? { ...state.selectedEmail, isRead: true } : null,
-        }));
-      }
-    } catch (err) {
-      set({ error: String(err), loadingBody: false });
-    }
-  },
-
-  markRead: async (id, isRead) => {
-    await window.mailApi.emails.markRead(id, isRead);
-    set(state => ({
-      emails: state.emails.map(e => e.id === id ? { ...e, isRead } : e),
-      selectedEmail: state.selectedEmail?.id === id 
-        ? { ...state.selectedEmail, isRead } 
-        : state.selectedEmail,
-    }));
-  },
-
-  toggleStar: async (id) => {
-    const email = get().emails.find(e => e.id === id);
-    if (!email) return;
-    
-    const isStarred = !email.isStarred;
-    await window.mailApi.emails.star(id, isStarred);
-    
-    set(state => ({
-      emails: state.emails.map(e => e.id === id ? { ...e, isStarred } : e),
-      selectedEmail: state.selectedEmail?.id === id 
-        ? { ...state.selectedEmail, isStarred } 
-        : state.selectedEmail,
-    }));
-  },
-
-  archive: async (id) => {
-    await window.mailApi.emails.archive(id);
-    set(state => ({
-      emails: state.emails.filter(e => e.id !== id),
-      selectedId: state.selectedId === id ? null : state.selectedId,
-      selectedEmail: state.selectedId === id ? null : state.selectedEmail,
-    }));
-  },
-
-  unarchive: async (id) => {
-    await window.mailApi.emails.unarchive(id);
-    set(state => ({
-      emails: state.emails.filter(e => e.id !== id),
-      selectedId: state.selectedId === id ? null : state.selectedId,
-      selectedEmail: state.selectedId === id ? null : state.selectedEmail,
-    }));
-  },
-
-  deleteEmail: async (id) => {
-    // Move to Trash via IMAP instead of permanent deletion
-    await window.mailApi.emails.trash(id);
-    set(state => ({
-      // Remove from current view (email is now in Trash folder)
-      emails: state.emails.filter(e => e.id !== id),
-      selectedId: state.selectedId === id ? null : state.selectedId,
-      selectedEmail: state.selectedId === id ? null : state.selectedEmail,
-      selectedBody: state.selectedId === id ? null : state.selectedBody,
-      selectedAttachments: state.selectedId === id ? [] : state.selectedAttachments,
-    }));
-  },
-
-  search: async (query, accountId) => {
-    set({
-      filter: { searchQuery: query },
-      selectedId: null,
-      selectedEmail: null,
-      selectedBody: null,
-      selectedAttachments: []
-    });
-    await get().loadEmails(accountId);
-  },
-
-  setFilter: (filter, accountId) => {
-    set(state => ({
-      filter: { ...state.filter, ...filter },
-      selectedId: null,
-      selectedEmail: null,
-      selectedBody: null,
-      selectedAttachments: []
-    }));
-    get().loadEmails(accountId);
-  },
-
-  clearFilter: (accountId) => {
-    set({
-      filter: {},
-      selectedId: null,
-      selectedEmail: null,
-      selectedBody: null,
-      selectedAttachments: []
-    });
-    get().loadEmails(accountId);
-  },
-
-  downloadAttachment: async (attachmentId, action = 'open') => {
-    try {
-      await window.mailApi.attachments.download(attachmentId, action);
-    } catch (err) {
-      set({ error: String(err) });
-    }
-  },
-
-  // refreshSelectedTags and getEmailTags removed - using folders (Issue #54)
-
-  toggleSelect: (id) => {
-    set(state => {
-      const newSelected = new Set(state.selectedIds);
-      if (newSelected.has(id)) {
-        newSelected.delete(id);
-      } else {
-        newSelected.add(id);
-      }
-      return { selectedIds: newSelected };
-    });
-  },
-
-  selectRange: (fromId, toId) => {
-    const { emails } = get();
-    const fromIndex = emails.findIndex(e => e.id === fromId);
-    const toIndex = emails.findIndex(e => e.id === toId);
-    if (fromIndex === -1 || toIndex === -1) return;
-
-    const start = Math.min(fromIndex, toIndex);
-    const end = Math.max(fromIndex, toIndex);
-    const rangeIds = emails.slice(start, end + 1).map(e => e.id);
-
-    set(state => ({
-      selectedIds: new Set([...state.selectedIds, ...rangeIds]),
-    }));
-  },
-
-  selectAll: () => {
-    const { emails } = get();
-    set({ selectedIds: new Set(emails.map(e => e.id)) });
-  },
-
-  clearSelection: () => {
-    set({ selectedIds: new Set() });
-  },
-
-  setFocusedId: (id) => {
-    set({ focusedId: id });
-  },
-
-  bulkArchive: async () => {
-    const { selectedIds, emails } = get();
-    const ids = Array.from(selectedIds);
-
-    // Archive all selected
-    await Promise.all(ids.map(id => window.mailApi.emails.archive(id)));
-
-    // Remove from list and clear selection
-    set({
-      emails: emails.filter(e => !selectedIds.has(e.id)),
-      selectedIds: new Set(),
-      selectedId: null,
-      selectedEmail: null,
-    });
-  },
-
-  bulkTrash: async () => {
-    const { selectedIds, emails } = get();
-    const ids = Array.from(selectedIds);
-
-    // Trash all selected
-    await Promise.all(ids.map(id => window.mailApi.emails.trash(id)));
-
-    // Remove from list and clear selection
-    set({
-      emails: emails.filter(e => !selectedIds.has(e.id)),
-      selectedIds: new Set(),
-      selectedId: null,
-      selectedEmail: null,
-    });
-  },
-
-  bulkMarkRead: async (isRead) => {
-    const { selectedIds, emails } = get();
-    const ids = Array.from(selectedIds);
-
-    // Mark all selected
-    await Promise.all(ids.map(id => window.mailApi.emails.markRead(id, isRead)));
-
-    // Update local state
-    set({
-      emails: emails.map(e => selectedIds.has(e.id) ? { ...e, isRead } : e),
-      selectedIds: new Set(),
-    });
-  },
-}));
 
 // ============================================
 // Tag Store removed - using folders for organization (Issue #54)
@@ -788,8 +503,9 @@ export const useAccountStore = create<AccountStore>()(
         // Auto-select first account if none selected or selected account no longer exists
         const { selectedAccountId } = get();
         const accountExists = accounts.some(a => a.id === selectedAccountId);
-        if ((!selectedAccountId || !accountExists) && accounts.length > 0) {
-          set({ selectedAccountId: accounts[0].id });
+        const firstAccount = accounts[0];
+        if ((!selectedAccountId || !accountExists) && firstAccount) {
+          set({ selectedAccountId: firstAccount.id });
         }
       },
 
@@ -1264,8 +980,10 @@ export const useOllamaSetupStore = create<OllamaSetupStore>((set, get) => ({
       // Step 3: Download models
       set({ phase: 'downloading-models', modelsCompleted: 0 });
       for (let i = 0; i < REQUIRED_MODELS.length; i++) {
-        set({ currentModel: REQUIRED_MODELS[i], modelsCompleted: i });
-        await window.mailApi.ollama.pullModel(REQUIRED_MODELS[i]);
+        const model = REQUIRED_MODELS[i];
+        if (!model) continue;
+        set({ currentModel: model, modelsCompleted: i });
+        await window.mailApi.ollama.pullModel(model);
       }
 
       // Step 4: Save config with actual server URL from Ollama manager

@@ -24,7 +24,7 @@ const ACCOUNT_COLORS = [
 
 function getAccountColor(email: string): string {
   const hash = email.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-  return ACCOUNT_COLORS[hash % ACCOUNT_COLORS.length];
+  return ACCOUNT_COLORS[hash % ACCOUNT_COLORS.length] ?? '#6B7280';
 }
 
 type AccountAvatarProps = {
@@ -34,7 +34,7 @@ type AccountAvatarProps = {
 
 function AccountAvatar({ email, size = 'sm' }: AccountAvatarProps) {
   const color = getAccountColor(email);
-  const initial = email[0].toUpperCase();
+  const initial = email[0]?.toUpperCase() ?? '?';
   const sizeClasses = size === 'sm' ? 'w-5 h-5 text-xs' : 'w-8 h-8 text-sm';
 
   return (

@@ -1,7 +1,7 @@
 import { useRef, useState, useCallback, useMemo } from 'react';
 import { IconSearch, IconClose } from 'obra-icons-react';
 import { debounce } from '../utils/debounce';
-import { useAccountStore, useEmailStore } from '../stores';
+import { useAccountStore, useEmailUiStore } from '../stores';
 
 type ClassificationProgress = {
   processed: number;
@@ -18,7 +18,8 @@ type TitleBarProps = {
  */
 export function TitleBar({ classificationProgress }: TitleBarProps) {
   const { selectedAccountId } = useAccountStore();
-  const { search, clearFilter } = useEmailStore();
+  const search = useEmailUiStore((s) => s.search);
+  const clearFilter = useEmailUiStore((s) => s.clearFilter);
   const [searchInput, setSearchInput] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -27,7 +28,7 @@ export function TitleBar({ classificationProgress }: TitleBarProps) {
     () =>
       debounce((query: string) => {
         if (selectedAccountId) {
-          search(query, selectedAccountId);
+          search(query);
         }
       }, 300),
     [selectedAccountId, search]
@@ -43,7 +44,7 @@ export function TitleBar({ classificationProgress }: TitleBarProps) {
       } else if (selectedAccountId) {
         // Clear search when input is empty
         debouncedSearch.cancel();
-        clearFilter(selectedAccountId);
+        clearFilter();
       }
     },
     [debouncedSearch, selectedAccountId, clearFilter]
@@ -54,7 +55,7 @@ export function TitleBar({ classificationProgress }: TitleBarProps) {
     setSearchInput('');
     debouncedSearch.cancel();
     if (selectedAccountId) {
-      clearFilter(selectedAccountId);
+      clearFilter();
     }
     searchInputRef.current?.focus();
   }, [debouncedSearch, selectedAccountId, clearFilter]);

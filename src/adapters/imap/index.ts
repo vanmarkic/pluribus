@@ -201,7 +201,7 @@ function getProviderFromHost(imapHost: string): string {
 // Get folder config for a provider
 export function getProviderFolders(imapHost: string): ProviderFolders {
   const provider = getProviderFromHost(imapHost);
-  return PROVIDER_FOLDERS[provider] || PROVIDER_FOLDERS.default;
+  return PROVIDER_FOLDERS[provider] ?? PROVIDER_FOLDERS['default']!;
 }
 
 export function createMailSync(
@@ -495,8 +495,8 @@ export function createMailSync(
                   filename: att.filename || 'unnamed',
                   contentType: att.contentType || 'application/octet-stream',
                   size: att.size || 0,
-                  cid: att.cid || undefined,
                   content: att.content,
+                  ...(att.cid ? { cid: att.cid } : {}),
                 });
               }
             }
@@ -583,13 +583,14 @@ export function createMailSync(
       return [folders.inbox, folders.sent];
     },
 
-    async listFolders(account: Account) {
+    async listFolders(account: Account): Promise<{ path: string; specialUse?: string }[]> {
       const client = await getConnection(account);
       const mailboxes = await client.list();
-      return mailboxes.map(m => ({
-        path: m.path,
-        specialUse: m.specialUse,
-      }));
+      return mailboxes.map(m =>
+        m.specialUse
+          ? { path: m.path, specialUse: m.specialUse }
+          : { path: m.path },
+      );
     },
 
     async appendToSent(account: Account, message: SentMessage) {
@@ -686,10 +687,11 @@ export function createImapFolderOps(
     async listFolders(account: Account): Promise<{ path: string; specialUse?: string }[]> {
       const client = await getConnection(account);
       const mailboxes = await client.list();
-      return mailboxes.map(m => ({
-        path: m.path,
-        specialUse: m.specialUse,
-      }));
+      return mailboxes.map(m =>
+        m.specialUse
+          ? { path: m.path, specialUse: m.specialUse }
+          : { path: m.path },
+      );
     },
 
     async moveMessage(account: Account, emailUid: number, fromFolder: string, toFolder: string): Promise<void> {

@@ -28,7 +28,7 @@ export function ContactAutocomplete({ value, onChange, placeholder, label }: Pro
       // Use provided value or current value
       const currentValue = inputValue ?? value;
       const parts = currentValue.split(',');
-      const segment = parts[parts.length - 1].trim();
+      const segment = parts[parts.length - 1]?.trim() ?? '';
 
       const results = segment.length > 0
         ? await window.mailApi.contacts.search(segment, 5)

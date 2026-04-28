@@ -18,6 +18,12 @@ const listeners = new Map<string, Set<Callback>>();
   });
 });
 
+// Dynamic per-request streaming channels for llm:streamExplain (#89).
+// The renderer registers a listener via mailApi.llm.onStreamEvent(requestId, cb);
+// we forward whatever arrives on `llm:stream:<requestId>` to the callback.
+const streamListeners = new Map<string, (event: unknown) => void>();
+ipcRenderer.on('llm:stream:*' as any, () => {}); // reserve namespace — no-op
+
 // API exposed to renderer
 const api = {
   emails: {
@@ -63,6 +69,134 @@ const api = {
     getTaskStatus: (taskId: string) =>
       ipcRenderer.invoke('llm:getTaskStatus', taskId) as Promise<{ status: 'running' | 'completed' | 'failed'; processed: number; total: number; error?: string } | null>,
     clearTask: (taskId: string) => ipcRenderer.invoke('llm:clearTask', taskId) as Promise<void>,
+    // #89 streaming explain
+    streamExplain: (emailId: number) =>
+      ipcRenderer.invoke('llm:streamExplain', { emailId }) as Promise<{ requestId: string }>,
+    onStreamEvent: (
+      requestId: string,
+      callback: (
+        event:
+          | { type: 'text'; delta: string }
+          | { type: 'done'; fullText: string }
+          | { type: 'error'; message: string },
+      ) => void,
+    ) => {
+      const channel = `llm:stream:${requestId}`;
+      const handler = (_e: unknown, data: unknown) => callback(data as any);
+      ipcRenderer.on(channel, handler);
+      streamListeners.set(requestId, handler as unknown as (event: unknown) => void);
+      return () => {
+        ipcRenderer.removeListener(channel, handler);
+        streamListeners.delete(requestId);
+      };
+    },
+  },
+
+  securityEvents: {
+    listRecent: (opts?: {
+      limit?: number;
+      eventType?: string;
+      severity?: 'info' | 'warn' | 'alert';
+      sinceTs?: string;
+    }) => ipcRenderer.invoke('securityEvents:listRecent', opts) as Promise<Array<{
+      id: number;
+      ts: string;
+      eventType: string;
+      severity: 'info' | 'warn' | 'alert';
+      actor: string;
+      target: string | null;
+      success: boolean;
+      metadata: Record<string, unknown>;
+    }>>,
+    countByType: (sinceTs?: string) =>
+      ipcRenderer.invoke('securityEvents:countByType', sinceTs) as Promise<Record<string, number>>,
+  },
+
+  bodyMigration: {
+    getStatus: () => ipcRenderer.invoke('bodyMigration:getStatus') as Promise<{
+      total: number;
+      plaintext: number;
+      encrypted: number;
+    }>,
+    start: () => ipcRenderer.invoke('bodyMigration:start') as Promise<{ taskId: string; total: number }>,
+  },
+
+  calibration: {
+    recalibrate: (opts?: { minSamples?: number }) =>
+      ipcRenderer.invoke('calibration:recalibrate', opts) as Promise<{
+        fitSize: number;
+        eceBefore: number;
+        eceAfter: number;
+        fitted: boolean;
+      }>,
+    getLatest: () => ipcRenderer.invoke('calibration:getLatest') as Promise<{
+      id: number;
+      fitAt: string;
+      a: number;
+      b: number;
+      fitSize: number;
+      eceBefore: number | null;
+      eceAfter: number | null;
+    } | null>,
+    getHistory: (limit?: number) =>
+      ipcRenderer.invoke('calibration:getHistory', limit) as Promise<Array<{
+        id: number;
+        fitAt: string;
+        a: number;
+        b: number;
+        fitSize: number;
+        eceBefore: number | null;
+        eceAfter: number | null;
+      }>>,
+  },
+
+  embeddings: {
+    getStats: () => ipcRenderer.invoke('embeddings:getStats') as Promise<{
+      totalEmails: number;
+      indexed: number;
+      coverage: number;
+      model: string;
+    }>,
+    backfill: (opts?: { limit?: number; accountId?: number }) =>
+      ipcRenderer.invoke('embeddings:backfill', opts) as Promise<{ taskId: string; total: number }>,
+  },
+
+  llmCalls: {
+    getStats: () => ipcRenderer.invoke('llmCalls:getStats') as Promise<{
+      totalCalls: number;
+      totalCostUsd: number;
+      todayCalls: number;
+      todayCostUsd: number;
+      monthCostUsd: number;
+      cacheHitRate: number;
+      avgLatencyMs: number;
+      totalInputTokens: number;
+      totalOutputTokens: number;
+      totalCacheReadTokens: number;
+      totalCacheCreationTokens: number;
+    }>,
+    listRecent: (limit?: number) => ipcRenderer.invoke('llmCalls:listRecent', limit) as Promise<Array<{
+      id: number;
+      ts: string;
+      provider: string;
+      model: string;
+      emailId: number | null;
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      cacheCreationTokens: number;
+      latencyMs: number;
+      costUsd: number;
+      cacheHit: boolean;
+      stopReason: string | null;
+      error: string | null;
+    }>>,
+    getDailyCost: (days?: number) => ipcRenderer.invoke('llmCalls:getDailyCost', days) as Promise<Array<{
+      day: string;
+      model: string;
+      calls: number;
+      costUsd: number;
+    }>>,
   },
 
   aiSort: {

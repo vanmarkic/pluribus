@@ -6,6 +6,8 @@
 
 import { useState, useEffect } from 'react';
 import type { BiometricMode, SecurityConfig, RemoteImagesSetting } from '../../core/ports';
+import { SecurityLogPanel } from './settings/SecurityLogPanel';
+import { BodyEncryptionPanel } from './settings/BodyEncryptionPanel';
 
 const TIMEOUT_OPTIONS = [
   { label: '15 minutes', value: 15 * 60 * 1000 },
@@ -298,6 +300,61 @@ export function SecuritySettings() {
           Saving...
         </div>
       )}
+
+      {/* Body encryption (#99 follow-up) */}
+      <div
+        className="rounded-lg border"
+        style={{
+          background: 'var(--color-bg)',
+          borderColor: 'var(--color-border)',
+        }}
+      >
+        <div
+          className="px-4 py-3 border-b"
+          style={{ borderColor: 'var(--color-border)' }}
+        >
+          <h2 className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
+            Email body encryption
+          </h2>
+          <div className="text-xs mt-0.5" style={{ color: 'var(--color-text-tertiary)' }}>
+            AES-256-GCM at rest. New bodies are encrypted automatically; existing
+            plaintext bodies can be migrated on demand.
+          </div>
+        </div>
+        <div className="p-4">
+          <BodyEncryptionPanel />
+        </div>
+      </div>
+
+      {/* Audit log (#98) */}
+      <div
+        className="rounded-lg border"
+        style={{
+          background: 'var(--color-bg)',
+          borderColor: 'var(--color-border)',
+        }}
+      >
+        <div
+          className="px-4 py-3 border-b"
+          style={{ borderColor: 'var(--color-border)' }}
+        >
+          <h2
+            className="font-medium"
+            style={{ color: 'var(--color-text-primary)' }}
+          >
+            Audit log
+          </h2>
+          <div
+            className="text-xs mt-0.5"
+            style={{ color: 'var(--color-text-tertiary)' }}
+          >
+            Credential access, prompt-injection findings, and classifier fallbacks.
+          </div>
+        </div>
+        <div className="p-4">
+          <SecurityLogPanel />
+        </div>
+      </div>
     </div>
   );
 }

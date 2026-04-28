@@ -16,7 +16,14 @@ import {
 } from 'obra-icons-react';
 import { TriageAnalysisPanel } from './TriageAnalysisPanel';
 import { EmailViewer } from './EmailViewer';
-import { useEmailStore, useAccountStore } from '../stores';
+import { skipToken } from '@reduxjs/toolkit/query/react';
+import {
+  useAccountStore,
+  useEmailUiStore,
+  useGetEmailQuery,
+  invalidateEmailList,
+  store,
+} from '../stores';
 import type { Email, TriageClassificationResult, TriageFolder } from '../../core/domain';
 
 type TriageItem = {
@@ -43,7 +50,9 @@ const TRIAGE_FOLDERS: { id: TriageFolder; label: string }[] = [
 
 export function TriageReviewView() {
   const { selectedAccountId } = useAccountStore();
-  const { selectedEmail, selectEmail, loadEmails } = useEmailStore();
+  const selectedId = useEmailUiStore((s) => s.selectedId);
+  const selectEmail = useEmailUiStore((s) => s.selectEmail);
+  const { data: selectedEmail = null } = useGetEmailQuery(selectedId ?? skipToken);
 
   const [items, setItems] = useState<TriageItem[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -64,8 +73,8 @@ export function TriageReviewView() {
         // This matches the dashboard's pendingReview count from getStats()
         // Pass accountId if set, otherwise fetch all accounts (matches AISortView behavior)
         const pendingItems = await window.mailApi.aiSort.getPendingReview({
-          accountId: selectedAccountId || undefined,
           limit: 100,
+          ...(selectedAccountId ? { accountId: selectedAccountId } : {}),
         });
 
         // Map PendingReviewItem to TriageItem format
@@ -197,11 +206,11 @@ export function TriageReviewView() {
       await window.mailApi.aiSort.accept(item.email.id, item.analysis.folder);
       removeItemAndAdjustIndex(item.email.id);
       // Refresh email list so moved emails disappear from inbox
-      loadEmails(selectedAccountId || undefined);
+      store.dispatch(invalidateEmailList());
     } catch (err) {
       console.error('Failed to accept:', err);
     }
-  }, [removeItemAndAdjustIndex, loadEmails, selectedAccountId]);
+  }, [removeItemAndAdjustIndex]);
 
   const handleDismiss = useCallback(async (item: TriageItem) => {
     try {
@@ -246,7 +255,7 @@ export function TriageReviewView() {
     setSelectedIds(new Set());
     setCurrentIndex(0);
     // Refresh email list so moved emails disappear from inbox
-    loadEmails(selectedAccountId || undefined);
+    store.dispatch(invalidateEmailList());
   };
 
   const handleBulkDismiss = async () => {

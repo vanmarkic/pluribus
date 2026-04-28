@@ -9,12 +9,23 @@
 import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { FixedSizeList, ListChildComponentProps, VariableSizeList } from 'react-window';
 import { IconFavorite, IconChevronRight, IconChevronDown, IconLayers } from 'obra-icons-react';
-import { useEmailStore, useUIStore, useAccountStore, useThreadStore } from '../stores';
+import { skipToken } from '@reduxjs/toolkit/query/react';
+import {
+  useEmailUiStore,
+  useUIStore,
+  useAccountStore,
+  useThreadStore,
+  useListEmailsQuery,
+  useSetStarredMutation,
+  type ListEmailsArg,
+} from '../stores';
 import { useEmailListKeyboard } from '../hooks/useEmailListKeyboard';
 import { EmailQuickActions } from './EmailQuickActions';
 import { BulkActionBar } from './BulkActionBar';
 import { formatSender, isRecent } from '../../core/domain';
 import type { Email, ThreadSummary } from '../../core/domain';
+
+const PAGE_SIZE = 100;
 
 // Helper to format date based on recency
 const formatDate = (date: Date) => {
@@ -76,6 +87,8 @@ const groupEmailsByThread = (emails: Email[]): ThreadSummary[] => {
     threadEmails.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     const latestEmail = threadEmails[threadEmails.length - 1];
+    const firstEmail = threadEmails[0];
+    if (!latestEmail || !firstEmail) continue;
     const unreadCount = threadEmails.filter(e => !e.isRead).length;
 
     // Collect unique participants
@@ -88,7 +101,7 @@ const groupEmailsByThread = (emails: Email[]): ThreadSummary[] => {
 
     threads.push({
       threadId,
-      subject: threadEmails[0].subject, // Use first email's subject (thread root)
+      subject: firstEmail.subject, // Use first email's subject (thread root)
       snippet: sanitizeSnippet(latestEmail.snippet),
       participants: Array.from(participantMap.values()),
       messageCount: threadEmails.length,
@@ -170,6 +183,7 @@ const EmailRow = ({ index, style, data }: ListChildComponentProps) => {
     onDragStart
   } = data as EmailRowData;
   const email = emails[index];
+  if (!email) return null;
 
   // In Sent folder, show recipients instead of sender
   const displayName = isSentFolder && email.to.length > 0
@@ -305,10 +319,12 @@ const ThreadRow = ({ index, style, data }: ListChildComponentProps) => {
   } = data as ThreadRowData;
 
   const row = rows[index];
+  if (!row) return null;
 
   if (row.type === 'thread') {
     const { thread, isExpanded } = row;
     const latestEmail = thread.emails[thread.emails.length - 1];
+    if (!latestEmail) return null;
     const isFocused = focusedThreadId === thread.threadId;
     const isSelected = selectedId !== null && thread.emails.some(e => e.id === selectedId);
 
@@ -545,25 +561,86 @@ const ThreadRow = ({ index, style, data }: ListChildComponentProps) => {
 };
 
 export function EmailList() {
-  const {
-    emails,
-    selectedId,
-    loading,
-    loadingMore,
-    hasMore,
-    selectEmail,
-    toggleStar,
-    loadMore,
-    filter,
-    focusedId,
-    selectedIds,
-    toggleSelect,
-    selectRange,
-  } = useEmailStore();
+  const selectedId = useEmailUiStore((s) => s.selectedId);
+  const focusedId = useEmailUiStore((s) => s.focusedId);
+  const selectedIds = useEmailUiStore((s) => s.selectedIds);
+  const filter = useEmailUiStore((s) => s.filter);
+  const selectEmail = useEmailUiStore((s) => s.selectEmail);
+  const toggleSelect = useEmailUiStore((s) => s.toggleSelect);
+  const selectRange = useEmailUiStore((s) => s.selectRange);
   const { view } = useUIStore();
-  // useTagStore removed - using folders (Issue #54)
   const { selectedAccountId } = useAccountStore();
   const { threadView, setThreadView, expandedThreads, toggleThread } = useThreadStore();
+
+  const [offset, setOffset] = useState(0);
+  // Reset pagination when account or filter change.
+  useEffect(() => {
+    setOffset(0);
+  }, [selectedAccountId, filter]);
+
+  const baseListArg: ListEmailsArg | null = useMemo(
+    () =>
+      selectedAccountId
+        ? {
+            accountId: selectedAccountId,
+            ...(filter.folderPath !== undefined ? { folderPath: filter.folderPath } : {}),
+            ...(filter.unreadOnly !== undefined ? { unreadOnly: filter.unreadOnly } : {}),
+            ...(filter.starredOnly !== undefined ? { starredOnly: filter.starredOnly } : {}),
+            ...(filter.searchQuery !== undefined ? { searchQuery: filter.searchQuery } : {}),
+          }
+        : null,
+    [selectedAccountId, filter],
+  );
+
+  const queryArg = baseListArg
+    ? { ...baseListArg, offset, limit: PAGE_SIZE }
+    : skipToken;
+  const {
+    data: emails = [],
+    isLoading: loading,
+    isFetching,
+  } = useListEmailsQuery(queryArg);
+  const loadingMore = isFetching && offset > 0;
+
+  // Heuristic: when the most recent fetch added a full page, assume more.
+  const prevLenRef = useRef(0);
+  const [hasMore, setHasMore] = useState(true);
+  useEffect(() => {
+    if (isFetching) return;
+    const delta = emails.length - prevLenRef.current;
+    if (offset === 0) {
+      setHasMore(emails.length >= PAGE_SIZE);
+    } else if (delta < PAGE_SIZE) {
+      setHasMore(false);
+    }
+    prevLenRef.current = emails.length;
+  }, [emails.length, isFetching, offset]);
+
+  const loadMore = useCallback(() => {
+    if (filter.searchQuery) return;
+    setOffset((prev) => prev + PAGE_SIZE);
+  }, [filter.searchQuery]);
+
+  const [setStarred] = useSetStarredMutation();
+  const toggleStar = useCallback(
+    (id: number) => {
+      const current = emails.find((e) => e.id === id);
+      if (!current || !baseListArg) return;
+      setStarred({ id, isStarred: !current.isStarred, listArg: baseListArg });
+    },
+    [emails, baseListArg, setStarred],
+  );
+
+  const handleSelectRange = useCallback(
+    (fromId: number, toId: number) => {
+      selectRange(
+        emails.map((e) => e.id),
+        fromId,
+        toId,
+      );
+    },
+    [emails, selectRange],
+  );
 
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<FixedSizeList>(null);
@@ -684,7 +761,7 @@ export function EmailList() {
 
   // Initialize focused thread when entering thread view
   useEffect(() => {
-    if (threadView && threads.length > 0 && !focusedThreadId) {
+    if (threadView && threads.length > 0 && !focusedThreadId && threads[0]) {
       setFocusedThreadId(threads[0].threadId);
     }
   }, [threadView, threads, focusedThreadId]);
@@ -706,12 +783,12 @@ export function EmailList() {
   // Handle shift-click for range selection
   const handleShiftClick = useCallback((id: number) => {
     if (lastClickedRef.current) {
-      selectRange(lastClickedRef.current, id);
+      handleSelectRange(lastClickedRef.current, id);
     } else {
       toggleSelect(id);
     }
     lastClickedRef.current = id;
-  }, [selectRange, toggleSelect]);
+  }, [handleSelectRange, toggleSelect]);
 
   // Update lastClickedRef when toggling select via checkbox
   const handleToggleSelect = useCallback((id: number) => {
@@ -807,7 +884,7 @@ export function EmailList() {
             {hasMore && selectedAccountId && (
               <div className="p-4 border-t" style={{ borderColor: 'var(--color-border)' }}>
                 <button
-                  onClick={() => loadMore(selectedAccountId)}
+                  onClick={() => loadMore()}
                   disabled={loadingMore}
                   className="w-full py-2 px-4 rounded"
                   style={{
@@ -838,7 +915,7 @@ export function EmailList() {
             {hasMore && selectedAccountId && (
               <div className="p-4 border-t" style={{ borderColor: 'var(--color-border)' }}>
                 <button
-                  onClick={() => loadMore(selectedAccountId)}
+                  onClick={loadMore}
                   disabled={loadingMore}
                   className="w-full py-2 px-4 rounded"
                   style={{

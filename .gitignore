@@ -6,6 +6,7 @@ dist/
 out/
 build/
 release/
+storybook-static/
 
 # Database files
 *.sqlite
@@ -52,3 +53,4 @@ temp/
 tsconfig.main.tsbuildinfo
 .worktrees/
 tsconfig.tsbuildinfo
+tsconfig.strict.tsbuildinfo

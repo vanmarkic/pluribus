@@ -76,11 +76,12 @@ export const syncMailbox = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails' | 'a
 async function processAwaitingDetection(
   deps: Partial<Pick<Deps, 'emails' | 'awaiting' | 'llmGenerator' | 'folders'>>,
   newEmailIds: number[],
-  sentFolderPath: string
+  sentFolderPath: string | undefined
 ): Promise<void> {
   // Skip if required deps are not available
   if (!deps.emails || !deps.awaiting || !deps.folders) return;
   if (newEmailIds.length === 0) return;
+  if (!sentFolderPath) return;
 
   for (const emailId of newEmailIds) {
     try {
@@ -155,7 +156,7 @@ export const syncAllMailboxes = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails'
     return { newCount: total, newEmailIds: allNewEmailIds };
   };
 
-export const syncWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails' | 'classifier' | 'classificationState' | 'config' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'awaiting' | 'llmGenerator'>) =>
+export const syncWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails' | 'classifier' | 'classificationState' | 'config' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'awaiting' | 'llmGenerator' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService' | 'calibration'>) =>
   async (accountId: number, options: SyncOptions = {}): Promise<SyncResult & { classified?: number; skipped?: number; triaged?: number }> => {
     // First, sync the mailbox
     const syncResult = await syncMailbox(deps)(accountId, options);
@@ -191,7 +192,7 @@ export const syncWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'ema
     }
   };
 
-export const syncAllWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails' | 'classifier' | 'classificationState' | 'config' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'awaiting' | 'llmGenerator'>) =>
+export const syncAllWithAutoClassify = (deps: Pick<Deps, 'accounts' | 'sync' | 'emails' | 'classifier' | 'classificationState' | 'config' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'awaiting' | 'llmGenerator' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService' | 'calibration'>) =>
   async (options: SyncOptions = {}): Promise<SyncResult & { classified?: number; skipped?: number; triaged?: number }> => {
     // First, sync all mailboxes
     const syncResult = await syncAllMailboxes(deps)(options);

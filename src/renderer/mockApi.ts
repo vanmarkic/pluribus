@@ -2,132 +2,137 @@
  * Mock API for Browser Testing
  *
  * Provides a fake window.mailApi when not running in Electron.
- * Enables UI testing via Chrome DevTools MCP and Storybook.
+ * Used by Storybook and by the public demo deploy.
+ *
+ * In demo mode (Vite build), the real classifier reaches Claude via a
+ * `/api/classify` Vercel function — every other call stays in-memory.
  */
 
-// Import MailAPI type, but allow unarchive to be added even if not in compiled type yet
 import type { MailAPI } from '../main/preload';
+import { demoFixtures, dripSeeds, type DemoEmail } from './mockApi/fixtures';
 
 // Event listeners storage
 type Callback = (...args: unknown[]) => void;
 const listeners = new Map<string, Set<Callback>>();
+const fire = (channel: string, payload: unknown) => {
+  listeners.get(channel)?.forEach((cb) => cb(payload));
+};
 
 // Mock data
 const mockAccounts = [
   {
     id: 1,
-    name: 'Test Account',
-    email: 'test@example.com',
+    name: 'Demo Inbox',
+    email: 'demo@pluribus.app',
     imapHost: 'imap.example.com',
     imapPort: 993,
     smtpHost: 'smtp.example.com',
     smtpPort: 587,
-    username: 'test@example.com',
+    username: 'demo@pluribus.app',
     isActive: true,
     lastSyncAt: new Date(),
   },
 ];
 
-// Tags removed - using folders for organization (Issue #54)
+const mockEmails: DemoEmail[] = [...demoFixtures.emails];
+const mockEmailBodies: Record<number, { text: string; html: string }> = { ...demoFixtures.bodies };
 
-const mockEmails = [
-  {
-    id: 1,
-    messageId: 'msg-001@example.com',
-    accountId: 1,
-    folderId: 1,
-    uid: 1001,
-    subject: 'Welcome to Pluribus Mail',
-    from: { address: 'hello@pluribus.app', name: 'Pluribus Team' },
-    to: ['test@example.com'],
-    date: new Date(Date.now() - 1000 * 60 * 30), // 30 min ago
-    snippet: 'Thank you for trying Pluribus, the privacy-focused email client with AI-powered organization...',
-    sizeBytes: 2500,
-    isRead: false,
-    isStarred: true,
-    hasAttachments: false,
-    bodyFetched: true,
-  },
-  {
-    id: 2,
-    messageId: 'msg-002@example.com',
-    accountId: 1,
-    folderId: 1,
-    uid: 1002,
-    subject: 'Meeting Tomorrow at 3pm',
-    from: { address: 'alice@company.com', name: 'Alice Johnson' },
-    to: ['test@example.com'],
-    date: new Date(Date.now() - 1000 * 60 * 60 * 2), // 2 hours ago
-    snippet: 'Hi, just wanted to confirm our meeting tomorrow. Please bring the quarterly reports...',
-    sizeBytes: 1800,
-    isRead: true,
-    isStarred: false,
-    hasAttachments: true,
-    bodyFetched: true,
-  },
-  {
-    id: 3,
-    messageId: 'msg-003@example.com',
-    accountId: 1,
-    folderId: 1,
-    uid: 1003,
-    subject: 'Your Invoice #12345',
-    from: { address: 'billing@service.com', name: 'Billing Department' },
-    to: ['test@example.com'],
-    date: new Date(Date.now() - 1000 * 60 * 60 * 24), // 1 day ago
-    snippet: 'Your invoice for December 2025 is now available. Total amount due: $49.99...',
-    sizeBytes: 3200,
-    isRead: false,
-    isStarred: false,
-    hasAttachments: true,
-    bodyFetched: false,
-  },
-  {
-    id: 4,
-    messageId: 'msg-004@example.com',
-    accountId: 1,
-    folderId: 1,
-    uid: 1004,
-    subject: 'Re: Project Update',
-    from: { address: 'bob@team.org', name: 'Bob Smith' },
-    to: ['test@example.com'],
-    date: new Date(Date.now() - 1000 * 60 * 60 * 48), // 2 days ago
-    snippet: 'Thanks for the update! I\'ve reviewed the changes and everything looks good to me...',
-    sizeBytes: 1200,
-    isRead: true,
-    isStarred: false,
-    hasAttachments: false,
-    bodyFetched: true,
-  },
-  {
-    id: 5,
-    messageId: 'msg-005@example.com',
-    accountId: 1,
-    folderId: 1,
-    uid: 1005,
-    subject: 'Flight Confirmation - Paris',
-    from: { address: 'reservations@airline.com', name: 'Airline Bookings' },
-    to: ['test@example.com'],
-    date: new Date(Date.now() - 1000 * 60 * 60 * 72), // 3 days ago
-    snippet: 'Your flight to Paris has been confirmed. Departure: Dec 20, 2025 at 10:30 AM...',
-    sizeBytes: 4500,
-    isRead: true,
-    isStarred: true,
-    hasAttachments: true,
-    bodyFetched: true,
-  },
-];
+/**
+ * Live-drip simulator. Every `intervalMs` rotates the next dripSeed into
+ * the inbox and fires a `sync:progress` complete event so RTK Query
+ * invalidates the list (the renderer listens for this in `App.tsx`).
+ */
+let dripTimer: ReturnType<typeof setInterval> | null = null;
+let dripIndex = 0;
+function startLiveDrip(intervalMs = 90_000) {
+  if (dripTimer) return;
+  dripTimer = setInterval(() => {
+    const seed = dripSeeds[dripIndex % dripSeeds.length];
+    dripIndex += 1;
+    if (!seed) return;
+    const id = demoFixtures.nextEmailId();
+    const email: DemoEmail = {
+      id,
+      messageId: `demo-drip-${id}@pluribus.app`,
+      accountId: 1,
+      folderId: demoFixtures.folderIdFor(seed.folder),
+      uid: 5000 + id,
+      subject: seed.subject,
+      from: { address: seed.fromAddr, name: seed.fromName },
+      to: ['demo@pluribus.app'],
+      date: new Date(),
+      snippet: seed.snippet,
+      sizeBytes: 1500 + seed.snippet.length * 8,
+      isRead: false,
+      isStarred: false,
+      hasAttachments: false,
+      bodyFetched: false,
+      inReplyTo: null,
+      references: null,
+      threadId: null,
+      awaitingReply: false,
+      awaitingReplySince: null,
+      listUnsubscribe: null,
+      listUnsubscribePost: null,
+      __folder: seed.folder,
+    };
+    mockEmails.unshift(email);
+    fire('sync:progress', {
+      accountId: 1,
+      folder: seed.folder,
+      phase: 'complete',
+      current: 1,
+      total: 1,
+      newCount: 1,
+    });
+  }, intervalMs);
+}
 
-const mockEmailBodies: Record<number, { text: string; html: string }> = {
-  1: {
-    text: 'Welcome to Pluribus Mail!\n\nThank you for trying Pluribus, the privacy-focused email client with AI-powered organization.\n\nKey features:\n- Smart tagging with local LLM\n- Privacy-first architecture\n- Beautiful, modern interface\n\nBest regards,\nThe Pluribus Team',
-    html: '<h1>Welcome to Pluribus Mail!</h1><p>Thank you for trying Pluribus, the privacy-focused email client with AI-powered organization.</p><h2>Key features:</h2><ul><li>Smart tagging with local LLM</li><li>Privacy-first architecture</li><li>Beautiful, modern interface</li></ul><p>Best regards,<br/>The Pluribus Team</p>',
-  },
-  2: {
-    text: 'Hi,\n\nJust wanted to confirm our meeting tomorrow at 3pm.\n\nPlease bring the quarterly reports.\n\nThanks,\nAlice',
-    html: '<p>Hi,</p><p>Just wanted to confirm our meeting tomorrow at 3pm.</p><p>Please bring the quarterly reports.</p><p>Thanks,<br/>Alice</p>',
-  },
+const stripDemoMeta = (e: DemoEmail) => {
+  const { __folder: _f, ...rest } = e;
+  return rest;
 };
+
+/**
+ * Classifier: tries the deploy's `/api/classify` Vercel function first
+ * (real Claude call), falls back to a deterministic stub if unreachable.
+ */
+async function callRealClassifier(emailId: number): Promise<{
+  suggestedFolder: string;
+  priority: 'high' | 'normal' | 'low';
+  confidence: number;
+  reasoning: string;
+}> {
+  const email = mockEmails.find((e) => e.id === emailId);
+  const fallback = {
+    suggestedFolder: email?.__folder ?? 'INBOX',
+    priority: 'normal' as const,
+    confidence: 0.7,
+    reasoning: 'Stubbed classification — backend unavailable.',
+  };
+  if (!email) return fallback;
+  try {
+    const res = await fetch('/api/classify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subject: email.subject,
+        from: email.from,
+        snippet: email.snippet,
+      }),
+    });
+    if (!res.ok) return fallback;
+    const json = (await res.json()) as Partial<typeof fallback>;
+    return {
+      suggestedFolder: json.suggestedFolder ?? fallback.suggestedFolder,
+      priority: json.priority ?? fallback.priority,
+      confidence: typeof json.confidence === 'number' ? json.confidence : fallback.confidence,
+      reasoning: json.reasoning ?? fallback.reasoning,
+    };
+  } catch {
+    return fallback;
+  }
+}
 
 // Using type assertion to allow extra mock properties not yet in compiled MailAPI
 export function createMockApi(): MailAPI {
@@ -165,22 +170,43 @@ export function createMockApi(): MailAPI {
 
   return {
     emails: {
-      list: async (options?: { starredOnly?: boolean; folderPath?: string }) => {
-        let filtered = mockEmails;
-
-        // Filter by starred
-        if (options?.starredOnly) {
-          filtered = filtered.filter((e) => e.isStarred);
+      list: async (options?: {
+        starredOnly?: boolean;
+        unreadOnly?: boolean;
+        folderPath?: string;
+        limit?: number;
+        offset?: number;
+      }) => {
+        let filtered: DemoEmail[] = mockEmails;
+        if (options?.folderPath) {
+          filtered = filtered.filter((e) => e.__folder === options.folderPath);
+        } else {
+          // Default view: emails not in a long-tail folder.
+          filtered = filtered.filter((e) => e.__folder === 'INBOX');
         }
-
-        return filtered;
+        if (options?.starredOnly) filtered = filtered.filter((e) => e.isStarred);
+        if (options?.unreadOnly) filtered = filtered.filter((e) => !e.isRead);
+        const offset = options?.offset ?? 0;
+        const limit = options?.limit ?? 100;
+        return filtered.slice(offset, offset + limit).map(stripDemoMeta);
       },
-      get: async (id) => mockEmails.find((e) => e.id === id) || null,
-      getBody: async (id) => mockEmailBodies[id] || { text: 'Email body not available', html: '<p>Email body not available</p>' },
-      search: async (query) => mockEmails.filter((e) =>
-        e.subject.toLowerCase().includes(query.toLowerCase()) ||
-        e.snippet.toLowerCase().includes(query.toLowerCase())
-      ),
+      get: async (id) => {
+        const email = mockEmails.find((e) => e.id === id);
+        return email ? stripDemoMeta(email) : null;
+      },
+      getBody: async (id) =>
+        mockEmailBodies[id] || {
+          text: 'This is a demo email. Real content would render here in the live app.',
+          html: '<p style="color:#64748b">This is a demo email. Real content would render here in the live app.</p>',
+        },
+      search: async (query) =>
+        mockEmails
+          .filter(
+            (e) =>
+              e.subject.toLowerCase().includes(query.toLowerCase()) ||
+              e.snippet.toLowerCase().includes(query.toLowerCase()),
+          )
+          .map(stripDemoMeta),
       markRead: async (id, isRead) => {
         const email = mockEmails.find((e) => e.id === id);
         if (email) email.isRead = isRead;
@@ -189,10 +215,22 @@ export function createMockApi(): MailAPI {
         const email = mockEmails.find((e) => e.id === id);
         if (email) email.isStarred = isStarred;
       },
-      archive: async (_id: number) => {},
-      unarchive: async (_id: number) => {},
-      delete: async (_id: number) => {},
-      trash: async (_id: number) => {},
+      archive: async (id: number) => {
+        const email = mockEmails.find((e) => e.id === id);
+        if (email) email.__folder = 'Archive';
+      },
+      unarchive: async (id: number) => {
+        const email = mockEmails.find((e) => e.id === id);
+        if (email) email.__folder = 'INBOX';
+      },
+      delete: async (id: number) => {
+        const idx = mockEmails.findIndex((e) => e.id === id);
+        if (idx !== -1) mockEmails.splice(idx, 1);
+      },
+      trash: async (id: number) => {
+        const email = mockEmails.find((e) => e.id === id);
+        if (email) email.__folder = 'Trash';
+      },
     },
 
     attachments: {
@@ -231,8 +269,23 @@ export function createMockApi(): MailAPI {
     },
 
     llm: {
-      classify: async () => ({ suggestedFolder: 'Planning' as const, priority: 'normal' as const, confidence: 0.85, reasoning: 'Mock classification' }),
-      classifyAndApply: async () => ({ suggestedFolder: 'Planning' as const, priority: 'normal' as const, confidence: 0.85, reasoning: 'Mock classification' }),
+      classify: async (emailId: number) => callRealClassifier(emailId) as any,
+      classifyAndApply: async (emailId: number) => {
+        const result = await callRealClassifier(emailId);
+        const email = mockEmails.find((e) => e.id === emailId);
+        if (email && result.suggestedFolder) {
+          email.__folder = result.suggestedFolder;
+          fire('sync:progress', {
+            accountId: 1,
+            folder: result.suggestedFolder,
+            phase: 'complete',
+            current: 1,
+            total: 1,
+            newCount: 0,
+          });
+        }
+        return result as any;
+      },
       getBudget: async () => ({ used: 0.05, limit: 1.0, allowed: true }),
       getEmailBudget: async () => ({ used: 5, limit: 100, allowed: true }),
       validate: async () => ({ valid: true }),
@@ -247,6 +300,8 @@ export function createMockApi(): MailAPI {
       startBackgroundClassification: async (emailIds) => ({ taskId: 'task-1', count: emailIds.length }),
       getTaskStatus: async () => ({ status: 'completed', processed: 5, total: 5 }),
       clearTask: async () => {},
+      streamExplain: async () => ({ requestId: 'mock' }),
+      onStreamEvent: () => () => {},
     },
 
     aiSort: {
@@ -286,13 +341,19 @@ export function createMockApi(): MailAPI {
       bulkMoveToFolder: async () => {},
       classifyUnprocessed: async () => ({ taskId: 'task-1', count: 0 }),
       // Issue #56: Reclassify email
-      reclassify: async (_emailId: number) => ({
-        previousFolder: 'INBOX' as const,
-        previousConfidence: 0.75,
-        newFolder: 'Planning' as const,
-        newConfidence: 0.88,
-        reasoning: 'Mock reclassification result',
-      }),
+      reclassify: async (emailId: number) => {
+        const email = mockEmails.find((e) => e.id === emailId);
+        const previousFolder = email?.__folder ?? 'INBOX';
+        const result = await callRealClassifier(emailId);
+        if (email) email.__folder = result.suggestedFolder;
+        return {
+          previousFolder,
+          previousConfidence: 0.75,
+          newFolder: result.suggestedFolder as any,
+          newConfidence: result.confidence,
+          reasoning: result.reasoning,
+        };
+      },
       getClassificationState: async (emailId: number) => ({
         emailId,
         status: 'classified',
@@ -461,9 +522,25 @@ export function createMockApi(): MailAPI {
     },
 
     triage: {
-      classify: async () => ({ folder: 'INBOX' as const, confidence: 0.9, reasoning: 'Mock classification' }),
-      classifyAndMove: async () => ({ folder: 'INBOX' as const, confidence: 0.9, patternAgreed: true, reasoning: 'Mock classification' }),
-      moveToFolder: async () => {},
+      classify: async (emailId: number) => {
+        const r = await callRealClassifier(emailId);
+        return { folder: r.suggestedFolder as any, confidence: r.confidence, reasoning: r.reasoning };
+      },
+      classifyAndMove: async (emailId: number) => {
+        const r = await callRealClassifier(emailId);
+        const email = mockEmails.find((e) => e.id === emailId);
+        if (email) email.__folder = r.suggestedFolder;
+        return {
+          folder: r.suggestedFolder as any,
+          confidence: r.confidence,
+          patternAgreed: false,
+          reasoning: r.reasoning,
+        };
+      },
+      moveToFolder: async (emailId: number, folder: string) => {
+        const email = mockEmails.find((e) => e.id === emailId);
+        if (email) email.__folder = folder;
+      },
       learnFromCorrection: async () => {},
       snooze: async () => {},
       unsnooze: async () => {},
@@ -506,6 +583,46 @@ export function createMockApi(): MailAPI {
       execute: async () => 'none' as const,
     },
 
+    securityEvents: {
+      listRecent: async () => [],
+      countByType: async () => ({}),
+    },
+    bodyMigration: {
+      getStatus: async () => ({ total: 0, plaintext: 0, encrypted: 0 }),
+      start: async () => ({ taskId: 'mock', total: 0 }),
+    },
+    calibration: {
+      recalibrate: async () => ({ fitSize: 0, eceBefore: 0, eceAfter: 0, fitted: false }),
+      getLatest: async () => null,
+      getHistory: async () => [],
+    },
+    embeddings: {
+      getStats: async () => ({ totalEmails: 0, indexed: 0, coverage: 0, model: 'all-MiniLM-L6-v2' }),
+      backfill: async () => ({ taskId: 'mock', total: 0 }),
+    },
+
+    // These two keys extend llm which is already in the surrounding object
+    // earlier in the file — the mock API omits them; the typedef allows it
+    // via any-cast at the bottom.
+
+    llmCalls: {
+      getStats: async () => ({
+        totalCalls: 0,
+        totalCostUsd: 0,
+        todayCalls: 0,
+        todayCostUsd: 0,
+        monthCostUsd: 0,
+        cacheHitRate: 0,
+        avgLatencyMs: 0,
+        totalInputTokens: 0,
+        totalOutputTokens: 0,
+        totalCacheReadTokens: 0,
+        totalCacheCreationTokens: 0,
+      }),
+      listRecent: async () => [],
+      getDailyCost: async () => [],
+    },
+
     on: (channel, callback) => {
       if (!listeners.has(channel)) listeners.set(channel, new Set());
       listeners.get(channel)!.add(callback);
@@ -520,7 +637,13 @@ export function createMockApi(): MailAPI {
 // Auto-inject mock if not in Electron
 export function injectMockApiIfNeeded(): void {
   if (typeof window !== 'undefined' && typeof window.mailApi === 'undefined') {
-    console.log('[MockAPI] Injecting mock mailApi for browser testing');
+    console.log('[MockAPI] Injecting mock mailApi for browser/demo');
     (window as any).mailApi = createMockApi();
+    (window as any).__PLURIBUS_DEMO__ = true;
+    // Storybook (vite) also injects window.mailApi but we never want a live
+    // drip there. Only start when actually running the demo (no IS_STORYBOOK).
+    if (!('IS_STORYBOOK' in window)) {
+      startLiveDrip();
+    }
   }
 }

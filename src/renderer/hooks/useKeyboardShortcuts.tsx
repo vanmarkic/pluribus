@@ -5,7 +5,17 @@
  */
 
 import { useEffect, useCallback } from 'react';
-import { useEmailStore, useUIStore, useAccountStore } from '../stores';
+import { skipToken } from '@reduxjs/toolkit/query/react';
+import {
+  useEmailUiStore,
+  useUIStore,
+  useAccountStore,
+  useListEmailsQuery,
+  useArchiveEmailMutation,
+  useMarkReadMutation,
+  useSetStarredMutation,
+} from '../stores';
+import { useCurrentListArg } from './useCurrentListArg';
 
 type ShortcutHandler = () => void;
 
@@ -36,9 +46,44 @@ export function useKeyboardShortcuts(handlers: {
   onSearch?: ShortcutHandler;
   onRefresh?: ShortcutHandler;
 }) {
-  const { emails, selectedId, selectEmail, toggleStar, archive, markRead, setFilter } = useEmailStore();
+  const selectedId = useEmailUiStore((s) => s.selectedId);
+  const selectEmail = useEmailUiStore((s) => s.selectEmail);
+  const setFilter = useEmailUiStore((s) => s.setFilter);
+  const filter = useEmailUiStore((s) => s.filter);
   const { setView } = useUIStore();
   const { selectedAccountId } = useAccountStore();
+  const listArg = useCurrentListArg();
+  const { data: emails = [] } = useListEmailsQuery(
+    selectedAccountId
+      ? { accountId: selectedAccountId, ...filter }
+      : skipToken,
+  );
+  const [setStarred] = useSetStarredMutation();
+  const [archiveMutation] = useArchiveEmailMutation();
+  const [markReadMutation] = useMarkReadMutation();
+  const toggleStar = useCallback(
+    (id: number) => {
+      const current = emails.find((e) => e.id === id);
+      if (!current) return;
+      const args =
+        listArg !== undefined
+          ? { id, isStarred: !current.isStarred, listArg }
+          : { id, isStarred: !current.isStarred };
+      setStarred(args);
+    },
+    [emails, listArg, setStarred],
+  );
+  const archive = useCallback(
+    (id: number) => archiveMutation(listArg ? { id, listArg } : { id }),
+    [archiveMutation, listArg],
+  );
+  const markRead = useCallback(
+    (id: number, isRead: boolean) => {
+      const args = listArg !== undefined ? { id, isRead, listArg } : { id, isRead };
+      markReadMutation(args);
+    },
+    [listArg, markReadMutation],
+  );
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     // Ignore if typing in input/textarea
@@ -129,10 +174,12 @@ export function useKeyboardShortcuts(handlers: {
       e.preventDefault();
       const currentIndex = emails.findIndex(em => em.id === selectedId);
       if (currentIndex < emails.length - 1) {
-        selectEmail(emails[currentIndex + 1].id);
+        const next = emails[currentIndex + 1];
+        if (next) selectEmail(next.id);
       } else if (currentIndex === -1 && emails.length > 0) {
         // No email selected, select first one
-        selectEmail(emails[0].id);
+        const first = emails[0];
+        if (first) selectEmail(first.id);
       }
       return;
     }
@@ -142,10 +189,12 @@ export function useKeyboardShortcuts(handlers: {
       e.preventDefault();
       const currentIndex = emails.findIndex(em => em.id === selectedId);
       if (currentIndex > 0) {
-        selectEmail(emails[currentIndex - 1].id);
+        const prev = emails[currentIndex - 1];
+        if (prev) selectEmail(prev.id);
       } else if (currentIndex === -1 && emails.length > 0) {
         // No email selected, select first one
-        selectEmail(emails[0].id);
+        const first = emails[0];
+        if (first) selectEmail(first.id);
       }
       return;
     }
@@ -169,8 +218,7 @@ export function useKeyboardShortcuts(handlers: {
       e.preventDefault();
       setView('inbox');
       if (selectedAccountId) {
-        // tagId removed - using folders (Issue #54)
-        setFilter({ folderPath: 'INBOX', unreadOnly: false, starredOnly: false, searchQuery: undefined }, selectedAccountId);
+        setFilter({ folderPath: 'INBOX', unreadOnly: false, starredOnly: false });
       }
       return;
     }
