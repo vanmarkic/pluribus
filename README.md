@@ -7,7 +7,7 @@ A privacy-focused Electron mail client with LLM-powered email triage and intelli
 ## 🌟 Features
 
 - **Privacy-First Design** - Your emails stay on your device with encrypted credential storage
-- **Intelligent Email Triage** - Automatic classification using local LLM
+- **Intelligent Email Triage** - Automatic classification powered by Claude or a local LLM
 - **Smart Folder Organization** - Emails automatically sorted into Inbox, Planning, Feed, Social, Promotions, and Paper-Trail
 - **Native Experience** - Built with Electron for seamless macOS integration
 - **Secure Credential Management** - OS-level encryption with Touch ID/biometric support
@@ -31,10 +31,10 @@ For the security posture, see the
 
 | Layer | Technologies |
 |-------|-------------|
-| **Runtime** | Electron 32, Node.js |
-| **Frontend** | React 18, Zustand, Tailwind CSS 4 |
+| **Runtime** | Electron 35, Node.js 22 |
+| **Frontend** | React 18, Redux Toolkit (RTK Query), Zustand, Tailwind CSS 4 |
 | **Backend** | SQLite (better-sqlite3), IMAP (imapflow), SMTP (nodemailer) |
-| **AI/LLM** | Local Ollama with model of choice, tested with Mistral 7b |
+| **AI/LLM** | Anthropic Claude API or local Ollama (e.g. Mistral 7B), with multi-tier fallback |
 | **Build** | Vite, TypeScript, Electron Builder |
 
 ## 🔐 Security Features
@@ -60,7 +60,7 @@ Multi-layered security architecture protects your credentials:
 Hybrid classification system combining pattern matching with LLM intelligence:
 
 - **Pattern Matching** - Fast rule-based sorting for common patterns
-- **LLM Classification** - Local LLM analyzes email content and context
+- **LLM Classification** - Claude or a local Ollama model analyzes email content and context
 - **Folder Mapping** - Automatic IMAP folder synchronization
 - **Smart Categories** - Inbox, Planning, Feed, Social, Promotions, Paper-Trail
 
@@ -70,9 +70,9 @@ Learn more in [docs/designs/2025-12-16-email-triage-system.md](docs/designs/2025
 
 ### Prerequisites
 
-- Node.js 18+ and npm
+- Node.js 22+ and npm
 - macOS (currently supported platform)
-- 8gb of RAM for local Mistral 7B
+- An Anthropic API key, or ~8 GB of RAM to run a local Ollama model (e.g. Mistral 7B)
 
 ### Installation
 
@@ -96,6 +96,9 @@ npm run dev
 
 # In another terminal, build and start Electron
 npm run dev:electron
+
+# Browse UI components in isolation
+npm run storybook
 ```
 
 ### Building
@@ -108,7 +111,7 @@ npm run build
 npm run dist:dmg
 ```
 
-## 🧪 Testing
+## 🧪 Testing & Quality
 
 ```bash
 # Run tests once
@@ -119,6 +122,10 @@ npm run test:watch
 
 # Type checking
 npm run typecheck
+
+# Lint and format
+npm run lint
+npm run format
 ```
 
 ## 📚 Documentation
