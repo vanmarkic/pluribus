@@ -15,7 +15,31 @@ import type { LicenseState, LicenseStatus } from '../../core/domain';
 import { LICENSE_GRACE_PERIOD_DAYS } from '../../core/domain';
 
 // Server URL - could be made configurable
-const LICENSE_SERVER_URL = process.env.LICENSE_SERVER_URL || 'http://46.224.43.248:3001';
+const LICENSE_SERVER_URL = process.env.LICENSE_SERVER_URL || 'https://46.224.43.248:3001';
+
+/**
+ * Reject a non-HTTPS license endpoint. License validation carries the
+ * license key and a machine identifier; over plain HTTP a network
+ * attacker can read both and forge a "valid" response. Plain-HTTP
+ * loopback is permitted for local development only.
+ */
+function assertSecureLicenseUrl(rawUrl: string): URL {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error('Invalid LICENSE_SERVER_URL');
+  }
+  if (url.protocol === 'https:') return url;
+  const host = url.hostname;
+  if (
+    url.protocol === 'http:' &&
+    (host === 'localhost' || host === '127.0.0.1' || host === '::1')
+  ) {
+    return url;
+  }
+  throw new Error('License server must be reachable over HTTPS');
+}
 
 // Local storage file for license data
 const LICENSE_FILE = 'license.enc';
@@ -83,7 +107,11 @@ function clearStoredLicense(): void {
   }
 }
 
-function calculateLicenseStatus(expiresAt: Date | null): { status: LicenseStatus; isReadOnly: boolean; daysUntilExpiry: number | null } {
+function calculateLicenseStatus(expiresAt: Date | null): {
+  status: LicenseStatus;
+  isReadOnly: boolean;
+  daysUntilExpiry: number | null;
+} {
   if (!expiresAt) {
     return { status: 'inactive', isReadOnly: false, daysUntilExpiry: null };
   }
@@ -140,8 +168,9 @@ export function createLicenseService(): LicenseService {
 
   async function callServer(licenseKey: string): Promise<ValidationResponse> {
     const machineId = getMachineId();
+    const base = assertSecureLicenseUrl(LICENSE_SERVER_URL);
 
-    const response = await fetch(`${LICENSE_SERVER_URL}/api/license/validate`, {
+    const response = await fetch(new URL('/api/license/validate', base), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key: licenseKey, machineId }),
@@ -158,7 +187,9 @@ export function createLicenseService(): LicenseService {
     getState(): LicenseState {
       // Recalculate status on each call (time-based)
       if (cachedState.expiresAt) {
-        const { status, isReadOnly, daysUntilExpiry } = calculateLicenseStatus(cachedState.expiresAt);
+        const { status, isReadOnly, daysUntilExpiry } = calculateLicenseStatus(
+          cachedState.expiresAt,
+        );
         cachedState = { ...cachedState, status, isReadOnly, daysUntilExpiry };
       }
       return cachedState;

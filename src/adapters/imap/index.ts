@@ -1,6 +1,6 @@
 /**
  * IMAP Sync Adapter
- * 
+ *
  * Implements mail sync using ImapFlow.
  * Optimized for large mailboxes with lazy body loading.
  */
@@ -8,8 +8,16 @@
 import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import nodemailer from 'nodemailer';
-import type { MailSync, EmailRepo, AttachmentRepo, FolderRepo, SecureStorage, SentMessage, ImapFolderOps } from '../../core/ports';
-import type { Account, Email, EmailBody, SyncProgress, SyncOptions } from '../../core/domain';
+import type {
+  MailSync,
+  EmailRepo,
+  AttachmentRepo,
+  FolderRepo,
+  SecureStorage,
+  SentMessage,
+  ImapFolderOps,
+} from '../../core/ports';
+import type { Account, Email, SyncProgress, SyncOptions } from '../../core/domain';
 import { TRIAGE_FOLDERS } from '../../core/domain';
 import { DEFAULT_SYNC_DAYS, MAX_SYNC_EMAILS } from '../../core/domain';
 
@@ -78,7 +86,7 @@ function mapImapToEmail(
   msg: ImapMessage,
   accountId: number,
   folderId: number,
-  hasAttachments: boolean
+  hasAttachments: boolean,
 ): Omit<Email, 'id'> {
   const env = msg.envelope;
   const headers = parseHeaders(msg.headers);
@@ -193,7 +201,13 @@ const PROVIDERS_WITH_AUTO_SENT = new Set(['gmail', 'outlook']);
 function getProviderFromHost(imapHost: string): string {
   const host = imapHost.toLowerCase();
   if (host.includes('gmail') || host.includes('googlemail')) return 'gmail';
-  if (host.includes('outlook') || host.includes('office365') || host.includes('hotmail') || host.includes('live.com')) return 'outlook';
+  if (
+    host.includes('outlook') ||
+    host.includes('office365') ||
+    host.includes('hotmail') ||
+    host.includes('live.com')
+  )
+    return 'outlook';
   if (host.includes('infomaniak')) return 'infomaniak';
   return 'default';
 }
@@ -204,11 +218,29 @@ export function getProviderFolders(imapHost: string): ProviderFolders {
   return PROVIDER_FOLDERS[provider] ?? PROVIDER_FOLDERS['default']!;
 }
 
+/**
+ * Connect and refuse to proceed unless the link is TLS-encrypted. ImapFlow
+ * does opportunistic STARTTLS when `secure` is false; a network attacker
+ * can strip that, so we verify `secureConnection` and bail otherwise —
+ * never authenticate over a cleartext channel.
+ */
+async function connectSecurely(client: ImapFlow, host: string): Promise<void> {
+  await client.connect();
+  if (!client.secureConnection) {
+    try {
+      await client.logout();
+    } catch {
+      /* ignore logout failure on an already-doomed connection */
+    }
+    throw new Error(`Refusing insecure IMAP connection to ${host}: TLS was not established`);
+  }
+}
+
 export function createMailSync(
   emailRepo: EmailRepo,
   attachmentRepo: AttachmentRepo,
   folderRepo: FolderRepo,
-  secrets: SecureStorage
+  secrets: SecureStorage,
 ): MailSync {
   const connections = new Map<number, { client: ImapFlow; lastUsed: number }>();
   const abortControllers = new Map<number, AbortController>();
@@ -219,7 +251,9 @@ export function createMailSync(
     const now = Date.now();
     for (const [accountId, conn] of connections.entries()) {
       if (now - conn.lastUsed > CONNECTION_TTL_MS) {
-        try { conn.client.logout(); } catch {}
+        try {
+          conn.client.logout();
+        } catch {}
         connections.delete(accountId);
       }
     }
@@ -231,8 +265,10 @@ export function createMailSync(
   }
 
   function emit(progress: SyncProgress) {
-    progressCallbacks.forEach(cb => {
-      try { cb(progress); } catch {}
+    progressCallbacks.forEach((cb) => {
+      try {
+        cb(progress);
+      } catch {}
     });
   }
 
@@ -244,7 +280,8 @@ export function createMailSync(
     }
 
     const password = await secrets.getPassword(account.email);
-    if (!password) throw new Error(`No password for account ${account.email}. Please set it first.`);
+    if (!password)
+      throw new Error(`No password for account ${account.email}. Please set it first.`);
 
     const client = new ImapFlow({
       host: account.imapHost,
@@ -256,16 +293,18 @@ export function createMailSync(
       socketTimeout: 30000,
     });
 
-    await client.connect();
+    await connectSecurely(client, account.imapHost);
     connections.set(account.id, { client, lastUsed: Date.now() });
     return client;
   }
 
-  function checkAttachments(structure: any): boolean {
-    if (!structure) return false;
-    const check = (part: any): boolean => {
-      if (part.disposition === 'attachment') return true;
-      if (part.childNodes) return part.childNodes.some(check);
+  function checkAttachments(structure: unknown): boolean {
+    type BodyStructurePart = { disposition?: string; childNodes?: unknown[] };
+    const check = (part: unknown): boolean => {
+      if (!part || typeof part !== 'object') return false;
+      const node = part as BodyStructurePart;
+      if (node.disposition === 'attachment') return true;
+      if (Array.isArray(node.childNodes)) return node.childNodes.some(check);
       return false;
     };
     return check(structure);
@@ -275,16 +314,12 @@ export function createMailSync(
     async sync(account, options: SyncOptions = {}) {
       // Poka-yoke: Prevent sync with invalid/mock accounts that would cause FK violations
       if (!account.id || account.id <= 0) {
-        throw new Error(`Cannot sync with invalid account ID: ${account.id}. Use testConnection() for testing.`);
+        throw new Error(
+          `Cannot sync with invalid account ID: ${account.id}. Use testConnection() for testing.`,
+        );
       }
 
-      const {
-        headersOnly = true,
-        batchSize = 500,
-        maxMessages,
-        since,
-        folder = 'INBOX',
-      } = options;
+      const { batchSize = 500, maxMessages, since, folder = 'INBOX' } = options;
 
       let totalNew = 0;
       const newEmailIds: number[] = [];
@@ -297,7 +332,14 @@ export function createMailSync(
       abortControllers.set(account.id, abortController);
 
       try {
-        emit({ accountId: account.id, folder, phase: 'connecting', current: 0, total: 0, newCount: 0 });
+        emit({
+          accountId: account.id,
+          folder,
+          phase: 'connecting',
+          current: 0,
+          total: 0,
+          newCount: 0,
+        });
 
         const client = await getConnection(account);
         const lock = await client.getMailboxLock(folder);
@@ -309,9 +351,10 @@ export function createMailSync(
           // Get or create folder record
           const uidValidity = mailbox.uidValidity ? Number(mailbox.uidValidity) : undefined;
           const folderRecord = await folderRepo.getOrCreate(
-            account.id, folder,
+            account.id,
+            folder,
             folder.split('/').pop() || folder,
-            uidValidity
+            uidValidity,
           );
 
           // Check UIDVALIDITY change
@@ -320,7 +363,14 @@ export function createMailSync(
             await folderRepo.clear(folderRecord.id);
           }
 
-          emit({ accountId: account.id, folder, phase: 'counting', current: 0, total: 0, newCount: 0 });
+          emit({
+            accountId: account.id,
+            folder,
+            phase: 'counting',
+            current: 0,
+            total: 0,
+            newCount: 0,
+          });
 
           // Search for new messages
           // Build search criteria: combine UID range with optional SINCE date filter
@@ -337,28 +387,46 @@ export function createMailSync(
           let uids = Array.isArray(searchResult) ? searchResult : [];
 
           // Poka-yoke: Hard limit to prevent runaway syncs
-          const effectiveMax = maxMessages ? Math.min(maxMessages, MAX_SYNC_EMAILS) : MAX_SYNC_EMAILS;
+          const effectiveMax = maxMessages
+            ? Math.min(maxMessages, MAX_SYNC_EMAILS)
+            : MAX_SYNC_EMAILS;
           originalUidCount = uids.length;
           wasTruncated = uids.length > effectiveMax;
 
           if (wasTruncated) {
-            console.warn(`Truncating ${folder} sync: ${uids.length} emails found, limiting to ${effectiveMax} most recent`);
+            console.warn(
+              `Truncating ${folder} sync: ${uids.length} emails found, limiting to ${effectiveMax} most recent`,
+            );
             uids = uids.slice(-effectiveMax);
           }
 
           total = uids.length;
           if (total === 0) {
-            emit({ accountId: account.id, folder, phase: 'complete', current: 0, total: 0, newCount: 0 });
+            emit({
+              accountId: account.id,
+              folder,
+              phase: 'complete',
+              current: 0,
+              total: 0,
+              newCount: 0,
+            });
             return {
               newCount: 0,
               newEmailIds: [],
               truncated: wasTruncated,
               totalAvailable: originalUidCount,
-              synced: 0
+              synced: 0,
             };
           }
 
-          emit({ accountId: account.id, folder, phase: 'fetching', current: 0, total, newCount: 0 });
+          emit({
+            accountId: account.id,
+            folder,
+            phase: 'fetching',
+            current: 0,
+            total,
+            newCount: 0,
+          });
 
           let processed = 0;
           let maxUid = folderRecord.lastUid;
@@ -367,33 +435,44 @@ export function createMailSync(
           for (let i = 0; i < uids.length; i += batchSize) {
             // Check if sync was cancelled
             if (abortController.signal.aborted) {
-              emit({ accountId: account.id, folder, phase: 'cancelled', current: processed, total, newCount: totalNew });
+              emit({
+                accountId: account.id,
+                folder,
+                phase: 'cancelled',
+                current: processed,
+                total,
+                newCount: totalNew,
+              });
               return {
                 newCount: totalNew,
                 newEmailIds,
                 truncated: wasTruncated,
                 totalAvailable: originalUidCount,
-                synced: total
+                synced: total,
               };
             }
 
             const batch = uids.slice(i, i + batchSize);
             const emails: Omit<Email, 'id'>[] = [];
 
-            for await (const msg of client.fetch(batch, {
-              envelope: true,
-              flags: true,
-              bodyStructure: true,
-              size: true,
-              headers: ['references', 'list-unsubscribe', 'list-unsubscribe-post'],
-            }, { uid: true })) {
+            for await (const msg of client.fetch(
+              batch,
+              {
+                envelope: true,
+                flags: true,
+                bodyStructure: true,
+                size: true,
+                headers: ['references', 'list-unsubscribe', 'list-unsubscribe-post'],
+              },
+              { uid: true },
+            )) {
               if (!msg.envelope) continue;
 
               const email = mapImapToEmail(
                 msg as ImapMessage,
                 account.id,
                 folderRecord.id,
-                checkAttachments(msg.bodyStructure)
+                checkAttachments(msg.bodyStructure),
               );
               emails.push(email);
 
@@ -407,15 +486,17 @@ export function createMailSync(
             newEmailIds.push(...result.ids);
 
             emit({
-              accountId: account.id, folder,
+              accountId: account.id,
+              folder,
               phase: 'storing',
-              current: processed, total,
+              current: processed,
+              total,
               newCount: totalNew,
             });
 
             // Small delay between batches
             if (i + batchSize < uids.length) {
-              await new Promise(r => setTimeout(r, 50));
+              await new Promise((r) => setTimeout(r, 50));
             }
           }
 
@@ -425,21 +506,24 @@ export function createMailSync(
           }
 
           emit({
-            accountId: account.id, folder,
+            accountId: account.id,
+            folder,
             phase: 'complete',
-            current: total, total,
+            current: total,
+            total,
             newCount: totalNew,
           });
-
         } finally {
           lock.release();
         }
-
       } catch (error) {
         emit({
-          accountId: account.id, folder,
+          accountId: account.id,
+          folder,
           phase: 'error',
-          current: 0, total: 0, newCount: 0,
+          current: 0,
+          total: 0,
+          newCount: 0,
           error: String(error),
         });
         throw error;
@@ -453,7 +537,7 @@ export function createMailSync(
         newEmailIds,
         truncated: wasTruncated,
         totalAvailable: originalUidCount,
-        synced: total
+        synced: total,
       };
     },
 
@@ -467,7 +551,9 @@ export function createMailSync(
 
       // Poka-yoke: Verify email belongs to this account
       if (email.accountId !== account.id) {
-        throw new Error(`Account mismatch: email belongs to account ${email.accountId}, not ${account.id}`);
+        throw new Error(
+          `Account mismatch: email belongs to account ${email.accountId}, not ${account.id}`,
+        );
       }
 
       // Look up the folder path - UIDs are only unique within a folder
@@ -506,7 +592,6 @@ export function createMailSync(
         const body = { text, html };
         await emailRepo.saveBody(emailId, body);
         return body;
-
       } finally {
         lock.release();
       }
@@ -516,7 +601,9 @@ export function createMailSync(
       if (accountId === 0) {
         // Disconnect all
         for (const [id, conn] of connections.entries()) {
-          try { await conn.client.logout(); } catch {}
+          try {
+            await conn.client.logout();
+          } catch {}
           connections.delete(id);
         }
         clearInterval(cleanupInterval);
@@ -524,7 +611,9 @@ export function createMailSync(
       }
       const conn = connections.get(accountId);
       if (conn) {
-        try { await conn.client.logout(); } catch {}
+        try {
+          await conn.client.logout();
+        } catch {}
         connections.delete(accountId);
       }
     },
@@ -570,7 +659,7 @@ export function createMailSync(
       });
 
       try {
-        await client.connect();
+        await connectSecurely(client, host);
         await client.logout();
         return { ok: true };
       } catch (err) {
@@ -586,10 +675,8 @@ export function createMailSync(
     async listFolders(account: Account): Promise<{ path: string; specialUse?: string }[]> {
       const client = await getConnection(account);
       const mailboxes = await client.list();
-      return mailboxes.map(m =>
-        m.specialUse
-          ? { path: m.path, specialUse: m.specialUse }
-          : { path: m.path },
+      return mailboxes.map((m) =>
+        m.specialUse ? { path: m.path, specialUse: m.specialUse } : { path: m.path },
       );
     },
 
@@ -618,7 +705,7 @@ export function createMailSync(
         html: message.html,
         inReplyTo: message.inReplyTo,
         references: message.references?.join(' '),
-        attachments: message.attachments?.map(a => ({
+        attachments: message.attachments?.map((a) => ({
           filename: a.filename,
           content: Buffer.from(a.content, 'base64'),
           contentType: a.contentType,
@@ -643,10 +730,23 @@ export function createMailSync(
 // IMAP Folder Operations (for Triage)
 // ============================================
 
-export function createImapFolderOps(
-  secrets: SecureStorage
-): ImapFolderOps {
+export function createImapFolderOps(secrets: SecureStorage): ImapFolderOps {
   const connections = new Map<number, { client: ImapFlow; lastUsed: number }>();
+
+  // Periodic cleanup of idle connections — mirrors createMailSync so these
+  // folder-operation sockets don't accumulate for the process lifetime.
+  const cleanupInterval = setInterval(() => {
+    const now = Date.now();
+    for (const [accountId, conn] of connections.entries()) {
+      if (now - conn.lastUsed > CONNECTION_TTL_MS) {
+        void conn.client.logout().catch(() => {});
+        connections.delete(accountId);
+      }
+    }
+  }, 60000);
+  if (typeof process !== 'undefined') {
+    process.on('beforeExit', () => clearInterval(cleanupInterval));
+  }
 
   async function getConnection(account: Account): Promise<ImapFlow> {
     const existing = connections.get(account.id);
@@ -668,12 +768,24 @@ export function createImapFolderOps(
       socketTimeout: 30000,
     });
 
-    await client.connect();
+    await connectSecurely(client, account.imapHost);
     connections.set(account.id, { client, lastUsed: Date.now() });
     return client;
   }
 
   return {
+    async disconnect(): Promise<void> {
+      clearInterval(cleanupInterval);
+      for (const [id, conn] of connections.entries()) {
+        try {
+          await conn.client.logout();
+        } catch {
+          /* ignore logout errors during shutdown */
+        }
+        connections.delete(id);
+      }
+    },
+
     async createFolder(account: Account, path: string): Promise<void> {
       const client = await getConnection(account);
       await client.mailboxCreate(path);
@@ -687,14 +799,17 @@ export function createImapFolderOps(
     async listFolders(account: Account): Promise<{ path: string; specialUse?: string }[]> {
       const client = await getConnection(account);
       const mailboxes = await client.list();
-      return mailboxes.map(m =>
-        m.specialUse
-          ? { path: m.path, specialUse: m.specialUse }
-          : { path: m.path },
+      return mailboxes.map((m) =>
+        m.specialUse ? { path: m.path, specialUse: m.specialUse } : { path: m.path },
       );
     },
 
-    async moveMessage(account: Account, emailUid: number, fromFolder: string, toFolder: string): Promise<void> {
+    async moveMessage(
+      account: Account,
+      emailUid: number,
+      fromFolder: string,
+      toFolder: string,
+    ): Promise<void> {
       const client = await getConnection(account);
       const lock = await client.getMailboxLock(fromFolder);
       try {
@@ -721,14 +836,14 @@ export function createImapFolderOps(
 
     async ensureTriageFolders(account: Account): Promise<string[]> {
       // Folders to create (excluding INBOX which always exists)
-      const foldersToCreate = TRIAGE_FOLDERS.filter(f => f !== 'INBOX');
+      const foldersToCreate = TRIAGE_FOLDERS.filter((f) => f !== 'INBOX');
 
       // Also need parent folder Paper-Trail
       const allFolders = ['Paper-Trail', ...foldersToCreate];
 
       const client = await getConnection(account);
       const existing = await client.list();
-      const existingPaths = new Set(existing.map(f => f.path));
+      const existingPaths = new Set(existing.map((f) => f.path));
       const created: string[] = [];
 
       for (const folder of allFolders) {

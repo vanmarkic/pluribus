@@ -49,6 +49,12 @@ const ipBuckets = new Map<string, { count: number; resetAt: number }>();
 
 function rateLimitOk(ip: string): boolean {
   const now = Date.now();
+  // Opportunistically evict expired buckets so the map can't grow without bound.
+  if (ipBuckets.size > 5000) {
+    for (const [key, b] of ipBuckets) {
+      if (now > b.resetAt) ipBuckets.delete(key);
+    }
+  }
   const bucket = ipBuckets.get(ip);
   if (!bucket || now > bucket.resetAt) {
     ipBuckets.set(ip, { count: 1, resetAt: now + 60 * 60 * 1000 });
@@ -58,6 +64,10 @@ function rateLimitOk(ip: string): boolean {
   bucket.count += 1;
   return true;
 }
+
+// Cap untrusted fields before they reach the model — bounds prompt size,
+// token cost, and abuse surface.
+const clip = (v: unknown, max: number): string => (typeof v === 'string' ? v.slice(0, max) : '');
 
 const PROMPT = (
   req: ClassifyRequest,
@@ -78,9 +88,9 @@ Folder semantics:
 - Archive: nothing actionable, can be filed away
 
 Email:
-Subject: ${req.subject ?? '(no subject)'}
-From: ${req.from?.name ?? req.from?.address ?? 'unknown'} <${req.from?.address ?? ''}>
-Snippet: ${req.snippet ?? ''}
+Subject: ${clip(req.subject, 500) || '(no subject)'}
+From: ${clip(req.from?.name, 200) || clip(req.from?.address, 200) || 'unknown'} <${clip(req.from?.address, 200)}>
+Snippet: ${clip(req.snippet, 2000)}
 
 Reply with strict JSON only, no prose:
 {"folder":"<one of the folders above>","confidence":<number 0-1>,"priority":"<high|normal|low>","reasoning":"<one sentence>"}`;
@@ -151,11 +161,18 @@ export default async function handler(req: any, res: any) {
   } catch (err) {
     if (APICallError.isInstance(err)) {
       // 402: budget hit; 429: gateway-level user rate limit; 503: providers down.
+      // Return a generic per-status message — don't leak upstream internals.
       const status = err.statusCode ?? 500;
-      res.status(status).json({ error: err.message });
+      const message =
+        status === 402
+          ? 'Demo budget reached — please try again later'
+          : status === 429
+            ? 'Rate limit exceeded — please try again later'
+            : 'Classifier temporarily unavailable';
+      res.status(status).json({ error: message });
       return;
     }
     console.error('[/api/classify] failed', err);
-    res.status(500).json({ error: err instanceof Error ? err.message : 'unknown error' });
+    res.status(500).json({ error: 'Classification failed' });
   }
 }

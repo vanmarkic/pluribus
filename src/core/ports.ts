@@ -1,11 +1,38 @@
 /**
  * Ports
- * 
+ *
  * Simple function signatures that adapters must implement.
  * This is dependency inversion without the ceremony.
  */
 
-import type { Email, EmailBody, Attachment, Account, Folder, ListEmailsOptions, Classification, SyncProgress, SyncOptions, Draft, DraftInput, ListDraftsOptions, ClassificationState, ClassificationFeedback, ConfusedPattern, ClassificationStats, ClassificationStatus, RecentContact, LicenseState, TriageClassificationResult, TrainingExample, SenderRule, EmailSnooze, TriageLogEntry, TriageFolder, EmailEmbedding, SimilarEmail } from './domain';
+import type {
+  Email,
+  EmailBody,
+  Attachment,
+  Account,
+  Folder,
+  ListEmailsOptions,
+  Classification,
+  SyncProgress,
+  SyncOptions,
+  Draft,
+  DraftInput,
+  ListDraftsOptions,
+  ClassificationState,
+  ClassificationFeedback,
+  ConfusedPattern,
+  ClassificationStats,
+  ClassificationStatus,
+  RecentContact,
+  LicenseState,
+  TriageClassificationResult,
+  TrainingExample,
+  SenderRule,
+  EmailSnooze,
+  TriageLogEntry,
+  TriageFolder,
+  EmailEmbedding,
+} from './domain';
 
 // Re-export types needed by adapters
 export type { ListEmailsOptions, ListDraftsOptions };
@@ -72,7 +99,12 @@ export type AccountRepo = {
 
 export type FolderRepo = {
   findById: (id: number) => Promise<Folder | null>;
-  getOrCreate: (accountId: number, path: string, name: string, uidValidity?: number) => Promise<Folder>;
+  getOrCreate: (
+    accountId: number,
+    path: string,
+    name: string,
+    uidValidity?: number,
+  ) => Promise<Folder>;
   updateLastUid: (folderId: number, lastUid: number) => Promise<void>;
   clear: (folderId: number) => Promise<void>;
 };
@@ -105,10 +137,15 @@ export type MailSync = {
   disconnect: (accountId: number) => Promise<void>;
   cancel: (accountId: number) => Promise<void>;
   onProgress: (cb: (p: SyncProgress) => void) => () => void;
-  testConnection: (host: string, port: number, username: string, password: string) => Promise<{ ok: boolean; error?: string }>;
-  getDefaultFolders: (imapHost: string) => string[];  // Returns folders to sync by default based on provider
-  listFolders: (account: Account) => Promise<{ path: string; specialUse?: string }[]>;  // List all folders on server
-  appendToSent: (account: Account, message: SentMessage) => Promise<void>;  // Append sent email to Sent folder via IMAP
+  testConnection: (
+    host: string,
+    port: number,
+    username: string,
+    password: string,
+  ) => Promise<{ ok: boolean; error?: string }>;
+  getDefaultFolders: (imapHost: string) => string[]; // Returns folders to sync by default based on provider
+  listFolders: (account: Account) => Promise<{ path: string; specialUse?: string }[]>; // List all folders on server
+  appendToSent: (account: Account, message: SentMessage) => Promise<void>; // Append sent email to Sent folder via IMAP
 };
 
 // ============================================
@@ -128,12 +165,30 @@ export type Classifier = {
 export type ClassificationStateRepo = {
   // State management
   getState: (emailId: number) => Promise<ClassificationState | null>;
-  setState: (state: Omit<ClassificationState, 'reviewedAt' | 'dismissedAt' | 'errorMessage'> & { reviewedAt?: Date | null; dismissedAt?: Date | null; errorMessage?: string | null }) => Promise<void>;
+  setState: (
+    state: Omit<ClassificationState, 'reviewedAt' | 'dismissedAt' | 'errorMessage'> & {
+      reviewedAt?: Date | null;
+      dismissedAt?: Date | null;
+      errorMessage?: string | null;
+    },
+  ) => Promise<void>;
 
   // Queries for AI Sort view
-  listPendingReview: (options?: { limit?: number; offset?: number; sortBy?: 'confidence' | 'date' | 'sender'; accountId?: number }) => Promise<ClassificationState[]>;
-  listByPriority: (priority: 'high' | 'normal' | 'low', options?: { limit?: number; offset?: number; accountId?: number }) => Promise<ClassificationState[]>;
-  listFailed: (options?: { limit?: number; offset?: number; accountId?: number }) => Promise<ClassificationState[]>;
+  listPendingReview: (options?: {
+    limit?: number;
+    offset?: number;
+    sortBy?: 'confidence' | 'date' | 'sender';
+    accountId?: number;
+  }) => Promise<ClassificationState[]>;
+  listByPriority: (
+    priority: 'high' | 'normal' | 'low',
+    options?: { limit?: number; offset?: number; accountId?: number },
+  ) => Promise<ClassificationState[]>;
+  listFailed: (options?: {
+    limit?: number;
+    offset?: number;
+    accountId?: number;
+  }) => Promise<ClassificationState[]>;
   countByStatus: (accountId?: number) => Promise<Record<ClassificationStatus, number>>;
 
   // Re-classification (dismissed emails after cooldown)
@@ -149,7 +204,11 @@ export type ClassificationStateRepo = {
 
   // Confused patterns
   listConfusedPatterns: (limit?: number, accountId?: number) => Promise<ConfusedPattern[]>;
-  updateConfusedPattern: (patternType: 'sender_domain' | 'subject_pattern', patternValue: string, confidence: number) => Promise<void>;
+  updateConfusedPattern: (
+    patternType: 'sender_domain' | 'subject_pattern',
+    patternValue: string,
+    confidence: number,
+  ) => Promise<void>;
   clearConfusedPatterns: () => Promise<void>;
 };
 
@@ -213,7 +272,7 @@ export type SendResult = {
 
 // Message to append to Sent folder after SMTP send
 export type SentMessage = EmailDraft & {
-  from: string;  // Sender email address
+  from: string; // Sender email address
 };
 
 export type MailSender = {
@@ -397,20 +456,32 @@ export type PatternMatcher = {
 };
 
 export type TriageClassifier = {
-  classify: (email: Email, patternHint: PatternMatchResult, examples: TrainingExample[]) => Promise<TriageClassificationResult>;
+  classify: (
+    email: Email,
+    patternHint: PatternMatchResult,
+    examples: TrainingExample[],
+  ) => Promise<TriageClassificationResult>;
 };
 
 export type TrainingRepo = {
   findByAccount: (accountId: number, limit?: number) => Promise<TrainingExample[]>;
   findByDomain: (accountId: number, domain: string, limit?: number) => Promise<TrainingExample[]>;
   save: (example: Omit<TrainingExample, 'id' | 'createdAt'>) => Promise<TrainingExample>;
-  getRelevantExamples: (accountId: number, email: Email, limit?: number) => Promise<TrainingExample[]>;
+  getRelevantExamples: (
+    accountId: number,
+    email: Email,
+    limit?: number,
+  ) => Promise<TrainingExample[]>;
 };
 
 export type SenderRuleRepo = {
   findByAccount: (accountId: number) => Promise<SenderRule[]>;
   findAutoApply: (accountId: number) => Promise<SenderRule[]>;
-  findByPattern: (accountId: number, pattern: string, patternType: string) => Promise<SenderRule | null>;
+  findByPattern: (
+    accountId: number,
+    pattern: string,
+    patternType: string,
+  ) => Promise<SenderRule | null>;
   upsert: (rule: Omit<SenderRule, 'id' | 'createdAt' | 'updatedAt'>) => Promise<SenderRule>;
   incrementCount: (id: number) => Promise<void>;
 };
@@ -432,9 +503,16 @@ export type ImapFolderOps = {
   createFolder: (account: Account, path: string) => Promise<void>;
   deleteFolder: (account: Account, path: string) => Promise<void>;
   listFolders: (account: Account) => Promise<{ path: string; specialUse?: string }[]>;
-  moveMessage: (account: Account, emailUid: number, fromFolder: string, toFolder: string) => Promise<void>;
+  moveMessage: (
+    account: Account,
+    emailUid: number,
+    fromFolder: string,
+    toFolder: string,
+  ) => Promise<void>;
   moveToTrash: (account: Account, emailUid: number, fromFolder: string) => Promise<string>;
   ensureTriageFolders: (account: Account) => Promise<string[]>;
+  /** Close all pooled connections and stop the idle-cleanup timer. */
+  disconnect: () => Promise<void>;
 };
 
 export type EmailTriageService = {
@@ -443,7 +521,11 @@ export type EmailTriageService = {
   scheduleSnooze: (emailId: number, until: Date, reason: EmailSnooze['reason']) => Promise<void>;
   cancelSnooze: (emailId: number) => Promise<void>;
   processSnoozedEmails: () => Promise<number>;
-  learnFromCorrection: (emailId: number, fromFolder: string, toFolder: TriageFolder) => Promise<void>;
+  learnFromCorrection: (
+    emailId: number,
+    fromFolder: string,
+    toFolder: TriageFolder,
+  ) => Promise<void>;
 };
 
 // ============================================
@@ -482,7 +564,13 @@ export type EmbeddingRepo = {
   /** Find all embeddings for similarity search */
   findAll: (model?: string, accountId?: number) => Promise<EmailEmbedding[]>;
   /** Save embedding for an email */
-  save: (emailId: number, embedding: number[], folder: string, isCorrection: boolean, model: string) => Promise<EmailEmbedding>;
+  save: (
+    emailId: number,
+    embedding: number[],
+    folder: string,
+    isCorrection: boolean,
+    model: string,
+  ) => Promise<EmailEmbedding>;
   /** Delete embeddings for an email */
   delete: (emailId: number) => Promise<void>;
   /** Count total embeddings */
@@ -498,11 +586,22 @@ export type VectorSearchResult = {
 
 export type VectorSearch = {
   /** Find K most similar emails to the query text */
-  findSimilar: (emailText: string, topK?: number, accountId?: number) => Promise<VectorSearchResult[]>;
+  findSimilar: (
+    emailText: string,
+    topK?: number,
+    accountId?: number,
+  ) => Promise<VectorSearchResult[]>;
   /** Index an email for future similarity search */
-  indexEmail: (emailId: number, emailText: string, folder: string, isCorrection?: boolean) => Promise<void>;
+  indexEmail: (
+    emailId: number,
+    emailText: string,
+    folder: string,
+    isCorrection?: boolean,
+  ) => Promise<void>;
   /** Calculate confidence from similar neighbors */
-  calculateConfidence: (similar: VectorSearchResult[]) => { folder: string; confidence: number } | null;
+  calculateConfidence: (
+    similar: VectorSearchResult[],
+  ) => { folder: string; confidence: number } | null;
 };
 
 // ============================================
@@ -536,7 +635,7 @@ export type LlmUsageStats = {
   todayCalls: number;
   todayCostUsd: number;
   monthCostUsd: number;
-  cacheHitRate: number;       // 0..1
+  cacheHitRate: number; // 0..1
   avgLatencyMs: number;
   totalInputTokens: number;
   totalOutputTokens: number;
@@ -545,7 +644,7 @@ export type LlmUsageStats = {
 };
 
 export type LlmDailyCost = {
-  day: string;   // 'YYYY-MM-DD'
+  day: string; // 'YYYY-MM-DD'
   model: string;
   calls: number;
   costUsd: number;
@@ -705,6 +804,9 @@ export type Deps = {
 // ============================================
 
 export type ThreadRepo = {
-  getThreadedList: (accountId: number, folderId: number) => Promise<import('./domain').ThreadSummary[]>;
+  getThreadedList: (
+    accountId: number,
+    folderId: number,
+  ) => Promise<import('./domain').ThreadSummary[]>;
   getThreadMessages: (threadId: string) => Promise<import('./domain').Email[]>;
 };
