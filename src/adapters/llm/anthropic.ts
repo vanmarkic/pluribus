@@ -39,14 +39,14 @@ type Config = {
 // Pricing per million tokens (USD). Cached reads bill at ~10% of input;
 // cache writes bill at ~125% of input. Values tracked as of April 2026.
 export const MODEL_PRICING: Record<string, { input: number; output: number }> = {
-  'claude-opus-4-7':            { input: 5.00, output: 25.00 },
-  'claude-sonnet-4-6':          { input: 3.00, output: 15.00 },
-  'claude-haiku-4-5-20251001':  { input: 1.00, output:  5.00 },
-  'claude-opus-4-20250514':     { input: 5.00, output: 25.00 },
-  'claude-sonnet-4-20250514':   { input: 3.00, output: 15.00 },
-  'claude-haiku-4-20250514':    { input: 1.00, output:  5.00 },
-  'claude-3-5-sonnet-20241022': { input: 3.00, output: 15.00 },
-  'claude-3-5-haiku-20241022':  { input: 0.80, output:  4.00 },
+  'claude-opus-4-7': { input: 5.0, output: 25.0 },
+  'claude-sonnet-4-6': { input: 3.0, output: 15.0 },
+  'claude-haiku-4-5-20251001': { input: 1.0, output: 5.0 },
+  'claude-opus-4-20250514': { input: 5.0, output: 25.0 },
+  'claude-sonnet-4-20250514': { input: 3.0, output: 15.0 },
+  'claude-haiku-4-20250514': { input: 1.0, output: 5.0 },
+  'claude-3-5-sonnet-20241022': { input: 3.0, output: 15.0 },
+  'claude-3-5-haiku-20241022': { input: 0.8, output: 4.0 },
 };
 
 export function computeCostUsd(
@@ -54,7 +54,7 @@ export function computeCostUsd(
   inputTokens: number,
   outputTokens: number,
   cacheCreationTokens: number,
-  cacheReadTokens: number
+  cacheReadTokens: number,
 ): number {
   const price = MODEL_PRICING[model];
   if (!price) return 0;
@@ -85,23 +85,47 @@ export type LlmCallRecord = {
   error?: string | null;
 };
 
-// In-memory pattern cache (persists for the process lifetime)
+// In-memory pattern cache. Capped so a long-running desktop session
+// can't grow it without bound.
+const MAX_CACHE_ENTRIES = 5000;
 const cache = new Map<string, Classification>();
+
+function cacheClassification(key: string, value: Classification): void {
+  // Map preserves insertion order — evict the oldest entry when full.
+  if (cache.size >= MAX_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+  cache.set(key, value);
+}
+
+// Daily usage counters. Reset lazily when the calendar day changes so the
+// "daily" budget actually rolls over without depending on a scheduler.
 let todayUsage = 0;
 let todayEmailCount = 0;
+let usageDay = new Date().toISOString().slice(0, 10);
 const DEFAULT_DAILY_EMAIL_LIMIT = 200;
 
+function rolloverIfNewDay(): void {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== usageDay) {
+    usageDay = today;
+    todayUsage = 0;
+    todayEmailCount = 0;
+  }
+}
+
 const TRIAGE_FOLDER_DESCRIPTIONS: Record<TriageFolder, string> = {
-  'INBOX': 'General inbox for emails that need attention',
-  'Planning': 'Emails requiring future action or planning (meetings, schedules, project planning)',
-  'Review': 'Emails that need review or decision-making',
+  INBOX: 'General inbox for emails that need attention',
+  Planning: 'Emails requiring future action or planning (meetings, schedules, project planning)',
+  Review: 'Emails that need review or decision-making',
   'Paper-Trail/Invoices': 'Invoices, receipts, payment confirmations',
   'Paper-Trail/Admin': 'Administrative documents, contracts, legal',
   'Paper-Trail/Travel': 'Travel bookings, itineraries, confirmations',
-  'Feed': 'Newsletters, digests, informational content',
-  'Social': 'Social media notifications, friend updates, community',
-  'Promotions': 'Marketing, sales, promotional offers',
-  'Archive': 'Already processed or low-priority items',
+  Feed: 'Newsletters, digests, informational content',
+  Social: 'Social media notifications, friend updates, community',
+  Promotions: 'Marketing, sales, promotional offers',
+  Archive: 'Already processed or low-priority items',
 };
 
 function hashPattern(email: Email): string {
@@ -132,7 +156,12 @@ function buildUserMessage(email: Email, body?: EmailBody): string {
   ];
 
   // Delimit untrusted content explicitly so the model treats it as data.
-  parts.push('', '<email_content>', body?.text?.slice(0, 2000) || email.snippet || '(empty)', '</email_content>');
+  parts.push(
+    '',
+    '<email_content>',
+    body?.text?.slice(0, 2000) || email.snippet || '(empty)',
+    '</email_content>',
+  );
 
   return parts.join('\n');
 }
@@ -163,7 +192,10 @@ export type ClassifierOptions = {
 };
 
 /** Parse Claude's JSON reply into a Classification, falling back to INBOX on error. */
-function parseClassification(content: string): { result: Classification; parseError: string | null } {
+function parseClassification(content: string): {
+  result: Classification;
+  parseError: string | null;
+} {
   const validFolders = Object.keys(TRIAGE_FOLDER_DESCRIPTIONS);
   try {
     const parsed = JSON.parse(content);
@@ -171,7 +203,12 @@ function parseClassification(content: string): { result: Classification; parseEr
     if (!validFolders.includes(folder)) {
       const parseError = `Unknown folder "${folder}" in response`;
       return {
-        result: { suggestedFolder: 'INBOX', confidence: 0.5, reasoning: parseError, priority: 'normal' },
+        result: {
+          suggestedFolder: 'INBOX',
+          confidence: 0.5,
+          reasoning: parseError,
+          priority: 'normal',
+        },
         parseError,
       };
     }
@@ -187,7 +224,12 @@ function parseClassification(content: string): { result: Classification; parseEr
   } catch {
     const parseError = 'Parse error';
     return {
-      result: { suggestedFolder: 'INBOX', confidence: 0, reasoning: parseError, priority: 'normal' },
+      result: {
+        suggestedFolder: 'INBOX',
+        confidence: 0,
+        reasoning: parseError,
+        priority: 'normal',
+      },
       parseError,
     };
   }
@@ -196,7 +238,7 @@ function parseClassification(content: string): { result: Classification; parseEr
 export function createClassifier(
   config: Config,
   secrets: SecureStorage,
-  options: ClassifierOptions = {}
+  options: ClassifierOptions = {},
 ): Classifier {
   let client: Anthropic | null = null;
   const onCall = options.onCall;
@@ -205,9 +247,10 @@ export function createClassifier(
   const agentConfidenceThreshold = options.agentConfidenceThreshold ?? 0.6;
   const agentMaxIterations = options.agentMaxIterations ?? 3;
   const promptSpec = loadPrompt(options.promptVersion ?? PRODUCTION_VERSION);
-  const thinkingBudget = options.thinkingBudgetTokens && options.thinkingBudgetTokens > 0
-    ? options.thinkingBudgetTokens
-    : 0;
+  const thinkingBudget =
+    options.thinkingBudgetTokens && options.thinkingBudgetTokens > 0
+      ? options.thinkingBudgetTokens
+      : 0;
 
   async function getClient(): Promise<Anthropic> {
     if (!client) {
@@ -243,7 +286,7 @@ export function createClassifier(
       const { response } = await runOneCall(email, history, AGENT_TOOL_DEFINITIONS);
 
       // If the model produced a text block, try to parse it as the final answer.
-      const textBlock = response.content.find(c => c.type === 'text');
+      const textBlock = response.content.find((c) => c.type === 'text');
       if (textBlock && textBlock.type === 'text' && textBlock.text.trim()) {
         const { result } = parseClassification(textBlock.text);
         if (result.confidence > best.confidence) {
@@ -259,12 +302,12 @@ export function createClassifier(
       // Execute every tool_use block in this turn and send all results back
       // in a single user turn, as the Messages API requires.
       const toolUses = response.content.filter((c): c is ToolUseBlock => c.type === 'tool_use');
-      const toolResults = await Promise.all(toolUses.map(tu => executeToolCall(tu, tools)));
+      const toolResults = await Promise.all(toolUses.map((tu) => executeToolCall(tu, tools)));
 
       history.push({ role: 'assistant', content: response.content as any });
       history.push({
         role: 'user',
-        content: toolResults.map(tr => {
+        content: toolResults.map((tr) => {
           // exactOptionalPropertyTypes: only set is_error when it's a boolean.
           const base = {
             type: 'tool_result' as const,
@@ -284,7 +327,7 @@ export function createClassifier(
         'Do not call any more tools.',
     });
     const { response: finalResponse } = await runOneCall(email, history);
-    const finalText = finalResponse.content.find(c => c.type === 'text');
+    const finalText = finalResponse.content.find((c) => c.type === 'text');
     if (finalText && finalText.type === 'text') {
       const { result } = parseClassification(finalText.text);
       if (result.confidence > best.confidence) best = result;
@@ -356,13 +399,17 @@ export function createClassifier(
     todayUsage += inputTokens + outputTokens;
 
     const costUsd = computeCostUsd(
-      config.model, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens
+      config.model,
+      inputTokens,
+      outputTokens,
+      cacheCreationTokens,
+      cacheReadTokens,
     );
 
     onCall?.({
       provider: 'anthropic',
       model: config.model,
-      promptVersion: PROMPT_VERSION,
+      promptVersion: promptSpec.label,
       emailId: email.id,
       inputTokens,
       outputTokens,
@@ -380,6 +427,7 @@ export function createClassifier(
 
   return {
     async classify(email: Email, body?: EmailBody): Promise<Classification> {
+      rolloverIfNewDay();
       // Check budget
       const budget = this.getBudget();
       if (!budget.allowed) {
@@ -398,7 +446,7 @@ export function createClassifier(
       // and flow to the audit callback for logging.
       const injectionFindings = detectPromptInjection(
         email.subject,
-        body?.text ?? email.snippet ?? ''
+        body?.text ?? email.snippet ?? '',
       );
       if (injectionFindings.length > 0) {
         options.onInjectionFindings?.(email.id, injectionFindings);
@@ -406,12 +454,10 @@ export function createClassifier(
       const quarantined = shouldQuarantine(injectionFindings);
 
       // First turn: no tools, fully cacheable.
-      const messages: MessageParam[] = [
-        { role: 'user', content: buildUserMessage(email, body) },
-      ];
+      const messages: MessageParam[] = [{ role: 'user', content: buildUserMessage(email, body) }];
       const initial = await runOneCall(email, messages);
 
-      const textContent = initial.response.content.find(c => c.type === 'text');
+      const textContent = initial.response.content.find((c) => c.type === 'text');
       const content = textContent && textContent.type === 'text' ? textContent.text : '';
       let { result } = parseClassification(content);
       todayEmailCount++;
@@ -433,13 +479,14 @@ export function createClassifier(
 
       // Cache if confident AND not quarantined.
       if (result.confidence > 0.5 && !quarantined) {
-        cache.set(hash, result);
+        cacheClassification(hash, result);
       }
 
       return result;
     },
 
     getBudget() {
+      rolloverIfNewDay();
       return {
         used: todayUsage,
         limit: config.dailyBudget,
@@ -448,6 +495,7 @@ export function createClassifier(
     },
 
     getEmailBudget() {
+      rolloverIfNewDay();
       const limit = config.dailyEmailLimit || DEFAULT_DAILY_EMAIL_LIMIT;
       return {
         used: todayEmailCount,
@@ -461,12 +509,12 @@ export function createClassifier(
 // Known Anthropic models (SDK v0.90 supports client.models.list(), but we ship
 // a static list so the settings UI works without a network round-trip).
 const ANTHROPIC_MODELS: LLMModel[] = [
-  { id: 'claude-opus-4-7',             displayName: 'Claude Opus 4.7' },
-  { id: 'claude-sonnet-4-6',           displayName: 'Claude Sonnet 4.6' },
-  { id: 'claude-haiku-4-5-20251001',   displayName: 'Claude Haiku 4.5' },
-  { id: 'claude-opus-4-20250514',      displayName: 'Claude Opus 4 (legacy)' },
-  { id: 'claude-sonnet-4-20250514',    displayName: 'Claude Sonnet 4 (legacy)' },
-  { id: 'claude-haiku-4-20250514',     displayName: 'Claude Haiku 4 (legacy)' },
+  { id: 'claude-opus-4-7', displayName: 'Claude Opus 4.7' },
+  { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
+  { id: 'claude-haiku-4-5-20251001', displayName: 'Claude Haiku 4.5' },
+  { id: 'claude-opus-4-20250514', displayName: 'Claude Opus 4 (legacy)' },
+  { id: 'claude-sonnet-4-20250514', displayName: 'Claude Sonnet 4 (legacy)' },
+  { id: 'claude-haiku-4-20250514', displayName: 'Claude Haiku 4 (legacy)' },
 ];
 
 export function createAnthropicProvider(secrets: SecureStorage): LLMProvider {
@@ -484,7 +532,11 @@ export function createAnthropicProvider(secrets: SecureStorage): LLMProvider {
         return { valid: true };
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        if (message.includes('401') || message.includes('invalid_api_key') || message.includes('authentication')) {
+        if (
+          message.includes('401') ||
+          message.includes('invalid_api_key') ||
+          message.includes('authentication')
+        ) {
           return { valid: false, error: 'Invalid API key' };
         }
         if (message.includes('rate') || message.includes('overloaded')) {
@@ -502,8 +554,11 @@ export function createAnthropicProvider(secrets: SecureStorage): LLMProvider {
   };
 }
 
-// Reset daily usage (call from scheduler)
+// Reset daily usage. Counters also roll over lazily on the first call of
+// a new calendar day (see rolloverIfNewDay); this remains for explicit
+// resets and tests.
 export function resetDailyUsage(): void {
   todayUsage = 0;
   todayEmailCount = 0;
+  usageDay = new Date().toISOString().slice(0, 10);
 }

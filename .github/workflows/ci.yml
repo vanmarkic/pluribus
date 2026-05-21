@@ -29,6 +29,9 @@ jobs:
       - run: npm ci --no-audit --no-fund --legacy-peer-deps
       - run: npx eslint .
       - run: npx prettier --check . || true
+      # Informational only — surfaces advisories without blocking the build.
+      - name: npm audit
+        run: npm audit --audit-level=high || true
 
   typecheck:
     name: Typecheck
@@ -42,6 +45,8 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: tsc (main)
         run: npx tsc --noEmit -p tsconfig.main.json
+      - name: tsc (renderer)
+        run: npx tsc --noEmit -p tsconfig.renderer.json
       - name: tsc (evals)
         run: npx tsc --noEmit -p tsconfig.evals.json
 

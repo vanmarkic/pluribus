@@ -12,7 +12,7 @@
  * - getAwaitingList: Get all awaiting emails for virtual folder
  */
 
-import type { AwaitingRepo } from '../../adapters/db/awaiting-repo';
+import type { AwaitingRepo } from '../ports';
 import type { Email } from '../domain';
 
 type LLMPort = {
@@ -24,7 +24,8 @@ type Deps = {
   llm: LLMPort;
 };
 
-export const shouldTrackAwaiting = (deps: Pick<Deps, 'llm'>) =>
+export const shouldTrackAwaiting =
+  (deps: Pick<Deps, 'llm'>) =>
   async (body: string): Promise<boolean> => {
     // Fast path: contains question mark
     if (body.includes('?')) {
@@ -34,7 +35,7 @@ export const shouldTrackAwaiting = (deps: Pick<Deps, 'llm'>) =>
     // Slow path: LLM classification
     try {
       const result = await deps.llm.generate(
-        `Does this email expect a reply? Answer only "yes" or "no".\n\n${body.slice(0, 1000)}`
+        `Does this email expect a reply? Answer only "yes" or "no".\n\n${body.slice(0, 1000)}`,
       );
       return result.toLowerCase().includes('yes');
     } catch {
@@ -43,22 +44,26 @@ export const shouldTrackAwaiting = (deps: Pick<Deps, 'llm'>) =>
     }
   };
 
-export const markAwaiting = (deps: Pick<Deps, 'awaiting'>) =>
+export const markAwaiting =
+  (deps: Pick<Deps, 'awaiting'>) =>
   async (emailId: number): Promise<void> => {
     await deps.awaiting.markAwaiting(emailId);
   };
 
-export const clearAwaiting = (deps: Pick<Deps, 'awaiting'>) =>
+export const clearAwaiting =
+  (deps: Pick<Deps, 'awaiting'>) =>
   async (emailId: number): Promise<void> => {
     await deps.awaiting.clearAwaiting(emailId);
   };
 
-export const clearAwaitingByReply = (deps: Pick<Deps, 'awaiting'>) =>
+export const clearAwaitingByReply =
+  (deps: Pick<Deps, 'awaiting'>) =>
   async (inReplyToMessageId: string): Promise<number | null> => {
     return deps.awaiting.clearByReply(inReplyToMessageId);
   };
 
-export const getAwaitingList = (deps: Pick<Deps, 'awaiting'>) =>
+export const getAwaitingList =
+  (deps: Pick<Deps, 'awaiting'>) =>
   async (accountId: number): Promise<Email[]> => {
     return deps.awaiting.getAwaitingList(accountId);
   };

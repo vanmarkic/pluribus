@@ -1,16 +1,36 @@
 /**
  * Enhanced Triage Classifier with Vector Search
- * 
+ *
  * Integrates semantic similarity search to improve classification.
  * Flow: Pattern matching → Vector similarity → LLM validation
  */
 
 import type { TriageClassifier, PatternMatchResult, VectorSearch } from '../../core/ports';
-import type { Email, TrainingExample, TriageClassificationResult, TriageFolder, SimilarEmail } from '../../core/domain';
+import type {
+  Email,
+  TrainingExample,
+  TriageClassificationResult,
+  TriageFolder,
+} from '../../core/domain';
+import { TRIAGE_FOLDERS } from '../../core/domain';
 import { prepareEmailForEmbedding } from '../embeddings/vector-search';
 
 /** Number of similar emails to retrieve for context */
 const TOP_SIMILAR_EMAILS = 5;
+
+const VALID_FOLDERS = new Set<string>(TRIAGE_FOLDERS);
+
+/** Coerce an LLM-supplied folder to a known TriageFolder; unknown → Review. */
+function coerceFolder(value: unknown): TriageFolder {
+  return typeof value === 'string' && VALID_FOLDERS.has(value) ? (value as TriageFolder) : 'Review';
+}
+
+/** Clamp an LLM-supplied confidence into [0, 1]; non-numeric → 0.5. */
+function coerceConfidence(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.min(1, value))
+    : 0.5;
+}
 
 const TRIAGE_PROMPT = `You are an email triage assistant. Classify this email into ONE folder.
 
@@ -42,7 +62,7 @@ export function buildEnhancedTriagePrompt(
   email: Email,
   patternHint: PatternMatchResult,
   examples: TrainingExample[],
-  similarEmails?: { folder: string; similarity: number; wasCorrection: boolean }[]
+  similarEmails?: { folder: string; similarity: number; wasCorrection: boolean }[],
 ): string {
   let prompt = TRIAGE_PROMPT;
 
@@ -131,12 +151,12 @@ type LLMClient = {
 
 /**
  * Create enhanced triage classifier with vector search.
- * 
+ *
  * Classification flow:
  * 1. Pattern matching (fast, rule-based)
  * 2. Vector similarity search (semantic matching)
  * 3. LLM validation (final authority)
- * 
+ *
  * Benefits:
  * - Faster: High-confidence vector matches can skip LLM
  * - Smarter: LLM sees similar past examples
@@ -144,25 +164,31 @@ type LLMClient = {
  */
 export function createEnhancedTriageClassifier(
   llmClient: LLMClient,
-  vectorSearch?: VectorSearch
+  vectorSearch?: VectorSearch,
 ): TriageClassifier {
   return {
     async classify(
       email: Email,
       patternHint: PatternMatchResult,
-      examples: TrainingExample[]
+      examples: TrainingExample[],
     ): Promise<TriageClassificationResult> {
-      let similarEmails: { folder: string; similarity: number; wasCorrection: boolean }[] | undefined;
+      let similarEmails:
+        | { folder: string; similarity: number; wasCorrection: boolean }[]
+        | undefined;
       let vectorConfidence: { folder: string; confidence: number } | null = null;
 
       // Try vector similarity search if available
       if (vectorSearch) {
         try {
           const emailText = prepareEmailForEmbedding(email);
-          const similar = await vectorSearch.findSimilar(emailText, TOP_SIMILAR_EMAILS, email.accountId);
-          
+          const similar = await vectorSearch.findSimilar(
+            emailText,
+            TOP_SIMILAR_EMAILS,
+            email.accountId,
+          );
+
           if (similar.length > 0) {
-            similarEmails = similar.map(s => ({
+            similarEmails = similar.map((s) => ({
               folder: s.folder,
               similarity: s.similarity,
               wasCorrection: s.wasCorrection,
@@ -181,17 +207,22 @@ export function createEnhancedTriageClassifier(
 
       try {
         const response = await llmClient.complete(prompt);
+        // The model's reply is untrusted: validate the folder against the
+        // known set and clamp confidence rather than casting blindly.
         const parsed = JSON.parse(response);
+        const snoozeUntil = parsed.snoozeUntil ? new Date(parsed.snoozeUntil) : null;
 
         return {
-          folder: parsed.folder as TriageFolder,
-          tags: parsed.tags || [],
-          confidence: parsed.confidence,
+          folder: coerceFolder(parsed.folder),
+          tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+          confidence: coerceConfidence(parsed.confidence),
           patternHint: patternHint.folder,
-          patternAgreed: parsed.patternAgreed,
-          reasoning: parsed.reasoning,
-          ...(parsed.snoozeUntil ? { snoozeUntil: new Date(parsed.snoozeUntil) } : {}),
-          ...(parsed.autoDeleteMinutes !== undefined ? { autoDeleteAfter: parsed.autoDeleteMinutes } : {}),
+          patternAgreed: parsed.patternAgreed === true,
+          reasoning: typeof parsed.reasoning === 'string' ? parsed.reasoning : '',
+          ...(snoozeUntil && !Number.isNaN(snoozeUntil.getTime()) ? { snoozeUntil } : {}),
+          ...(typeof parsed.autoDeleteMinutes === 'number'
+            ? { autoDeleteAfter: parsed.autoDeleteMinutes }
+            : {}),
         };
       } catch (error) {
         // LLM failed - use best available hint

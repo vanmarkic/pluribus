@@ -9,48 +9,51 @@
  */
 
 import type { Deps, AccountInput, SmtpConfig, EmailDraft, SendResult } from '../ports';
-import type { Account, DEFAULT_SYNC_DAYS } from '../domain';
+import type { Account } from '../domain';
 import { DEFAULT_SYNC_DAYS as SYNC_DAYS } from '../domain';
 
 // ============================================
 // Account Use Cases
 // ============================================
 
-export const listAccounts = (deps: Pick<Deps, 'accounts'>) =>
-  (): Promise<Account[]> =>
-    deps.accounts.findAll();
+export const listAccounts = (deps: Pick<Deps, 'accounts'>) => (): Promise<Account[]> =>
+  deps.accounts.findAll();
 
-export const getAccount = (deps: Pick<Deps, 'accounts'>) =>
+export const getAccount =
+  (deps: Pick<Deps, 'accounts'>) =>
   (id: number): Promise<Account | null> =>
     deps.accounts.findById(id);
 
-export const createAccount = (deps: Pick<Deps, 'accounts' | 'secrets'>) =>
+export const createAccount =
+  (deps: Pick<Deps, 'accounts' | 'secrets'>) =>
   async (account: AccountInput, password: string): Promise<Account> => {
     // Check if account already exists
     const existing = await deps.accounts.findByEmail(account.email);
     if (existing) throw new Error('Account already exists');
-    
+
     // Store password securely first
     await deps.secrets.setPassword(account.email, password);
-    
+
     // Then create account record
     return deps.accounts.create(account);
   };
 
-export const updateAccount = (deps: Pick<Deps, 'accounts' | 'secrets'>) =>
+export const updateAccount =
+  (deps: Pick<Deps, 'accounts' | 'secrets'>) =>
   async (id: number, updates: Partial<AccountInput>, newPassword?: string): Promise<Account> => {
     const account = await deps.accounts.findById(id);
     if (!account) throw new Error('Account not found');
-    
+
     // Update password if provided
     if (newPassword) {
       await deps.secrets.setPassword(account.email, newPassword);
     }
-    
+
     return deps.accounts.update(id, updates);
   };
 
-export const deleteAccount = (deps: Pick<Deps, 'accounts' | 'secrets' | 'sync'>) =>
+export const deleteAccount =
+  (deps: Pick<Deps, 'accounts' | 'secrets' | 'sync'>) =>
   async (id: number): Promise<void> => {
     const account = await deps.accounts.findById(id);
     if (!account) throw new Error('Account not found');
@@ -76,8 +79,13 @@ export type AddAccountResult = {
   syncDays: number;
 };
 
-export const addAccount = (deps: Pick<Deps, 'accounts' | 'secrets' | 'sync'>) =>
-  async (account: AccountInput, password: string, options: AddAccountOptions = {}): Promise<AddAccountResult> => {
+export const addAccount =
+  (deps: Pick<Deps, 'accounts' | 'secrets' | 'sync'>) =>
+  async (
+    account: AccountInput,
+    password: string,
+    options: AddAccountOptions = {},
+  ): Promise<AddAccountResult> => {
     const { skipSync = false } = options;
 
     // Check if account already exists
@@ -126,8 +134,13 @@ export const addAccount = (deps: Pick<Deps, 'accounts' | 'secrets' | 'sync'>) =>
     };
   };
 
-export const testImapConnection = (deps: Pick<Deps, 'sync' | 'secrets'>) =>
-  async (email: string, imapHost: string, imapPort: number): Promise<{ ok: boolean; error?: string }> => {
+export const testImapConnection =
+  (deps: Pick<Deps, 'sync' | 'secrets'>) =>
+  async (
+    email: string,
+    imapHost: string,
+    imapPort: number,
+  ): Promise<{ ok: boolean; error?: string }> => {
     // Get password from secure storage
     const password = await deps.secrets.getPassword(email);
     if (!password) {
@@ -138,7 +151,8 @@ export const testImapConnection = (deps: Pick<Deps, 'sync' | 'secrets'>) =>
     return deps.sync.testConnection(imapHost, imapPort, email, password);
   };
 
-export const testSmtpConnection = (deps: Pick<Deps, 'sender'>) =>
+export const testSmtpConnection =
+  (deps: Pick<Deps, 'sender'>) =>
   (email: string, smtpConfig: SmtpConfig): Promise<{ ok: boolean; error?: string }> =>
     deps.sender.testConnection(smtpConfig, email);
 
@@ -146,7 +160,8 @@ export const testSmtpConnection = (deps: Pick<Deps, 'sender'>) =>
 // Send Use Cases
 // ============================================
 
-export const sendEmail = (deps: Pick<Deps, 'accounts' | 'sender' | 'secrets' | 'sync'>) =>
+export const sendEmail =
+  (deps: Pick<Deps, 'accounts' | 'sender' | 'secrets' | 'sync'>) =>
   async (accountId: number, draft: EmailDraft): Promise<SendResult> => {
     const account = await deps.accounts.findById(accountId);
     if (!account) throw new Error('Account not found');
@@ -180,8 +195,13 @@ export const sendEmail = (deps: Pick<Deps, 'accounts' | 'sender' | 'secrets' | '
     return result;
   };
 
-export const replyToEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'sender' | 'secrets' | 'sync'>) =>
-  async (emailId: number, body: { text?: string; html?: string }, replyAll = false): Promise<SendResult> => {
+export const replyToEmail =
+  (deps: Pick<Deps, 'emails' | 'accounts' | 'sender' | 'secrets' | 'sync'>) =>
+  async (
+    emailId: number,
+    body: { text?: string; html?: string },
+    replyAll = false,
+  ): Promise<SendResult> => {
     const email = await deps.emails.findById(emailId);
     if (!email) throw new Error('Email not found');
 
@@ -190,7 +210,7 @@ export const replyToEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'sender' |
 
     // Build reply recipients
     const to = [email.from.address];
-    const cc = replyAll ? email.to.filter(addr => addr !== account.email) : [];
+    const cc = replyAll ? email.to.filter((addr) => addr !== account.email) : [];
 
     const draft: EmailDraft = {
       to,
@@ -205,8 +225,13 @@ export const replyToEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'sender' |
     return sendEmail(deps)(email.accountId, draft);
   };
 
-export const forwardEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'sender' | 'secrets' | 'sync'>) =>
-  async (emailId: number, to: string[], body: { text?: string; html?: string }): Promise<SendResult> => {
+export const forwardEmail =
+  (deps: Pick<Deps, 'emails' | 'accounts' | 'sender' | 'secrets' | 'sync'>) =>
+  async (
+    emailId: number,
+    to: string[],
+    body: { text?: string; html?: string },
+  ): Promise<SendResult> => {
     const email = await deps.emails.findById(emailId);
     if (!email) throw new Error('Email not found');
 
