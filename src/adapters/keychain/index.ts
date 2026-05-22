@@ -21,14 +21,29 @@ type SessionCache = Map<string, { value: string; expiresAt: number }>;
 export function createSecureStorage(): SecureStorage {
   const store = new Store<Record<string, string>>({ name: 'credentials' });
   const sessionCache: SessionCache = new Map();
-  
+
+  // On Linux, safeStorage silently falls back to a hardcoded key when no
+  // Secret Service backend is available — credentials would NOT be
+  // meaningfully encrypted at rest. Surface that loudly at startup.
+  if (
+    process.platform === 'linux' &&
+    typeof safeStorage.getSelectedStorageBackend === 'function' &&
+    safeStorage.getSelectedStorageBackend() === 'basic_text'
+  ) {
+    console.warn(
+      '[keychain] safeStorage is using the insecure "basic_text" backend — ' +
+        'stored credentials are NOT encrypted at rest. Install a Secret Service ' +
+        'provider (gnome-keyring or kwallet) to enable OS-backed encryption.',
+    );
+  }
+
   // Default security config
   let config: SecurityConfig = {
     biometricMode: 'session',
     sessionTimeoutMs: 4 * 60 * 60 * 1000, // 4 hours
     requireForSend: false,
   };
-  
+
   // Load saved config
   const savedConfig = store.get('_config') as unknown as Partial<SecurityConfig> | undefined;
   if (savedConfig) {
@@ -50,7 +65,7 @@ export function createSecureStorage(): SecureStorage {
 
   async function promptBiometric(reason: string): Promise<boolean> {
     if (config.biometricMode === 'never') return true;
-    
+
     if (process.platform === 'darwin') {
       try {
         await systemPreferences.promptTouchID(reason);
@@ -59,7 +74,7 @@ export function createSecureStorage(): SecureStorage {
         return false;
       }
     }
-    
+
     // Windows Hello - would need native module
     // Linux - typically no biometric API
     // Fall back to allowing access
@@ -69,12 +84,12 @@ export function createSecureStorage(): SecureStorage {
   function checkSession(key: string): string | null {
     const entry = sessionCache.get(key);
     if (!entry) return null;
-    
+
     if (Date.now() > entry.expiresAt) {
       sessionCache.delete(key);
       return null;
     }
-    
+
     return entry.value;
   }
 
@@ -104,12 +119,12 @@ export function createSecureStorage(): SecureStorage {
 
     try {
       const value = safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
-      
+
       // Cache in session (unless 'always' mode)
       if (config.biometricMode !== 'always') {
         setSession(key, value);
       }
-      
+
       return value;
     } catch (err) {
       console.error('Decryption failed:', err);
@@ -121,10 +136,10 @@ export function createSecureStorage(): SecureStorage {
     if (!safeStorage.isEncryptionAvailable()) {
       throw new Error('Secure storage not available on this system');
     }
-    
+
     const encrypted = safeStorage.encryptString(value);
     store.set(`${STORE_KEY_PREFIX}${key}`, encrypted.toString('base64'));
-    
+
     // Also cache in session
     if (config.biometricMode !== 'always') {
       setSession(key, value);
@@ -166,7 +181,7 @@ export function createSecureStorage(): SecureStorage {
     setConfig(updates) {
       config = { ...config, ...updates };
       store.set('_config', config as any);
-      
+
       // Clear session if switching to stricter mode
       if (updates.biometricMode === 'always') {
         sessionCache.clear();

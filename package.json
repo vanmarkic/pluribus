@@ -11,7 +11,7 @@
     "build": "rm -f tsconfig.main.tsbuildinfo && tsc -p tsconfig.main.json && mkdir -p dist/adapters/db/migrations && cp src/adapters/db/schema.sql dist/adapters/db/ && cp -r src/adapters/db/migrations/* dist/adapters/db/migrations/ 2>/dev/null || true && vite build",
     "build:demo": "vite build --mode demo",
     "start": "npm run rebuild:electron && electron .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p tsconfig.main.json && tsc --noEmit -p tsconfig.renderer.json",
     "test": "npm run rebuild:node && vitest run",
     "test:watch": "npm run rebuild:node && vitest",
     "eval": "tsc -p tsconfig.evals.json && node dist/evals/run-eval.js",

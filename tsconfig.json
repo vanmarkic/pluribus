@@ -19,10 +19,7 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "paths": {
-      "@/*": ["./src/*"],
-      "@domain/*": ["./src/domain/*"],
-      "@ports/*": ["./src/ports/*"],
-      "@app/*": ["./src/application/*"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["src/renderer", "src/core"],

@@ -13,6 +13,13 @@ vi.mock('electron', () => ({
   },
 }));
 
+// Mock DNS so the SSRF guard is deterministic and offline-friendly.
+// `default` is supplied alongside the named export for ESM interop.
+vi.mock('dns/promises', () => {
+  const lookup = vi.fn();
+  return { lookup, default: { lookup } };
+});
+
 // Mock fs module
 vi.mock('fs', async () => {
   const actual = await vi.importActual('fs');
@@ -28,6 +35,7 @@ vi.mock('fs', async () => {
 
 import { createImageCache } from './index';
 import { app, net } from 'electron';
+import { lookup } from 'dns/promises';
 
 // ============================================
 // Test Helpers
@@ -41,7 +49,7 @@ function createMockDb() {
     prepare: vi.fn((sql: string) => {
       if (sql.includes('SELECT 1 FROM email_images_loaded')) {
         return {
-          get: vi.fn((emailId: number) => data.has(emailId) ? { 1: 1 } : undefined),
+          get: vi.fn((emailId: number) => (data.has(emailId) ? { 1: 1 } : undefined)),
         };
       }
       if (sql.includes('INSERT OR IGNORE INTO email_images_loaded')) {
@@ -104,6 +112,13 @@ function hashUrl(url: string): string {
   return crypto.createHash('sha256').update(url).digest('hex').slice(0, 16);
 }
 
+// Reset the DNS mock before every test so each block starts from a clean
+// "resolves to a public address" baseline regardless of execution order.
+beforeEach(() => {
+  vi.mocked(lookup).mockReset();
+  vi.mocked(lookup).mockResolvedValue([{ address: '93.184.216.34', family: 4 }] as any);
+});
+
 // ============================================
 // URL Validation Tests
 // ============================================
@@ -161,10 +176,7 @@ describe('image cache - URL validation', () => {
 
     await imageCache.cacheImages(123, ['https://example.com/image.png']);
 
-    expect(mockFetch).toHaveBeenCalledWith(
-      'https://example.com/image.png',
-      expect.any(Object)
-    );
+    expect(mockFetch).toHaveBeenCalledWith('https://example.com/image.png', expect.any(Object));
   });
 
   it('accepts http: URLs', async () => {
@@ -173,10 +185,7 @@ describe('image cache - URL validation', () => {
 
     await imageCache.cacheImages(123, ['http://example.com/image.png']);
 
-    expect(mockFetch).toHaveBeenCalledWith(
-      'http://example.com/image.png',
-      expect.any(Object)
-    );
+    expect(mockFetch).toHaveBeenCalledWith('http://example.com/image.png', expect.any(Object));
   });
 
   it('rejects invalid URLs', async () => {
@@ -205,6 +214,59 @@ describe('image cache - URL validation', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
     expect(mockFetch).toHaveBeenCalledWith('https://example.com/valid.png', expect.any(Object));
     expect(mockFetch).toHaveBeenCalledWith('https://example.com/another.jpg', expect.any(Object));
+  });
+});
+
+// ============================================
+// SSRF Guard Tests
+// ============================================
+
+describe('image cache - SSRF guard', () => {
+  let mockDb: ReturnType<typeof createMockDb>;
+  let imageCache: ReturnType<typeof createImageCache>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDb = createMockDb();
+    (fs.existsSync as any).mockReturnValue(true);
+    imageCache = createImageCache(() => mockDb);
+  });
+
+  it('blocks loopback IP literals', async () => {
+    const mockFetch = vi.mocked(net.fetch);
+
+    const result = await imageCache.cacheImages(123, ['http://127.0.0.1:11435/api/tags']);
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(result).toEqual([]);
+  });
+
+  it('blocks private IP literals', async () => {
+    const mockFetch = vi.mocked(net.fetch);
+
+    const result = await imageCache.cacheImages(123, ['http://192.168.1.1/admin.png']);
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(result).toEqual([]);
+  });
+
+  it('blocks the localhost hostname', async () => {
+    const mockFetch = vi.mocked(net.fetch);
+
+    const result = await imageCache.cacheImages(123, ['http://localhost/pixel.png']);
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(result).toEqual([]);
+  });
+
+  it('blocks hosts that resolve to a private address', async () => {
+    const mockFetch = vi.mocked(net.fetch);
+    vi.mocked(lookup).mockResolvedValue([{ address: '169.254.169.254', family: 4 }] as any);
+
+    const result = await imageCache.cacheImages(123, ['https://rebind.example.com/pixel.png']);
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(result).toEqual([]);
   });
 });
 
@@ -279,7 +341,9 @@ describe('image cache - content-type validation', () => {
 
   it('rejects application/javascript content type', async () => {
     const mockFetch = vi.mocked(net.fetch);
-    mockFetch.mockResolvedValue(createMockResponse({ contentType: 'application/javascript' }) as any);
+    mockFetch.mockResolvedValue(
+      createMockResponse({ contentType: 'application/javascript' }) as any,
+    );
 
     const result = await imageCache.cacheImages(123, ['https://example.com/malicious.png']);
 
@@ -297,7 +361,9 @@ describe('image cache - content-type validation', () => {
 
   it('handles content-type with charset parameter', async () => {
     const mockFetch = vi.mocked(net.fetch);
-    mockFetch.mockResolvedValue(createMockResponse({ contentType: 'image/png; charset=utf-8' }) as any);
+    mockFetch.mockResolvedValue(
+      createMockResponse({ contentType: 'image/png; charset=utf-8' }) as any,
+    );
 
     const result = await imageCache.cacheImages(123, ['https://example.com/image.png']);
 
@@ -333,10 +399,12 @@ describe('image cache - size limits', () => {
   it('rejects images larger than 5MB after download', async () => {
     const mockFetch = vi.mocked(net.fetch);
     const tooBigBuffer = new ArrayBuffer(5 * 1024 * 1024 + 1);
-    mockFetch.mockResolvedValue(createMockResponse({
-      body: tooBigBuffer,
-      contentLength: undefined, // No content-length header
-    }) as any);
+    mockFetch.mockResolvedValue(
+      createMockResponse({
+        body: tooBigBuffer,
+        contentLength: undefined, // No content-length header
+      }) as any,
+    );
 
     const result = await imageCache.cacheImages(123, ['https://example.com/huge.png']);
 
@@ -346,10 +414,12 @@ describe('image cache - size limits', () => {
   it('accepts images exactly at 5MB limit', async () => {
     const mockFetch = vi.mocked(net.fetch);
     const exactLimit = new ArrayBuffer(5 * 1024 * 1024);
-    mockFetch.mockResolvedValue(createMockResponse({
-      body: exactLimit,
-      contentLength: (5 * 1024 * 1024).toString(),
-    }) as any);
+    mockFetch.mockResolvedValue(
+      createMockResponse({
+        body: exactLimit,
+        contentLength: (5 * 1024 * 1024).toString(),
+      }) as any,
+    );
 
     const result = await imageCache.cacheImages(123, ['https://example.com/big.png']);
 
@@ -358,9 +428,11 @@ describe('image cache - size limits', () => {
 
   it('accepts small images', async () => {
     const mockFetch = vi.mocked(net.fetch);
-    mockFetch.mockResolvedValue(createMockResponse({
-      body: new ArrayBuffer(1024), // 1KB
-    }) as any);
+    mockFetch.mockResolvedValue(
+      createMockResponse({
+        body: new ArrayBuffer(1024), // 1KB
+      }) as any,
+    );
 
     const result = await imageCache.cacheImages(123, ['https://example.com/small.png']);
 
@@ -444,10 +516,7 @@ describe('image cache - file naming and storage', () => {
 
     await imageCache.cacheImages(456, ['https://example.com/image.png']);
 
-    expect(fs.mkdirSync).toHaveBeenCalledWith(
-      expect.stringContaining('456'),
-      { recursive: true }
-    );
+    expect(fs.mkdirSync).toHaveBeenCalledWith(expect.stringContaining('456'), { recursive: true });
   });
 
   it('hashes URL for filename to avoid path traversal', async () => {
@@ -489,10 +558,7 @@ describe('image cache - file naming and storage', () => {
 
     await imageCache.cacheImages(123, ['https://example.com/image.png']);
 
-    expect(fs.writeFileSync).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(Buffer)
-    );
+    expect(fs.writeFileSync).toHaveBeenCalledWith(expect.any(String), expect.any(Buffer));
   });
 
   it('returns cached-image:// URL for cached image', async () => {
@@ -627,10 +693,10 @@ describe('image cache - cleanup', () => {
   it('clearCache removes email cache directory', async () => {
     await imageCache.clearCache(123);
 
-    expect(fs.rmSync).toHaveBeenCalledWith(
-      expect.stringContaining('123'),
-      { recursive: true, force: true }
-    );
+    expect(fs.rmSync).toHaveBeenCalledWith(expect.stringContaining('123'), {
+      recursive: true,
+      force: true,
+    });
   });
 
   it('clearCacheFiles removes files but not DB record', async () => {
@@ -639,10 +705,10 @@ describe('image cache - cleanup', () => {
     await imageCache.clearCacheFiles(123);
 
     // Files removed
-    expect(fs.rmSync).toHaveBeenCalledWith(
-      expect.stringContaining('123'),
-      { recursive: true, force: true }
-    );
+    expect(fs.rmSync).toHaveBeenCalledWith(expect.stringContaining('123'), {
+      recursive: true,
+      force: true,
+    });
 
     // DB record still exists
     expect(await imageCache.hasLoadedImages(123)).toBe(true);
@@ -651,14 +717,8 @@ describe('image cache - cleanup', () => {
   it('clearAllCache removes entire cache directory and recreates it', async () => {
     await imageCache.clearAllCache();
 
-    expect(fs.rmSync).toHaveBeenCalledWith(
-      expect.any(String),
-      { recursive: true, force: true }
-    );
-    expect(fs.mkdirSync).toHaveBeenCalledWith(
-      expect.any(String),
-      { recursive: true }
-    );
+    expect(fs.rmSync).toHaveBeenCalledWith(expect.any(String), { recursive: true, force: true });
+    expect(fs.mkdirSync).toHaveBeenCalledWith(expect.any(String), { recursive: true });
   });
 
   it('clearCache handles non-existent directory gracefully', async () => {

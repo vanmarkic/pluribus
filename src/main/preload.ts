@@ -1,6 +1,6 @@
 /**
  * Preload Script
- * 
+ *
  * Exposes a type-safe API to renderer process.
  * This is the only bridge between Node and browser.
  */
@@ -12,9 +12,16 @@ type Callback = (...args: any[]) => void;
 const listeners = new Map<string, Set<Callback>>();
 
 // Forward events from main
-['sync:progress', 'llm:classifying', 'llm:classified', 'llm:error', 'ollama:download-progress', 'license:state-changed'].forEach(channel => {
+[
+  'sync:progress',
+  'llm:classifying',
+  'llm:classified',
+  'llm:error',
+  'ollama:download-progress',
+  'license:state-changed',
+].forEach((channel) => {
   ipcRenderer.on(channel, (_, data) => {
-    listeners.get(channel)?.forEach(cb => cb(data));
+    listeners.get(channel)?.forEach((cb) => cb(data));
   });
 });
 
@@ -22,7 +29,6 @@ const listeners = new Map<string, Set<Callback>>();
 // The renderer registers a listener via mailApi.llm.onStreamEvent(requestId, cb);
 // we forward whatever arrives on `llm:stream:<requestId>` to the callback.
 const streamListeners = new Map<string, (event: unknown) => void>();
-ipcRenderer.on('llm:stream:*' as any, () => {}); // reserve namespace — no-op
 
 // API exposed to renderer
 const api = {
@@ -30,7 +36,8 @@ const api = {
     list: (opts = {}) => ipcRenderer.invoke('emails:list', opts),
     get: (id: number) => ipcRenderer.invoke('emails:get', id),
     getBody: (id: number) => ipcRenderer.invoke('emails:getBody', id),
-    search: (query: string, limit?: number, accountId?: number) => ipcRenderer.invoke('emails:search', query, limit, accountId),
+    search: (query: string, limit?: number, accountId?: number) =>
+      ipcRenderer.invoke('emails:search', query, limit, accountId),
     markRead: (id: number, isRead: boolean) => ipcRenderer.invoke('emails:markRead', id, isRead),
     star: (id: number, isStarred: boolean) => ipcRenderer.invoke('emails:star', id, isStarred),
     archive: (id: number) => ipcRenderer.invoke('emails:archive', id),
@@ -58,16 +65,31 @@ const api = {
     classifyAndApply: (emailId: number) => ipcRenderer.invoke('llm:classifyAndApply', emailId),
     getBudget: () => ipcRenderer.invoke('llm:getBudget'),
     getEmailBudget: () => ipcRenderer.invoke('llm:getEmailBudget'),
-    validate: (key?: string) => ipcRenderer.invoke('llm:validate', key) as Promise<{ valid: boolean; error?: string }>,
-    listModels: () => ipcRenderer.invoke('llm:listModels') as Promise<{ id: string; displayName: string; createdAt?: string }[]>,
-    testConnection: () => ipcRenderer.invoke('llm:testConnection') as Promise<{ connected: boolean; error?: string }>,
-    startOllama: () => ipcRenderer.invoke('llm:startOllama') as Promise<{ started: boolean; error?: string }>,
+    validate: (key?: string) =>
+      ipcRenderer.invoke('llm:validate', key) as Promise<{ valid: boolean; error?: string }>,
+    listModels: () =>
+      ipcRenderer.invoke('llm:listModels') as Promise<
+        { id: string; displayName: string; createdAt?: string }[]
+      >,
+    testConnection: () =>
+      ipcRenderer.invoke('llm:testConnection') as Promise<{ connected: boolean; error?: string }>,
+    startOllama: () =>
+      ipcRenderer.invoke('llm:startOllama') as Promise<{ started: boolean; error?: string }>,
     stopOllama: () => ipcRenderer.invoke('llm:stopOllama') as Promise<void>,
-    isConfigured: () => ipcRenderer.invoke('llm:isConfigured') as Promise<{ configured: boolean; reason?: string }>,
+    isConfigured: () =>
+      ipcRenderer.invoke('llm:isConfigured') as Promise<{ configured: boolean; reason?: string }>,
     startBackgroundClassification: (emailIds: number[]) =>
-      ipcRenderer.invoke('llm:startBackgroundClassification', emailIds) as Promise<{ taskId: string; count: number }>,
+      ipcRenderer.invoke('llm:startBackgroundClassification', emailIds) as Promise<{
+        taskId: string;
+        count: number;
+      }>,
     getTaskStatus: (taskId: string) =>
-      ipcRenderer.invoke('llm:getTaskStatus', taskId) as Promise<{ status: 'running' | 'completed' | 'failed'; processed: number; total: number; error?: string } | null>,
+      ipcRenderer.invoke('llm:getTaskStatus', taskId) as Promise<{
+        status: 'running' | 'completed' | 'failed';
+        processed: number;
+        total: number;
+        error?: string;
+      } | null>,
     clearTask: (taskId: string) => ipcRenderer.invoke('llm:clearTask', taskId) as Promise<void>,
     // #89 streaming explain
     streamExplain: (emailId: number) =>
@@ -98,27 +120,32 @@ const api = {
       eventType?: string;
       severity?: 'info' | 'warn' | 'alert';
       sinceTs?: string;
-    }) => ipcRenderer.invoke('securityEvents:listRecent', opts) as Promise<Array<{
-      id: number;
-      ts: string;
-      eventType: string;
-      severity: 'info' | 'warn' | 'alert';
-      actor: string;
-      target: string | null;
-      success: boolean;
-      metadata: Record<string, unknown>;
-    }>>,
+    }) =>
+      ipcRenderer.invoke('securityEvents:listRecent', opts) as Promise<
+        Array<{
+          id: number;
+          ts: string;
+          eventType: string;
+          severity: 'info' | 'warn' | 'alert';
+          actor: string;
+          target: string | null;
+          success: boolean;
+          metadata: Record<string, unknown>;
+        }>
+      >,
     countByType: (sinceTs?: string) =>
       ipcRenderer.invoke('securityEvents:countByType', sinceTs) as Promise<Record<string, number>>,
   },
 
   bodyMigration: {
-    getStatus: () => ipcRenderer.invoke('bodyMigration:getStatus') as Promise<{
-      total: number;
-      plaintext: number;
-      encrypted: number;
-    }>,
-    start: () => ipcRenderer.invoke('bodyMigration:start') as Promise<{ taskId: string; total: number }>,
+    getStatus: () =>
+      ipcRenderer.invoke('bodyMigration:getStatus') as Promise<{
+        total: number;
+        plaintext: number;
+        encrypted: number;
+      }>,
+    start: () =>
+      ipcRenderer.invoke('bodyMigration:start') as Promise<{ taskId: string; total: number }>,
   },
 
   calibration: {
@@ -129,17 +156,8 @@ const api = {
         eceAfter: number;
         fitted: boolean;
       }>,
-    getLatest: () => ipcRenderer.invoke('calibration:getLatest') as Promise<{
-      id: number;
-      fitAt: string;
-      a: number;
-      b: number;
-      fitSize: number;
-      eceBefore: number | null;
-      eceAfter: number | null;
-    } | null>,
-    getHistory: (limit?: number) =>
-      ipcRenderer.invoke('calibration:getHistory', limit) as Promise<Array<{
+    getLatest: () =>
+      ipcRenderer.invoke('calibration:getLatest') as Promise<{
         id: number;
         fitAt: string;
         a: number;
@@ -147,63 +165,89 @@ const api = {
         fitSize: number;
         eceBefore: number | null;
         eceAfter: number | null;
-      }>>,
+      } | null>,
+    getHistory: (limit?: number) =>
+      ipcRenderer.invoke('calibration:getHistory', limit) as Promise<
+        Array<{
+          id: number;
+          fitAt: string;
+          a: number;
+          b: number;
+          fitSize: number;
+          eceBefore: number | null;
+          eceAfter: number | null;
+        }>
+      >,
   },
 
   embeddings: {
-    getStats: () => ipcRenderer.invoke('embeddings:getStats') as Promise<{
-      totalEmails: number;
-      indexed: number;
-      coverage: number;
-      model: string;
-    }>,
+    getStats: () =>
+      ipcRenderer.invoke('embeddings:getStats') as Promise<{
+        totalEmails: number;
+        indexed: number;
+        coverage: number;
+        model: string;
+      }>,
     backfill: (opts?: { limit?: number; accountId?: number }) =>
       ipcRenderer.invoke('embeddings:backfill', opts) as Promise<{ taskId: string; total: number }>,
   },
 
   llmCalls: {
-    getStats: () => ipcRenderer.invoke('llmCalls:getStats') as Promise<{
-      totalCalls: number;
-      totalCostUsd: number;
-      todayCalls: number;
-      todayCostUsd: number;
-      monthCostUsd: number;
-      cacheHitRate: number;
-      avgLatencyMs: number;
-      totalInputTokens: number;
-      totalOutputTokens: number;
-      totalCacheReadTokens: number;
-      totalCacheCreationTokens: number;
-    }>,
-    listRecent: (limit?: number) => ipcRenderer.invoke('llmCalls:listRecent', limit) as Promise<Array<{
-      id: number;
-      ts: string;
-      provider: string;
-      model: string;
-      emailId: number | null;
-      inputTokens: number;
-      outputTokens: number;
-      cacheReadTokens: number;
-      cacheCreationTokens: number;
-      latencyMs: number;
-      costUsd: number;
-      cacheHit: boolean;
-      stopReason: string | null;
-      error: string | null;
-    }>>,
-    getDailyCost: (days?: number) => ipcRenderer.invoke('llmCalls:getDailyCost', days) as Promise<Array<{
-      day: string;
-      model: string;
-      calls: number;
-      costUsd: number;
-    }>>,
+    getStats: () =>
+      ipcRenderer.invoke('llmCalls:getStats') as Promise<{
+        totalCalls: number;
+        totalCostUsd: number;
+        todayCalls: number;
+        todayCostUsd: number;
+        monthCostUsd: number;
+        cacheHitRate: number;
+        avgLatencyMs: number;
+        totalInputTokens: number;
+        totalOutputTokens: number;
+        totalCacheReadTokens: number;
+        totalCacheCreationTokens: number;
+      }>,
+    listRecent: (limit?: number) =>
+      ipcRenderer.invoke('llmCalls:listRecent', limit) as Promise<
+        Array<{
+          id: number;
+          ts: string;
+          provider: string;
+          model: string;
+          emailId: number | null;
+          inputTokens: number;
+          outputTokens: number;
+          cacheReadTokens: number;
+          cacheCreationTokens: number;
+          latencyMs: number;
+          costUsd: number;
+          cacheHit: boolean;
+          stopReason: string | null;
+          error: string | null;
+        }>
+      >,
+    getDailyCost: (days?: number) =>
+      ipcRenderer.invoke('llmCalls:getDailyCost', days) as Promise<
+        Array<{
+          day: string;
+          model: string;
+          calls: number;
+          costUsd: number;
+        }>
+      >,
   },
 
   aiSort: {
-    getPendingReview: (opts?: { limit?: number; offset?: number; sortBy?: 'confidence' | 'date' | 'sender'; accountId?: number }) =>
-      ipcRenderer.invoke('aiSort:getPendingReview', opts),
-    getByPriority: (priority: 'high' | 'normal' | 'low', opts?: { limit?: number; offset?: number }) =>
-      ipcRenderer.invoke('aiSort:getByPriority', priority, opts),
+    getPendingReview: (opts?: {
+      limit?: number;
+      offset?: number;
+      sortBy?: 'confidence' | 'date' | 'sender';
+      accountId?: number;
+    }) => ipcRenderer.invoke('aiSort:getPendingReview', opts),
+    getByPriority: (
+      priority: 'high' | 'normal' | 'low',
+      opts?: { limit?: number; offset?: number },
+    ) => ipcRenderer.invoke('aiSort:getByPriority', priority, opts),
     getFailed: (opts?: { limit?: number; offset?: number }) =>
       ipcRenderer.invoke('aiSort:getFailed', opts),
     getStats: (accountId?: number) => ipcRenderer.invoke('aiSort:getStats', accountId),
@@ -213,9 +257,11 @@ const api = {
       ipcRenderer.invoke('aiSort:accept', emailId, appliedFolder),
     dismiss: (emailId: number) => ipcRenderer.invoke('aiSort:dismiss', emailId),
     retry: (emailId: number) => ipcRenderer.invoke('aiSort:retry', emailId),
-    getConfusedPatterns: (limit?: number, accountId?: number) => ipcRenderer.invoke('aiSort:getConfusedPatterns', limit, accountId),
+    getConfusedPatterns: (limit?: number, accountId?: number) =>
+      ipcRenderer.invoke('aiSort:getConfusedPatterns', limit, accountId),
     clearConfusedPatterns: () => ipcRenderer.invoke('aiSort:clearConfusedPatterns'),
-    getRecentActivity: (limit?: number, accountId?: number) => ipcRenderer.invoke('aiSort:getRecentActivity', limit, accountId),
+    getRecentActivity: (limit?: number, accountId?: number) =>
+      ipcRenderer.invoke('aiSort:getRecentActivity', limit, accountId),
     bulkAccept: (emailIds: number[]) => ipcRenderer.invoke('aiSort:bulkAccept', emailIds),
     bulkDismiss: (emailIds: number[]) => ipcRenderer.invoke('aiSort:bulkDismiss', emailIds),
     // Updated for folder-based organization (Issue #54)
@@ -223,44 +269,52 @@ const api = {
       ipcRenderer.invoke('aiSort:bulkMoveToFolder', emailIds, folderPath),
     classifyUnprocessed: () => ipcRenderer.invoke('aiSort:classifyUnprocessed'),
     // Issue #56: Reclassify email
-    reclassify: (emailId: number) => ipcRenderer.invoke('aiSort:reclassify', emailId) as Promise<{
-      previousFolder: string | null;
-      previousConfidence: number | null;
-      newFolder: string;
-      newConfidence: number;
-      reasoning: string;
-    }>,
-    getClassificationState: (emailId: number) => ipcRenderer.invoke('aiSort:getClassificationState', emailId) as Promise<{
-      emailId: number;
-      status: string;
-      confidence: number | null;
-      priority: string | null;
-      suggestedFolder: string | null;
-      reasoning: string | null;
-      classifiedAt: string | null;
-    } | null>,
+    reclassify: (emailId: number) =>
+      ipcRenderer.invoke('aiSort:reclassify', emailId) as Promise<{
+        previousFolder: string | null;
+        previousConfidence: number | null;
+        newFolder: string;
+        newConfidence: number;
+        reasoning: string;
+      }>,
+    getClassificationState: (emailId: number) =>
+      ipcRenderer.invoke('aiSort:getClassificationState', emailId) as Promise<{
+        emailId: number;
+        status: string;
+        confidence: number | null;
+        priority: string | null;
+        suggestedFolder: string | null;
+        reasoning: string | null;
+        classifiedAt: string | null;
+      } | null>,
   },
 
   accounts: {
     list: () => ipcRenderer.invoke('accounts:list'),
     get: (id: number) => ipcRenderer.invoke('accounts:get', id),
-    create: (account: any, password: string) => ipcRenderer.invoke('accounts:create', account, password),
+    create: (account: any, password: string) =>
+      ipcRenderer.invoke('accounts:create', account, password),
     add: (account: any, password: string, options?: { skipSync?: boolean }) =>
       ipcRenderer.invoke('accounts:add', account, password, options) as Promise<{
         account: any;
         syncResult: { newCount: number; newEmailIds: number[] };
         syncDays: number;
       }>,
-    update: (id: number, updates: any, newPassword?: string) => ipcRenderer.invoke('accounts:update', id, updates, newPassword),
+    update: (id: number, updates: any, newPassword?: string) =>
+      ipcRenderer.invoke('accounts:update', id, updates, newPassword),
     delete: (id: number) => ipcRenderer.invoke('accounts:delete', id),
-    testImap: (email: string, host: string, port: number) => ipcRenderer.invoke('accounts:testImap', email, host, port),
-    testSmtp: (email: string, host: string, port: number) => ipcRenderer.invoke('accounts:testSmtp', email, host, port),
+    testImap: (email: string, host: string, port: number) =>
+      ipcRenderer.invoke('accounts:testImap', email, host, port),
+    testSmtp: (email: string, host: string, port: number) =>
+      ipcRenderer.invoke('accounts:testSmtp', email, host, port),
   },
 
   send: {
     email: (accountId: number, draft: any) => ipcRenderer.invoke('send:email', accountId, draft),
-    reply: (emailId: number, body: any, replyAll?: boolean) => ipcRenderer.invoke('send:reply', emailId, body, replyAll),
-    forward: (emailId: number, to: string[], body: any) => ipcRenderer.invoke('send:forward', emailId, to, body),
+    reply: (emailId: number, body: any, replyAll?: boolean) =>
+      ipcRenderer.invoke('send:reply', emailId, body, replyAll),
+    forward: (emailId: number, to: string[], body: any) =>
+      ipcRenderer.invoke('send:forward', emailId, to, body),
   },
 
   config: {
@@ -270,16 +324,13 @@ const api = {
   },
 
   credentials: {
-    setPassword: (account: string, password: string) => 
+    setPassword: (account: string, password: string) =>
       ipcRenderer.invoke('credentials:setPassword', account, password),
-    hasPassword: (account: string) => 
-      ipcRenderer.invoke('credentials:hasPassword', account),
-    deletePassword: (account: string) => 
-      ipcRenderer.invoke('credentials:deletePassword', account),
-    setApiKey: (service: string, key: string) => 
+    hasPassword: (account: string) => ipcRenderer.invoke('credentials:hasPassword', account),
+    deletePassword: (account: string) => ipcRenderer.invoke('credentials:deletePassword', account),
+    setApiKey: (service: string, key: string) =>
       ipcRenderer.invoke('credentials:setApiKey', service, key),
-    hasApiKey: (service: string) => 
-      ipcRenderer.invoke('credentials:hasApiKey', service),
+    hasApiKey: (service: string) => ipcRenderer.invoke('credentials:hasApiKey', service),
   },
 
   security: {
@@ -290,13 +341,20 @@ const api = {
   },
 
   images: {
-    getSetting: () => ipcRenderer.invoke('images:getSetting') as Promise<'block' | 'allow' | 'auto'>,
-    setSetting: (setting: 'block' | 'allow' | 'auto') => ipcRenderer.invoke('images:setSetting', setting),
-    hasLoaded: (emailId: number) => ipcRenderer.invoke('images:hasLoaded', emailId) as Promise<boolean>,
+    getSetting: () =>
+      ipcRenderer.invoke('images:getSetting') as Promise<'block' | 'allow' | 'auto'>,
+    setSetting: (setting: 'block' | 'allow' | 'auto') =>
+      ipcRenderer.invoke('images:setSetting', setting),
+    hasLoaded: (emailId: number) =>
+      ipcRenderer.invoke('images:hasLoaded', emailId) as Promise<boolean>,
     load: (emailId: number, urls: string[]) =>
-      ipcRenderer.invoke('images:load', emailId, urls) as Promise<{ url: string; localPath: string }[]>,
+      ipcRenderer.invoke('images:load', emailId, urls) as Promise<
+        { url: string; localPath: string }[]
+      >,
     autoLoad: (emailId: number, urls: string[]) =>
-      ipcRenderer.invoke('images:autoLoad', emailId, urls) as Promise<{ url: string; localPath: string }[]>,
+      ipcRenderer.invoke('images:autoLoad', emailId, urls) as Promise<
+        { url: string; localPath: string }[]
+      >,
     clearCache: (emailId: number) => ipcRenderer.invoke('images:clearCache', emailId),
     clearAllCache: () => ipcRenderer.invoke('images:clearAllCache') as Promise<void>,
   },
@@ -315,7 +373,10 @@ const api = {
 
   db: {
     checkIntegrity: (full?: boolean) =>
-      ipcRenderer.invoke('db:checkIntegrity', full) as Promise<{ isHealthy: boolean; errors: string[] }>,
+      ipcRenderer.invoke('db:checkIntegrity', full) as Promise<{
+        isHealthy: boolean;
+        errors: string[];
+      }>,
     backup: () => ipcRenderer.invoke('db:backup') as Promise<string>,
   },
 
@@ -325,36 +386,44 @@ const api = {
     downloadBinary: () => ipcRenderer.invoke('ollama:downloadBinary') as Promise<void>,
     start: () => ipcRenderer.invoke('ollama:start') as Promise<void>,
     stop: () => ipcRenderer.invoke('ollama:stop') as Promise<void>,
-    listLocalModels: () => ipcRenderer.invoke('ollama:listLocalModels') as Promise<{ name: string; size: number; modifiedAt: string }[]>,
+    listLocalModels: () =>
+      ipcRenderer.invoke('ollama:listLocalModels') as Promise<
+        { name: string; size: number; modifiedAt: string }[]
+      >,
     pullModel: (name: string) => ipcRenderer.invoke('ollama:pullModel', name) as Promise<void>,
     deleteModel: (name: string) => ipcRenderer.invoke('ollama:deleteModel', name) as Promise<void>,
-    getRecommendedModels: () => ipcRenderer.invoke('ollama:getRecommendedModels') as Promise<{
-      id: string;
-      name: string;
-      description: string;
-      size: string;
-      sizeBytes: number;
-    }[]>,
+    getRecommendedModels: () =>
+      ipcRenderer.invoke('ollama:getRecommendedModels') as Promise<
+        {
+          id: string;
+          name: string;
+          description: string;
+          size: string;
+          sizeBytes: number;
+        }[]
+      >,
     getServerUrl: () => ipcRenderer.invoke('ollama:getServerUrl') as Promise<string>,
   },
 
   license: {
-    getState: () => ipcRenderer.invoke('license:getState') as Promise<{
-      status: 'active' | 'expired' | 'grace' | 'inactive';
-      licenseKey: string | null;
-      expiresAt: string | null;
-      daysUntilExpiry: number | null;
-      isReadOnly: boolean;
-    }>,
-    activate: (licenseKey: string) => ipcRenderer.invoke('license:activate', licenseKey) as Promise<
-      | { success: true; expiresAt: string }
-      | { success: true; warning: 'device_changed'; message: string; expiresAt: string }
-      | { success: false; error: string }
-    >,
-    validate: () => ipcRenderer.invoke('license:validate') as Promise<
-      | { success: true; expiresAt: string }
-      | { success: false; error: string }
-    >,
+    getState: () =>
+      ipcRenderer.invoke('license:getState') as Promise<{
+        status: 'active' | 'expired' | 'grace' | 'inactive';
+        licenseKey: string | null;
+        expiresAt: string | null;
+        daysUntilExpiry: number | null;
+        isReadOnly: boolean;
+      }>,
+    activate: (licenseKey: string) =>
+      ipcRenderer.invoke('license:activate', licenseKey) as Promise<
+        | { success: true; expiresAt: string }
+        | { success: true; warning: 'device_changed'; message: string; expiresAt: string }
+        | { success: false; error: string }
+      >,
+    validate: () =>
+      ipcRenderer.invoke('license:validate') as Promise<
+        { success: true; expiresAt: string } | { success: false; error: string }
+      >,
     deactivate: () => ipcRenderer.invoke('license:deactivate') as Promise<void>,
   },
 
@@ -364,8 +433,12 @@ const api = {
       ipcRenderer.invoke('triage:classifyAndMove', emailId, options),
     moveToFolder: (emailId: number, folder: string, accountId: number) =>
       ipcRenderer.invoke('triage:moveToFolder', emailId, folder, accountId),
-    learnFromCorrection: (emailId: number, oldFolder: string, newFolder: string, accountId: number) =>
-      ipcRenderer.invoke('triage:learnFromCorrection', emailId, oldFolder, newFolder, accountId),
+    learnFromCorrection: (
+      emailId: number,
+      oldFolder: string,
+      newFolder: string,
+      accountId: number,
+    ) => ipcRenderer.invoke('triage:learnFromCorrection', emailId, oldFolder, newFolder, accountId),
     snooze: (emailId: number, accountId: number, until: string) =>
       ipcRenderer.invoke('triage:snooze', emailId, accountId, until),
     unsnooze: (emailId: number) => ipcRenderer.invoke('triage:unsnooze', emailId),
@@ -374,55 +447,55 @@ const api = {
       ipcRenderer.invoke('triage:saveTrainingExample', example),
     getTrainingExamples: (accountId: number, limit?: number) =>
       ipcRenderer.invoke('triage:getTrainingExamples', accountId, limit),
-    ensureFolders: (accountId: number) =>
-      ipcRenderer.invoke('triage:ensureFolders', accountId),
-    getSenderRules: (accountId: number) =>
-      ipcRenderer.invoke('triage:getSenderRules', accountId),
+    ensureFolders: (accountId: number) => ipcRenderer.invoke('triage:ensureFolders', accountId),
+    getSenderRules: (accountId: number) => ipcRenderer.invoke('triage:getSenderRules', accountId),
     getLog: (emailId: number) => ipcRenderer.invoke('triage:getLog', emailId),
     // Issue #55: Select diverse training emails for onboarding
-    selectDiverseTrainingEmails: (accountId: number, options?: { maxEmails?: number; poolSize?: number }) =>
-      ipcRenderer.invoke('triage:selectDiverseTrainingEmails', accountId, options),
+    selectDiverseTrainingEmails: (
+      accountId: number,
+      options?: { maxEmails?: number; poolSize?: number },
+    ) => ipcRenderer.invoke('triage:selectDiverseTrainingEmails', accountId, options),
   },
 
   // Email Threading
   threads: {
     list: (accountId: number, folderId: number) =>
-      ipcRenderer.invoke('threads:list', accountId, folderId) as Promise<{
-        threadId: string;
-        subject: string;
-        snippet: string;
-        participants: { address: string; name: string | null }[];
-        messageCount: number;
-        unreadCount: number;
-        latestDate: string;
-        isLatestUnread: boolean;
-      }[]>,
+      ipcRenderer.invoke('threads:list', accountId, folderId) as Promise<
+        {
+          threadId: string;
+          subject: string;
+          snippet: string;
+          participants: { address: string; name: string | null }[];
+          messageCount: number;
+          unreadCount: number;
+          latestDate: string;
+          isLatestUnread: boolean;
+        }[]
+      >,
     messages: (threadId: string) =>
       ipcRenderer.invoke('threads:messages', threadId) as Promise<any[]>,
   },
 
   // Awaiting Reply
   awaiting: {
-    list: (accountId: number) =>
-      ipcRenderer.invoke('awaiting:list', accountId) as Promise<any[]>,
-    mark: (emailId: number) =>
-      ipcRenderer.invoke('awaiting:mark', emailId) as Promise<void>,
-    clear: (emailId: number) =>
-      ipcRenderer.invoke('awaiting:clear', emailId) as Promise<void>,
+    list: (accountId: number) => ipcRenderer.invoke('awaiting:list', accountId) as Promise<any[]>,
+    mark: (emailId: number) => ipcRenderer.invoke('awaiting:mark', emailId) as Promise<void>,
+    clear: (emailId: number) => ipcRenderer.invoke('awaiting:clear', emailId) as Promise<void>,
     shouldTrack: (body: string) =>
       ipcRenderer.invoke('awaiting:shouldTrack', body) as Promise<boolean>,
     clearByReply: (inReplyToMessageId: string) =>
       ipcRenderer.invoke('awaiting:clearByReply', inReplyToMessageId) as Promise<number | null>,
-    toggle: (emailId: number) =>
-      ipcRenderer.invoke('awaiting:toggle', emailId) as Promise<boolean>,
+    toggle: (emailId: number) => ipcRenderer.invoke('awaiting:toggle', emailId) as Promise<boolean>,
   },
 
   // Send Queue (delayed sending)
   sendQueue: {
     queue: (accountId: number, draft: any) =>
-      ipcRenderer.invoke('send:queue', accountId, draft) as Promise<{ id: string; expiresAt: string }>,
-    cancel: (id: string) =>
-      ipcRenderer.invoke('send:cancel', id) as Promise<boolean>,
+      ipcRenderer.invoke('send:queue', accountId, draft) as Promise<{
+        id: string;
+        expiresAt: string;
+      }>,
+    cancel: (id: string) => ipcRenderer.invoke('send:cancel', id) as Promise<boolean>,
     status: (id: string) =>
       ipcRenderer.invoke('send:status', id) as Promise<{
         id: string;
@@ -442,7 +515,9 @@ const api = {
         oneClick: boolean;
       }>,
     execute: (info: { mailto: string | null; https: string | null; oneClick: boolean }) =>
-      ipcRenderer.invoke('unsubscribe:execute', info) as Promise<'email' | 'post' | 'browser' | 'none'>,
+      ipcRenderer.invoke('unsubscribe:execute', info) as Promise<
+        'email' | 'post' | 'browser' | 'none'
+      >,
   },
 
   on: (channel: string, callback: Callback) => {

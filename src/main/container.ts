@@ -1,6 +1,6 @@
 /**
  * Composition Root
- * 
+ *
  * Wires all adapters to ports and creates use cases.
  * This is where dependency injection happens.
  */
@@ -14,15 +14,53 @@ import { createUseCases, type UseCases, type Deps } from '../core';
 
 // Adapters
 // Tags removed - using folders for organization (Issue #54)
-import { initDb, closeDb, getDb, createEmailRepo, createAttachmentRepo, createAccountRepo, createFolderRepo, createDraftRepo, createClassificationStateRepo, createContactRepo, checkIntegrity, createDbBackup, createAwaitingRepo, createThreadRepo, createLlmCallsRepo, createSecurityEventRepo, createCalibrationRepo, createBodyMigrationRepo, wrapEmailRepoWithEncryption } from '../adapters/db';
+import {
+  initDb,
+  closeDb,
+  getDb,
+  createEmailRepo,
+  createAttachmentRepo,
+  createAccountRepo,
+  createFolderRepo,
+  createDraftRepo,
+  createClassificationStateRepo,
+  createContactRepo,
+  checkIntegrity,
+  createDbBackup,
+  createAwaitingRepo,
+  createThreadRepo,
+  createLlmCallsRepo,
+  createSecurityEventRepo,
+  createCalibrationRepo,
+  createBodyMigrationRepo,
+  wrapEmailRepoWithEncryption,
+} from '../adapters/db';
 import { logger } from '../adapters/observability';
 import { wrapSecureStorageWithAudit } from '../adapters/keychain/audit';
 import { loadOrCreateBodyKey } from '../adapters/keychain/body-passphrase';
-import { startCalibrationScheduler, type CalibrationScheduler } from './schedulers/calibration-scheduler';
+import {
+  startCalibrationScheduler,
+  type CalibrationScheduler,
+} from './schedulers/calibration-scheduler';
 import { createMailSync, createImapFolderOps } from '../adapters/imap';
-import { createClassifier, createAnthropicProvider, createOllamaProvider, createOllamaClassifier, createFallbackClassifier, scoreEmailRiskTier, type AgentTools, type FallbackTransition } from '../adapters/llm';
+import {
+  createClassifier,
+  createAnthropicProvider,
+  createOllamaProvider,
+  createOllamaClassifier,
+  createFallbackClassifier,
+  scoreEmailRiskTier,
+  type AgentTools,
+  type FallbackTransition,
+} from '../adapters/llm';
 import { chooseVersion, challengerPercentFromEnv } from '../adapters/llm/prompts/loader';
-import { createPatternMatcher, createTrainingRepo, createSenderRulesRepo, createSnoozeRepo, createTriageLogRepo, createTriageClassifier } from '../adapters/triage';
+import {
+  createPatternMatcher,
+  createTrainingRepo,
+  createSenderRulesRepo,
+  createSnoozeRepo,
+  createTriageLogRepo,
+} from '../adapters/triage';
 import { createEmbeddingService } from '../adapters/embeddings/index';
 import { createEmbeddingRepo } from '../adapters/embeddings/embedding-repo';
 import { createVectorSearch } from '../adapters/embeddings/vector-search';
@@ -121,7 +159,9 @@ export function createContainer(): Container {
   // Schema path: check packaged app location first, then dev location
   const packagedSchemaPath = path.join(process.resourcesPath, 'schema.sql');
   const devSchemaPath = path.join(__dirname, '../adapters/db/schema.sql');
-  const schemaPath = require('fs').existsSync(packagedSchemaPath) ? packagedSchemaPath : devSchemaPath;
+  const schemaPath = require('fs').existsSync(packagedSchemaPath)
+    ? packagedSchemaPath
+    : devSchemaPath;
 
   initDb(dbPath, schemaPath);
 
@@ -138,7 +178,7 @@ export function createContainer(): Container {
     let wrappedPromise: Promise<ReturnType<typeof wrapEmailRepoWithEncryption>> | null = null;
     const getWrapped = (secretsForKey: import('../core/ports').SecureStorage) => {
       if (!wrappedPromise) {
-        wrappedPromise = loadOrCreateBodyKey(secretsForKey).then(key =>
+        wrappedPromise = loadOrCreateBodyKey(secretsForKey).then((key) =>
           wrapEmailRepoWithEncryption(rawEmails, key),
         );
       }
@@ -175,15 +215,15 @@ export function createContainer(): Container {
   // emitter in the container funnels through one write path. Defensive:
   // a sink failure is logged but must never break the originating flow.
   const recordSecurityEvent = (entry: import('../core/ports').SecurityEventEntry) => {
-    securityEvents.record(entry).catch(err =>
-      logger.error({ err, entry }, 'Failed to persist security_events row'),
-    );
+    securityEvents
+      .record(entry)
+      .catch((err) => logger.error({ err, entry }, 'Failed to persist security_events row'));
   };
 
   // Keychain: OS-backed storage wrapped with the audit decorator so every
   // credential read/write/delete lands in security_events (#98).
   const secrets = wrapSecureStorageWithAudit(createSecureStorage(), securityEvents, {
-    onSinkError: err => logger.error({ err }, 'security audit sink failed'),
+    onSinkError: (err) => logger.error({ err }, 'security audit sink failed'),
   });
 
   // Observability sink: records every classify call for the cost dashboard (#94)
@@ -203,26 +243,31 @@ export function createContainer(): Container {
     stopReason: string | null;
     error?: string | null;
   }) => {
-    llmCalls.record({
-      provider: record.provider,
-      model: record.model,
-      promptVersion: record.promptVersion,
-      emailId: record.emailId ?? null,
-      inputTokens: record.inputTokens,
-      outputTokens: record.outputTokens,
-      cacheReadTokens: record.cacheReadTokens,
-      cacheCreationTokens: record.cacheCreationTokens,
-      latencyMs: record.latencyMs,
-      costUsd: record.costUsd,
-      cacheHit: record.cacheHit,
-      stopReason: record.stopReason,
-      error: record.error ?? null,
-    }).catch(err => logger.error({ err }, 'Failed to persist llm_calls row'));
+    llmCalls
+      .record({
+        provider: record.provider,
+        model: record.model,
+        promptVersion: record.promptVersion,
+        emailId: record.emailId ?? null,
+        inputTokens: record.inputTokens,
+        outputTokens: record.outputTokens,
+        cacheReadTokens: record.cacheReadTokens,
+        cacheCreationTokens: record.cacheCreationTokens,
+        latencyMs: record.latencyMs,
+        costUsd: record.costUsd,
+        cacheHit: record.cacheHit,
+        stopReason: record.stopReason,
+        error: record.error ?? null,
+      })
+      .catch((err) => logger.error({ err }, 'Failed to persist llm_calls row'));
 
-    logger.info({
-      component: 'llm',
-      ...record,
-    }, 'llm.call');
+    logger.info(
+      {
+        component: 'llm',
+        ...record,
+      },
+      'llm.call',
+    );
   };
 
   // Create services (with dependencies)
@@ -234,17 +279,15 @@ export function createContainer(): Container {
   const anthropicProvider = createAnthropicProvider(secrets);
 
   // Create classifiers for both providers (updated for folder-based classification - Issue #54)
-  const ollamaClassifier = createOllamaClassifier(
-    () => {
-      const cfg = configStore.get('llm');
-      return {
-        model: cfg.model,
-        serverUrl: cfg.ollamaServerUrl,
-        dailyBudget: cfg.dailyBudget,
-        dailyEmailLimit: cfg.dailyEmailLimit,
-      };
-    }
-  );
+  const ollamaClassifier = createOllamaClassifier(() => {
+    const cfg = configStore.get('llm');
+    return {
+      model: cfg.model,
+      serverUrl: cfg.ollamaServerUrl,
+      dailyBudget: cfg.dailyBudget,
+      dailyEmailLimit: cfg.dailyEmailLimit,
+    };
+  });
 
   // Agent tools for the Anthropic classifier (#87). Provided to the classifier
   // so low-confidence classifications can call find_similar_emails and
@@ -258,7 +301,7 @@ export function createContainer(): Container {
       // Enrich with subject + sender for the model. Best-effort; skip hits
       // whose email row no longer exists.
       const enriched = await Promise.all(
-        hits.map(async h => {
+        hits.map(async (h) => {
           const e = await emails.findById(h.emailId);
           if (!e) return null;
           return {
@@ -267,7 +310,7 @@ export function createContainer(): Container {
             subject: e.subject,
             fromAddress: e.from.address,
           };
-        })
+        }),
       );
       return enriched.filter((x): x is NonNullable<typeof x> => x !== null);
     },
@@ -287,16 +330,28 @@ export function createContainer(): Container {
 
   // Prompt-injection audit sink (#102 → #98). Logs high-signal findings to
   // the structured logger AND to the security audit log.
-  const logInjectionFindings = (emailId: number, findings: ReturnType<typeof import('../adapters/llm').detectPromptInjection>) => {
-    const findingSummary = findings.map(f => ({ category: f.category, severity: f.severity, matched: f.matched }));
-    logger.warn({
-      component: 'prompt-injection',
-      emailId,
-      findings: findingSummary,
-    }, 'prompt-injection.detected');
-    const worstSeverity = findings.some(f => f.severity === 'high') ? 'alert'
-      : findings.some(f => f.severity === 'medium') ? 'warn'
-      : 'info';
+  const logInjectionFindings = (
+    emailId: number,
+    findings: ReturnType<typeof import('../adapters/llm').detectPromptInjection>,
+  ) => {
+    const findingSummary = findings.map((f) => ({
+      category: f.category,
+      severity: f.severity,
+      matched: f.matched,
+    }));
+    logger.warn(
+      {
+        component: 'prompt-injection',
+        emailId,
+        findings: findingSummary,
+      },
+      'prompt-injection.detected',
+    );
+    const worstSeverity = findings.some((f) => f.severity === 'high')
+      ? 'alert'
+      : findings.some((f) => f.severity === 'medium')
+        ? 'warn'
+        : 'info';
     recordSecurityEvent({
       eventType: 'prompt_injection.detected',
       severity: worstSeverity,
@@ -312,15 +367,16 @@ export function createContainer(): Container {
     logger.info({ component: 'prompt-ab', challengerPercent }, 'prompt-ab.enabled');
   }
 
-  // Fallback-chain transitions (#95 → #98): logged via pino, counted in
-  // memory, and persisted to the security audit log.
-  let fallbackCount = 0;
+  // Fallback-chain transitions (#95 → #98): logged via pino and persisted
+  // to the security audit log.
   const logFallbackTransition = (t: FallbackTransition) => {
-    fallbackCount++;
-    logger.warn({
-      component: 'fallback',
-      ...t,
-    }, 'classifier.fallback');
+    logger.warn(
+      {
+        component: 'fallback',
+        ...t,
+      },
+      'classifier.fallback',
+    );
     recordSecurityEvent({
       eventType: 'classifier.fallback',
       severity: t.reason === 'budget_exhausted' ? 'alert' : 'warn',
@@ -416,7 +472,7 @@ export function createContainer(): Container {
           dailyBudget: cfg.dailyBudget,
           dailyEmailLimit: cfg.dailyEmailLimit,
         },
-        secrets
+        secrets,
       );
       return anthClassifier.getBudget();
     },
@@ -431,7 +487,7 @@ export function createContainer(): Container {
           dailyBudget: cfg.dailyBudget,
           dailyEmailLimit: cfg.dailyEmailLimit,
         },
-        secrets
+        secrets,
       );
       return anthClassifier.getEmailBudget();
     },
@@ -510,7 +566,6 @@ export function createContainer(): Container {
     async complete(prompt: string): Promise<string> {
       const cfg = configStore.get('llm');
       if (cfg.provider === 'ollama') {
-        const freshProvider = createOllamaProvider(cfg.ollamaServerUrl);
         // Use Ollama's generate endpoint
         const response = await fetch(`${cfg.ollamaServerUrl}/api/generate`, {
           method: 'POST',
@@ -522,7 +577,7 @@ export function createContainer(): Container {
             format: 'json',
           }),
         });
-        const data = await response.json() as { response: string };
+        const data = (await response.json()) as { response: string };
         return data.response;
       } else {
         // Use Anthropic
@@ -535,7 +590,7 @@ export function createContainer(): Container {
           max_tokens: 1024,
           messages: [{ role: 'user', content: prompt }],
         });
-        const textBlock = message.content.find(b => b.type === 'text');
+        const textBlock = message.content.find((b) => b.type === 'text');
         return textBlock?.type === 'text' ? textBlock.text : '';
       }
     },
@@ -605,7 +660,7 @@ export function createContainer(): Container {
     // Email-body encryption migration (#99 follow-up)
     bodyMigration,
   };
-  
+
   // Create use cases
   const useCases = createUseCases(deps);
 
@@ -663,6 +718,7 @@ export function createContainer(): Container {
   const shutdown = async () => {
     calibrationScheduler?.stop();
     await sync.disconnect(0); // Disconnect all
+    await imapFolderOps.disconnect();
     closeDb();
   };
 

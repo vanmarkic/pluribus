@@ -1,4 +1,5 @@
 import { Sidebar } from '../components/Sidebar';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import { EmailList } from '../components/EmailList';
 import { EmailViewer } from '../components/EmailViewer';
 import { DraftsList } from '../components/DraftsList';
@@ -7,9 +8,24 @@ import { AISortView } from '../components/ai-sort';
 import { SettingsView } from '../views/SettingsView';
 
 // Match the View type from stores - must be kept in sync
-type View = 'inbox' | 'sent' | 'starred' | 'archive' | 'trash' | 'drafts' | 'settings' | 'ai-sort'
-  | 'planning' | 'review' | 'feed' | 'social' | 'promotions' | 'awaiting'
-  | 'paper-trail/invoices' | 'paper-trail/admin' | 'paper-trail/travel';
+type View =
+  | 'inbox'
+  | 'sent'
+  | 'starred'
+  | 'archive'
+  | 'trash'
+  | 'drafts'
+  | 'settings'
+  | 'ai-sort'
+  | 'planning'
+  | 'review'
+  | 'feed'
+  | 'social'
+  | 'promotions'
+  | 'awaiting'
+  | 'paper-trail/invoices'
+  | 'paper-trail/admin'
+  | 'paper-trail/travel';
 
 type MainLayoutProps = {
   view: View;
@@ -25,37 +41,45 @@ export function MainLayout({ view }: MainLayoutProps) {
       {/* Sidebar */}
       <Sidebar />
 
-      {/* Main Content */}
-      {view === 'settings' ? (
-        <div className="flex-1 overflow-y-auto" style={{ background: 'var(--color-bg-secondary)' }}>
-          <SettingsView />
-        </div>
-      ) : view === 'drafts' ? (
-        <>
-          {/* Drafts List - clicking opens ComposeModal */}
-          <DraftsList />
-
-          {/* Empty state for viewer when in drafts */}
+      {/* Main Content — guarded so a crash in one view doesn't blank the app */}
+      <ErrorBoundary>
+        {view === 'settings' ? (
           <div
-            className="flex-1 flex items-center justify-center"
-            style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text-tertiary)' }}
+            className="flex-1 overflow-y-auto"
+            style={{ background: 'var(--color-bg-secondary)' }}
           >
-            <p>Select a draft to edit</p>
+            <SettingsView />
           </div>
-        </>
-      ) : view === 'review' ? (
-        <TriageReviewView />
-      ) : view === 'ai-sort' ? (
-        <AISortView />
-      ) : (
-        <>
-          {/* Email List */}
-          <EmailList />
+        ) : view === 'drafts' ? (
+          <>
+            {/* Drafts List - clicking opens ComposeModal */}
+            <DraftsList />
 
-          {/* Email Viewer */}
-          <EmailViewer />
-        </>
-      )}
+            {/* Empty state for viewer when in drafts */}
+            <div
+              className="flex-1 flex items-center justify-center"
+              style={{
+                background: 'var(--color-bg-secondary)',
+                color: 'var(--color-text-tertiary)',
+              }}
+            >
+              <p>Select a draft to edit</p>
+            </div>
+          </>
+        ) : view === 'review' ? (
+          <TriageReviewView />
+        ) : view === 'ai-sort' ? (
+          <AISortView />
+        ) : (
+          <>
+            {/* Email List */}
+            <EmailList />
+
+            {/* Email Viewer */}
+            <EmailViewer />
+          </>
+        )}
+      </ErrorBoundary>
     </div>
   );
 }

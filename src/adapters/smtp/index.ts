@@ -6,7 +6,7 @@
  */
 
 import nodemailer from 'nodemailer';
-import type { MailSender, SmtpConfig, EmailDraft, SendResult, SecureStorage } from '../../core/ports';
+import type { MailSender, SmtpConfig, SecureStorage } from '../../core/ports';
 
 // Default SMTP configs for common providers
 const PROVIDER_CONFIGS: Record<string, SmtpConfig> = {
@@ -32,6 +32,9 @@ export function createMailSender(secrets: SecureStorage): MailSender {
         host: smtpConfig.host,
         port: smtpConfig.port,
         secure: smtpConfig.secure,
+        // Force a STARTTLS upgrade on non-implicit-TLS ports and abort if
+        // the server won't encrypt — never send credentials in cleartext.
+        requireTLS: true,
         auth: {
           user: accountEmail,
           pass: password,
@@ -48,7 +51,7 @@ export function createMailSender(secrets: SecureStorage): MailSender {
         html: draft.html,
         inReplyTo: draft.inReplyTo,
         references: draft.references?.join(' '),
-        attachments: draft.attachments?.map(a => ({
+        attachments: draft.attachments?.map((a) => ({
           filename: a.filename,
           content: Buffer.from(a.content, 'base64'),
           contentType: a.contentType,
@@ -58,10 +61,10 @@ export function createMailSender(secrets: SecureStorage): MailSender {
       return {
         messageId: result.messageId,
         accepted: Array.isArray(result.accepted)
-          ? result.accepted.map(a => typeof a === 'string' ? a : a.address)
+          ? result.accepted.map((a) => (typeof a === 'string' ? a : a.address))
           : [],
         rejected: Array.isArray(result.rejected)
-          ? result.rejected.map(r => typeof r === 'string' ? r : r.address)
+          ? result.rejected.map((r) => (typeof r === 'string' ? r : r.address))
           : [],
       };
     },
@@ -76,6 +79,7 @@ export function createMailSender(secrets: SecureStorage): MailSender {
         host: config.host,
         port: config.port,
         secure: config.secure,
+        requireTLS: true,
         auth: {
           user: email,
           pass: password,

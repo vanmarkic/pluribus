@@ -3,7 +3,8 @@
  *
  * Caches remote email images to local filesystem.
  * Storage: {userData}/cache/images/{emailId}/{hash}.{ext}
- * Security: Only fetches http/https URLs, validates content-type
+ * Security: SSRF-guarded fetches (public http/https hosts only),
+ * content-type and size validation.
  */
 
 import * as fs from 'fs';
@@ -11,6 +12,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { app, net } from 'electron';
 import type { ImageCache, CachedImage } from '../../core/ports';
+import { assertPublicHttpUrl } from '../net-guard';
 
 // Allowed image content types
 const ALLOWED_CONTENT_TYPES = new Set([
@@ -64,18 +66,6 @@ function hashUrl(url: string): string {
 }
 
 /**
- * Validate URL is safe to fetch
- */
-function isValidImageUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Get extension from content-type or URL
  */
 function getExtension(contentType: string | null, url: string): string {
@@ -96,9 +86,15 @@ function getExtension(contentType: string | null, url: string): string {
 /**
  * Fetch a single image with timeout and size limits
  */
-async function fetchImage(url: string): Promise<{ data: Buffer; contentType: string | null } | null> {
-  if (!isValidImageUrl(url)) {
-    console.warn(`Invalid image URL: ${url}`);
+async function fetchImage(
+  url: string,
+): Promise<{ data: Buffer; contentType: string | null } | null> {
+  // SSRF guard: reject non-http(s) schemes and hosts that resolve to
+  // private/loopback address space before issuing the request.
+  try {
+    await assertPublicHttpUrl(url);
+  } catch (err) {
+    console.warn(`Blocked image URL ${url}: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   }
 
@@ -249,9 +245,7 @@ export function createImageCache(getDb: () => any): ImageCache {
       const emailCacheDir = getEmailCacheDir(emailId);
 
       // Remove from tracking table
-      getDb()
-        .prepare('DELETE FROM email_images_loaded WHERE email_id = ?')
-        .run(emailId);
+      getDb().prepare('DELETE FROM email_images_loaded WHERE email_id = ?').run(emailId);
 
       // Remove files
       if (fs.existsSync(emailCacheDir)) {

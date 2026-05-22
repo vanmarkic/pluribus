@@ -54,10 +54,12 @@ function registerCachedImageProtocol(): void {
     const cacheDir = path.join(app.getPath('userData'), 'cache', 'images', emailId);
     const filePath = path.join(cacheDir, filename);
 
-    // Security: Ensure the path is within the cache directory
+    // Security: Ensure the path is within the cache directory. The
+    // separator check stops a sibling-prefix escape (e.g. cache dir
+    // ".../images/1" must not match ".../images/12/secret").
     const realPath = path.resolve(filePath);
     const realCacheDir = path.resolve(cacheDir);
-    if (!realPath.startsWith(realCacheDir)) {
+    if (realPath !== realCacheDir && !realPath.startsWith(realCacheDir + path.sep)) {
       console.warn('Attempted path traversal:', filePath);
       return new Response('Forbidden', { status: 403 });
     }
@@ -128,10 +130,10 @@ const CSP = [
   isDev
     ? "connect-src 'self' https://api.anthropic.com http://localhost:5173 ws://localhost:5173"
     : "connect-src 'self' https://api.anthropic.com",
-  "worker-src 'self' blob:",            // xenova/transformers spawns ONNX workers
+  "worker-src 'self' blob:", // xenova/transformers spawns ONNX workers
   "frame-src 'none'",
-  "frame-ancestors 'none'",              // clickjacking defence
-  "form-action 'self'",                  // phishing defence
+  "frame-ancestors 'none'", // clickjacking defence
+  "form-action 'self'", // phishing defence
   "object-src 'none'",
   "base-uri 'self'",
 ].join('; ');
@@ -186,10 +188,10 @@ async function createWindow(): Promise<void> {
   // Restrict navigation to trusted origins only
   mainWindow.webContents.on('will-navigate', (event, url) => {
     const allowed = [
-      'http://localhost:5173',  // Dev server
-      'file://',                // Production build
+      'http://localhost:5173', // Dev server
+      'file://', // Production build
     ];
-    const isAllowed = allowed.some(origin => url.startsWith(origin));
+    const isAllowed = allowed.some((origin) => url.startsWith(origin));
     if (!isAllowed) {
       event.preventDefault();
       console.warn('Blocked navigation to:', url);
