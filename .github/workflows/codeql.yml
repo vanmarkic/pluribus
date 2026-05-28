@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Run every Monday at 08:00 UTC to catch newly-disclosed vulnerabilities.
+    # Run every Monday at 08:00 UTC to catch issues introduced without a PR.
     - cron: '0 8 * * 1'
 
 concurrency:
