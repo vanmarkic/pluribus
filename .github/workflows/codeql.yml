@@ -32,6 +32,9 @@ jobs:
           # Use the security-and-quality query suite for broader coverage.
           queries: security-and-quality
 
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v3
         with:
