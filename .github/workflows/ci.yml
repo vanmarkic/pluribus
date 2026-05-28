@@ -29,9 +29,8 @@ jobs:
       - run: npm ci --no-audit --no-fund --legacy-peer-deps
       - run: npx eslint .
       - run: npx prettier --check . || true
-      # Informational only — surfaces advisories without blocking the build.
       - name: npm audit
-        run: npm audit --audit-level=high || true
+        run: npm audit --audit-level=high
 
   typecheck:
     name: Typecheck
