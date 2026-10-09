@@ -145,9 +145,30 @@ export function wrapSecureStorageWithAudit(
       }
     },
 
-    // TODO(P2): decide whether unlocked-only reads should emit an audit event.
-    getPasswordIfUnlocked(account) {
-      return inner.getPasswordIfUnlocked(account);
+    // Unattended read (daily digest). Audited like any other credential read,
+    // with `interactive: false` so it can be told apart from user-driven reads.
+    async getPasswordIfUnlocked(account) {
+      try {
+        const value = await inner.getPasswordIfUnlocked(account);
+        safeRecord(events, {
+          eventType: 'credential.password.read',
+          severity: 'info',
+          actor: 'keychain',
+          target: account,
+          metadata: { hit: value !== null, interactive: false },
+        }, options);
+        return value;
+      } catch (err) {
+        safeRecord(events, {
+          eventType: 'credential.password.read',
+          severity: 'alert',
+          actor: 'keychain',
+          target: account,
+          success: false,
+          metadata: { error: err instanceof Error ? err.message : String(err), interactive: false },
+        }, options);
+        throw err;
+      }
     },
 
     clearSession() {

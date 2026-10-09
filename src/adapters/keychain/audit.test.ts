@@ -21,6 +21,7 @@ function mkSecrets(overrides: Partial<SecureStorage> = {}): SecureStorage {
     deletePassword: vi.fn(async () => true),
     setApiKey: vi.fn(async () => {}),
     getApiKey: vi.fn(async () => 'sk-123'),
+    getPasswordIfUnlocked: vi.fn(async () => 'pw'),
     clearSession: vi.fn(),
     getConfig: vi.fn(() => ({ biometricMode: 'never', sessionTimeoutMs: 0, requireForSend: false })),
     setConfig: vi.fn(),
@@ -62,6 +63,80 @@ describe('wrapSecureStorageWithAudit', () => {
 
     const serialised = JSON.stringify(records);
     expect(serialised).not.toContain('hunter2');
+  });
+
+  describe('getPasswordIfUnlocked (unattended read)', () => {
+    it('forwards the result, records a non-interactive read event, and never leaks the value', async () => {
+      const inner = mkSecrets({ getPasswordIfUnlocked: vi.fn(async () => 'hunter2') });
+      const { repo, records } = mkSink();
+      const wrapped = wrapSecureStorageWithAudit(inner, repo);
+
+      const value = await wrapped.getPasswordIfUnlocked('user@example.com');
+      await flush();
+
+      expect(value).toBe('hunter2');
+      expect(inner.getPasswordIfUnlocked).toHaveBeenCalledWith('user@example.com');
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        eventType: 'credential.password.read',
+        severity: 'info',
+        actor: 'keychain',
+        target: 'user@example.com',
+      });
+      expect(records[0]?.metadata).toEqual({ hit: true, interactive: false });
+      expect(JSON.stringify(records)).not.toContain('hunter2');
+    });
+
+    it('records hit:false and returns null when the credentials are locked', async () => {
+      const inner = mkSecrets({ getPasswordIfUnlocked: vi.fn(async () => null) });
+      const { repo, records } = mkSink();
+      const wrapped = wrapSecureStorageWithAudit(inner, repo);
+
+      await expect(wrapped.getPasswordIfUnlocked('user@example.com')).resolves.toBeNull();
+      await flush();
+
+      expect(records[0]?.metadata).toEqual({ hit: false, interactive: false });
+    });
+
+    it('never touches the prompting getPassword of the inner storage', async () => {
+      const inner = mkSecrets();
+      const { repo } = mkSink();
+      const wrapped = wrapSecureStorageWithAudit(inner, repo);
+
+      await wrapped.getPasswordIfUnlocked('user@example.com');
+
+      expect(inner.getPassword).not.toHaveBeenCalled();
+    });
+
+    it('records an alert row and rethrows when the inner read throws', async () => {
+      const inner = mkSecrets({
+        getPasswordIfUnlocked: vi.fn(async () => { throw new Error('keychain locked'); }),
+      });
+      const { repo, records } = mkSink();
+      const wrapped = wrapSecureStorageWithAudit(inner, repo);
+
+      await expect(wrapped.getPasswordIfUnlocked('user@example.com')).rejects.toThrow('keychain locked');
+      await flush();
+
+      expect(records[0]).toMatchObject({ severity: 'alert', success: false });
+      expect(records[0]?.metadata).toMatchObject({ error: 'keychain locked' });
+    });
+
+    it('survives a failing audit sink', async () => {
+      const inner = mkSecrets();
+      const failing: SecurityEventRepo = {
+        record: vi.fn(async () => { throw new Error('db full'); }),
+        listRecent: async () => [],
+        countByType: async () => ({}),
+        prune: async () => 0,
+      };
+      const onSinkError = vi.fn();
+      const wrapped = wrapSecureStorageWithAudit(inner, failing, { onSinkError });
+
+      await expect(wrapped.getPasswordIfUnlocked('user@example.com')).resolves.toBe('pw');
+      await flush();
+      expect(onSinkError).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('marks a write with higher severity for API keys than for passwords', async () => {
