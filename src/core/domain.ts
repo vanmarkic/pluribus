@@ -612,6 +612,8 @@ export type DigestState = {
   lastRunDate: string | null;
   /** Digest emails deferred because credentials were locked. */
   pendingEmailAccountIds: number[];
+  /** Set once the launch-at-login setting has been applied to the OS. */
+  loginItemApplied?: boolean;
 };
 
 export type DigestTrigger = 'scheduled' | 'manual' | 'test';

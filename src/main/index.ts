@@ -23,6 +23,11 @@ import { createSystem1Runtime, type System1Runtime } from './system1-wiring';
 import { logger } from '../adapters/observability';
 import { readSystem1Settings } from '../core/system1/settings';
 import { createWindowManager } from './window-manager';
+import {
+  createActivationGuard,
+  createLoginItemController,
+  createLoginItemSync,
+} from './login-item';
 import { cleanupOllamaProcess } from '../adapters/ollama-manager';
 import { startOllamaOnLaunch } from '../core/usecases/ollama-usecases';
 
@@ -289,9 +294,28 @@ async function startApp(): Promise<void> {
   // notification now opens the Needs-your-reply view.
   c.setOpenNeedsReplyHandler(() => void runtime.openNeedsReply());
 
+  // Launch at login: register (once) and follow the digest setting from then on.
+  const loginItem = createLoginItemSync({
+    controller: createLoginItemController({
+      app,
+      log: (message, err) => logger.warn({ err }, message),
+    }),
+    getSettings: () => c.deps.digestConfig.getSettings(),
+    getState: () => c.deps.digestConfig.getState(),
+    setState: (state) => c.deps.digestConfig.setState(state),
+  });
+  c.config.onChange('digest', (digest) => {
+    loginItem.onSettingsChanged(digest);
+  });
+  loginItem.reconcileAtStartup();
+  // Started by the OS at login: stay in the background, no window.
+  const startHidden = loginItem.shouldStartHidden();
+  const activationGuard = createActivationGuard();
+
   // macOS: dock-icon click (or relaunch) with no window open. Registered after
   // the IPC handlers exist, so a window is never created ahead of them.
   app.on('activate', () => {
+    if (activationGuard.shouldIgnoreActivation()) return; // launch-time activation after a hidden start
     void windowManager.showWindow().catch((error) => {
       console.error('[Main] Could not open the window:', error);
     });
@@ -303,11 +327,17 @@ async function startApp(): Promise<void> {
     });
   });
 
-  // The first window. If it fails to come up the digest must still run.
-  try {
-    await windowManager.showWindow();
-  } catch (error) {
-    console.error('[Main] Could not open the window:', error);
+  // The first window (none when the OS started us at login). If it fails to
+  // come up the digest must still run.
+  if (startHidden) {
+    console.log('[Main] Started at login: running in the background without a window');
+    activationGuard.arm();
+  } else {
+    try {
+      await windowManager.showWindow();
+    } catch (error) {
+      console.error('[Main] Could not open the window:', error);
+    }
   }
   try {
     runtime.start();

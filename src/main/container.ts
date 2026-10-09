@@ -82,6 +82,7 @@ import { createVectorSearch } from '../adapters/embeddings/vector-search';
 import { readSystem1Settings } from '../core/system1/settings';
 import { composeTriageClassifier } from './triage-composition';
 import { pickSystemLocale } from './system-locale';
+import { createConfigEvents } from './config-events';
 import { createSecureStorage } from '../adapters/keychain';
 import { createNotifier } from '../adapters/notifications';
 import { createMailSender } from '../adapters/smtp';
@@ -220,6 +221,11 @@ export type Container = {
   config: {
     get: <K extends keyof AppConfig>(key: K) => AppConfig[K];
     set: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
+    /** Listen for writes made through `set` (e.g. the digest settings changing). */
+    onChange: <K extends keyof AppConfig>(
+      key: K,
+      listener: (value: AppConfig[K]) => void,
+    ) => () => void;
   };
   digestOpen: DigestOpenFlag;
   /**
@@ -238,6 +244,10 @@ export type Container = {
 // ============================================
 
 export function createContainer(): Container {
+  const configEvents = createConfigEvents<AppConfig>((key, err) =>
+    logger.error({ err, key }, 'config change listener failed'),
+  );
+
   // Initialize database
   const userDataPath = app.getPath('userData');
   const dbPath = path.join(userDataPath, 'mail.db');
@@ -889,7 +899,11 @@ export function createContainer(): Container {
     useCases,
     config: {
       get: (key) => configStore.get(key),
-      set: (key, value) => configStore.set(key, value),
+      set: (key, value) => {
+        configStore.set(key, value);
+        configEvents.emit(key, value);
+      },
+      onChange: configEvents.onChange,
     },
     digestOpen,
     setOpenNeedsReplyHandler: (handler) => {
