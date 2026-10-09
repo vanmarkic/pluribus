@@ -96,6 +96,27 @@ describe('createPriorRepliesCounter', () => {
     expect(await count(1, '%@x.com')).toBe(0);
   });
 
+  it('only counts mail sent strictly before `before` when it is given', async () => {
+    insertMail({ from: 'me@test.com', to: ['marie@atelier.be'], date: '2026-01-01T10:00:00.000Z' });
+    insertMail({ from: 'me@test.com', to: ['marie@atelier.be'], date: '2026-02-01T10:00:00.000Z' });
+    insertMail({ from: 'me@test.com', to: ['marie@atelier.be'], date: '2026-03-01T10:00:00.000Z' });
+    const count = createPriorRepliesCounter(getDb);
+
+    expect(await count(1, 'marie@atelier.be')).toBe(3);
+    expect(await count(1, 'marie@atelier.be', new Date('2026-02-15T00:00:00.000Z'))).toBe(2);
+    // Strictly before: a mail sent at that very instant is not a prior reply.
+    expect(await count(1, 'marie@atelier.be', new Date('2026-02-01T10:00:00.000Z'))).toBe(1);
+    // An unusable reference time means "no limit", like a mail whose date is unknown.
+    expect(await count(1, 'marie@atelier.be', new Date('not a date'))).toBe(3);
+  });
+
+  it('ignores sent mail whose date cannot be read, and trims padded recipients', async () => {
+    insertMail({ from: 'me@test.com', to: ['marie@atelier.be'], date: 'yesterday-ish' });
+    insertMail({ from: 'me@test.com', to: [' marie@atelier.be '] });
+    const count = createPriorRepliesCounter(getDb);
+    expect(await count(1, 'marie@atelier.be')).toBe(1);
+  });
+
   it('returns 0 for an unknown account', async () => {
     const count = createPriorRepliesCounter(getDb);
     expect(await count(99, 'marie@atelier.be')).toBe(0);

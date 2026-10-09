@@ -77,10 +77,10 @@ import {
 } from '../adapters/triage';
 import { createEmbeddingService } from '../adapters/embeddings/index';
 import { createEmbeddingRepo } from '../adapters/embeddings/embedding-repo';
+import { createPriorRepliesCounter } from '../adapters/embeddings/sender-history';
 import { createVectorSearch } from '../adapters/embeddings/vector-search';
-import { createEnhancedTriageClassifier } from '../adapters/triage/enhanced-classifier';
-import { withBodyPrivacy } from '../adapters/triage/body-privacy';
-import { withSignalRecording } from '../adapters/triage/signal-recorder';
+import { readSystem1Settings } from '../core/system1/settings';
+import { composeTriageClassifier } from './triage-composition';
 import { createSecureStorage } from '../adapters/keychain';
 import { createNotifier } from '../adapters/notifications';
 import { createMailSender } from '../adapters/smtp';
@@ -187,6 +187,17 @@ if (currentLlm.ollamaServerUrl?.includes(':11434')) {
     ollamaServerUrl: currentLlm.ollamaServerUrl.replace(':11434', ':11435'),
   });
 }
+
+// ============================================
+// Where encoder models live
+// ============================================
+
+/**
+ * Cache of the on-device encoder models (userData/models). The embedding
+ * service downloads into it (once, if the model is missing) and reads from it;
+ * "Import model from folder" copies into it.
+ */
+export const getModelsDir = (): string => path.join(app.getPath('userData'), 'models');
 
 // ============================================
 // Container Type
@@ -660,8 +671,13 @@ export function createContainer(): Container {
   const triageLog = createTriageLogRepo(getDb);
   const imapFolderOps = createImapFolderOps(secrets);
 
-  // Embedding & vector search adapters
-  const embeddingService = createEmbeddingService();
+  // Embedding & vector search adapters. The encoder runs on this device: the model
+  // named in the System 1 settings is read from the models dir, and only downloaded
+  // (once) if it is missing. Changing the model in settings takes effect after a restart.
+  const embeddingService = createEmbeddingService({
+    modelName: readSystem1Settings(config).embeddingModel,
+    cacheDir: getModelsDir(),
+  });
   const embeddingRepo = createEmbeddingRepo(getDb());
   const vectorSearch = createVectorSearch(embeddingService, embeddingRepo);
 
@@ -699,18 +715,37 @@ export function createContainer(): Container {
       }
     },
   };
-  // Decorator order matters. Outermost records the signal (needs-reply /
-  // importance) the model produced; inside it, withBodyPrivacy strips body
-  // previews (and the body-derived snippet) unless the provider is local or
-  // the user opted in to cloud excerpts. Both read the same live LLM config
-  // as getLLMConfig, so a settings change applies to the very next email.
-  const triageClassifier = withSignalRecording(
-    withBodyPrivacy(createEnhancedTriageClassifier(triageLlmClient, vectorSearch), () =>
-      configStore.get('llm'),
-    ),
+  // The classifier stack (decorator order is binding; see triage-composition.ts):
+  // signal recording > System 1 > body privacy > enhanced classifier. System 1 may see
+  // body previews because it runs on this device; body privacy still strips them before
+  // any cloud LLM. Settings are read live, so a change applies to the very next email.
+  //
+  // The audit recorder is the use case, but use cases are built from these deps, so
+  // it is bound late (it can only be called once an email is being classified).
+  let lateUseCases: UseCases | null = null;
+  const triageClassifier = composeTriageClassifier({
+    llmClient: triageLlmClient,
+    vectorSearch,
     signals,
-    { modelVersion: () => configStore.get('llm').model },
-  );
+    getLLMConfig: () => configStore.get('llm'),
+    system1: {
+      heads: system1Heads,
+      embeddingService,
+      embeddingRepo,
+      accounts,
+      priorRepliesToSender: createPriorRepliesCounter(getDb),
+      recordAudit: (audit) =>
+        lateUseCases
+          ? lateUseCases.recordSystem1Audit(audit)
+          : Promise.reject(new Error('System 1 audit recorded before the use cases were ready')),
+      getSettings: () => readSystem1Settings(config),
+      // Diagnostics only: System 1 never passes mail content to its logger.
+      log: (msg, meta) => {
+        const level = msg.startsWith('System 1 shadow') ? 'debug' : 'warn';
+        logger[level]({ component: 'system1', ...meta }, msg);
+      },
+    },
+  });
 
   // Awaiting reply adapters
   const awaiting = createAwaitingRepo();
@@ -786,6 +821,7 @@ export function createContainer(): Container {
 
   // Create use cases
   const useCases = createUseCases(deps);
+  lateUseCases = useCases;
 
   // Create OllamaManager for bundled Ollama binary management
   const ollamaManager = createOllamaManager();

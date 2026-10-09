@@ -1,27 +1,36 @@
 /**
  * System 1 eval classifier.
  *
- * Answers "how well would a small head on frozen sentence embeddings do on
- * this labelled dataset?" without touching a mailbox: it embeds every entry
- * once, then runs k-fold cross-validation (k = 4 by default) so that each
- * entry is predicted by a head that never saw it.
+ * Answers "how well would the production System 1 head do on this labelled
+ * dataset?" without touching a mailbox: it embeds every entry once, then runs
+ * k-fold cross-validation (k = 4 by default) so that each entry is predicted
+ * by a head that never saw it.
+ *
+ * The head is the production one (core/system1: `trainHead`, `predictProba`,
+ * `entropyConfidence`, the scalar features of `buildFeatures`), and the
+ * out-of-fold answers go through the production threshold search
+ * (`selectThreshold`): the summary says whether a head trained on this much
+ * data would arm, and at what coverage. The dataset has no mail headers, so the
+ * features that need them (List-Unsubscribe, To, prior replies) are left at
+ * zero; the subject-question and sender-domain features are real.
  *
  * The encoder is a plain `embed(text)` function. Unit tests pass a
  * deterministic fake; `npm run eval` with EVAL_CLASSIFIER=system1 passes the
  * real on-device encoder, and EVAL_EMBED_MODEL picks the model so encoders can
  * be compared on the same data. The text that is embedded is the production
  * recipe (`system1Text`), so the numbers carry over.
- *
- * TODO(P6b): the default head below is a tiny nearest-centroid classifier so
- * this file does not depend on the System 1 core. Switch the `trainer` to
- * core/system1 `trainHead` (and `entropyConfidence`) once both are merged;
- * the `HeadTrainer` seam is the only thing that has to change.
  */
 
 import type { TriageFolder } from '../core/domain';
+import { entropyConfidence } from '../core/system1/confidence';
+import { buildFeatures } from '../core/system1/features';
+import { mulberry32, predictProba, trainHead } from '../core/system1/linear-head';
+import { selectThreshold, type ThresholdSelection } from '../core/system1/threshold';
 import { system1Text } from '../core/system1/text';
+import { EMAIL_QUESTIONS } from '../core/system1/types';
 import type { EvalClassifier, EvalEntry } from './types';
 
+/** `x` is the head's whole input: the embedding followed by the scalar features. */
 export type TrainSample = { id: string; x: number[]; label: TriageFolder };
 export type HeadPredictor = (x: number[]) => { folder: TriageFolder; confidence: number };
 /** Fits a head on training samples and returns its predictor. */
@@ -36,45 +45,34 @@ export type System1EvalOptions = {
   seed?: number;
   /** Shown in the report label, e.g. the encoder model id. */
   modelLabel?: string;
-  /** Head to fit per fold. Default: nearest centroid. */
+  /** Head to fit per fold. Default: the production linear head. */
   trainer?: HeadTrainer;
+  /** Largest acceptable disagreement rate of an armed head (production default 0.05). */
+  epsilon?: number;
 };
+
+/**
+ * What production would conclude from these out-of-fold answers: the threshold
+ * `trainSystem1` would pick, or null when no threshold keeps the 95% bound on
+ * disagreement below epsilon (the head would stay in shadow mode).
+ */
+export type System1EvalSummary = {
+  epsilon: number;
+  /** Out-of-fold answers the search ran on. */
+  heldOut: number;
+  selection: ThresholdSelection | null;
+};
+
+export type System1EvalClassifier = EvalClassifier & { summary: System1EvalSummary };
 
 // ============================================
 // Small numeric helpers
 // ============================================
 
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 function normalize(v: ArrayLike<number>): number[] {
   const out = Array.from(v);
   const norm = Math.sqrt(out.reduce((s, x) => s + x * x, 0));
   return norm === 0 ? out : out.map((x) => x / norm);
-}
-
-const dot = (a: number[], b: number[]): number => a.reduce((s, x, i) => s + x * (b[i] ?? 0), 0);
-
-function softmax(logits: number[]): number[] {
-  const max = Math.max(...logits);
-  const exps = logits.map((l) => Math.exp(l - max));
-  const sum = exps.reduce((s, e) => s + e, 0);
-  return exps.map((e) => e / sum);
-}
-
-/** 1 - H(p) / ln(K): 1 for a one-hot distribution, 0 for a uniform one. */
-function entropyConfidence(p: number[]): number {
-  if (p.length < 2) return 1;
-  const h = -p.reduce((s, x) => s + (x > 0 ? x * Math.log(x) : 0), 0);
-  return Math.max(0, Math.min(1, 1 - h / Math.log(p.length)));
 }
 
 // ============================================
@@ -113,76 +111,36 @@ export function assignFolds(labels: string[], k: number, seed: number): number[]
 }
 
 // ============================================
-// Default head: nearest centroid with a fitted temperature
+// Default head: the production linear softmax head
 // ============================================
 
-const SCALE_GRID = [4, 8, 16, 32, 64, 128];
-const DEFAULT_SCALE = 20;
+const FOLDERS = EMAIL_QUESTIONS.folder.options;
 
 /**
- * Class centroids of unit-length embeddings; the prediction is a softmax over
- * scaled cosine similarity to each centroid. The scale (sharpness) is picked
- * on the training data by leave-one-out log loss, so the confidence is
- * roughly calibrated for the encoder at hand without any tuning by hand.
+ * Fit the production head on the samples and return its predictor. Every
+ * folder is a class (as in production), so folders absent from the training
+ * folds simply get a vanishing probability.
  */
-export function trainCentroidHead(
-  samples: Array<{ x: number[]; label: TriageFolder }>,
-): HeadPredictor {
-  const dim = samples[0]?.x.length ?? 0;
-  const labels = [...new Set(samples.map((s) => s.label))].sort();
-  const xs = samples.map((s) => normalize(s.x));
+export function trainLinearHead(samples: TrainSample[], seed = 42): HeadPredictor {
+  const inputDim = samples[0]?.x.length ?? 0;
+  if (inputDim === 0) throw new Error('Cannot train a head without samples');
+  const classIndex = new Map(FOLDERS.map((folder, i) => [folder as string, i]));
 
-  const sums = new Map<TriageFolder, number[]>();
-  const counts = new Map<TriageFolder, number>();
-  samples.forEach((s, i) => {
-    const sum = sums.get(s.label) ?? new Array<number>(dim).fill(0);
-    xs[i]!.forEach((value, d) => {
-      sum[d] = (sum[d] ?? 0) + value;
-    });
-    sums.set(s.label, sum);
-    counts.set(s.label, (counts.get(s.label) ?? 0) + 1);
-  });
-
-  const centroids = labels.map((label) => normalize(sums.get(label) ?? []));
-
-  // Leave-one-out: how well does each training sample fit its own class when
-  // it is removed from that class's centroid?
-  const loo: Array<{ sims: number[]; own: number }> = [];
-  samples.forEach((s, i) => {
-    if ((counts.get(s.label) ?? 0) < 2) return;
-    const x = xs[i]!;
-    const sims = labels.map((label, k) => {
-      if (label !== s.label) return dot(x, centroids[k]!);
-      const without = (sums.get(label) ?? []).map((v, d) => v - (x[d] ?? 0));
-      return dot(x, normalize(without));
-    });
-    loo.push({ sims, own: labels.indexOf(s.label) });
-  });
-
-  let scale = DEFAULT_SCALE;
-  if (loo.length > 0) {
-    let best = Infinity;
-    for (const candidate of SCALE_GRID) {
-      const nll =
-        loo.reduce((s, { sims, own }) => {
-          const p = softmax(sims.map((v) => v * candidate))[own] ?? 0;
-          return s - Math.log(Math.max(p, 1e-12));
-        }, 0) / loo.length;
-      if (nll < best) {
-        best = nll;
-        scale = candidate;
-      }
-    }
-  }
+  const { W, b } = trainHead(
+    samples.map((s) => ({ x: s.x, y: classIndex.get(s.label) ?? 0 })),
+    { classes: FOLDERS.length, inputDim, seed },
+  );
 
   return (x) => {
-    const q = normalize(x);
-    const probs = softmax(centroids.map((c) => dot(q, c) * scale));
+    const probabilities = predictProba(W, b, x);
     let top = 0;
-    probs.forEach((p, k) => {
-      if (p > (probs[top] ?? 0)) top = k;
+    probabilities.forEach((p, k) => {
+      if (p > (probabilities[top] ?? 0)) top = k;
     });
-    return { folder: labels[top] ?? 'INBOX', confidence: entropyConfidence(probs) };
+    return {
+      folder: (FOLDERS[top] ?? 'INBOX') as TriageFolder,
+      confidence: entropyConfidence(probabilities),
+    };
   };
 }
 
@@ -200,13 +158,16 @@ type Prediction = { folder: TriageFolder; confidence: number; latencyMs: number 
 export async function createSystem1EvalClassifier(
   dataset: EvalEntry[],
   options: System1EvalOptions,
-): Promise<EvalClassifier> {
+): Promise<System1EvalClassifier> {
   if (dataset.length < 2) {
     throw new Error('The System 1 eval needs at least 2 entries to cross-validate');
   }
-  const trainer: HeadTrainer = options.trainer ?? ((samples) => trainCentroidHead(samples));
+  const seed = options.seed ?? 42;
+  const epsilon = options.epsilon ?? 0.05;
+  const trainer: HeadTrainer = options.trainer ?? ((samples) => trainLinearHead(samples, seed));
 
-  // 1. Embed every entry once, exactly as production would (system1Text).
+  // 1. Embed every entry once, exactly as production would (system1Text), and add the
+  //    scalar features that can be computed without mail headers.
   const vectors: number[][] = [];
   const embedMs: number[] = [];
   for (const entry of dataset) {
@@ -218,15 +179,26 @@ export async function createSystem1EvalClassifier(
       entry.body,
     );
     const started = Date.now();
-    vectors.push(normalize(await options.embed(text)));
+    const embedding = normalize(await options.embed(text));
     embedMs.push(Date.now() - started);
+    const features = buildFeatures(
+      {
+        from: { address: entry.from.address, name: entry.from.name ?? null },
+        to: [],
+        subject: entry.subject,
+        inReplyTo: null,
+        listUnsubscribe: null,
+      },
+      { myAddress: '', priorRepliesToSender: 0 },
+    );
+    vectors.push([...embedding, ...features]);
   }
 
   // 2. k-fold: train on the other folds, predict the held-out one.
   const folds = assignFolds(
     dataset.map((e) => e.expectedFolder),
     options.folds ?? 4,
-    options.seed ?? 42,
+    seed,
   );
   const foldCount = Math.max(...folds) + 1;
   const predictions = new Map<string, Prediction>();
@@ -251,8 +223,23 @@ export async function createSystem1EvalClassifier(
     });
   }
 
+  // 3. What production would do with these answers: pick a threshold or stay in shadow mode.
+  const heldOut = dataset.map((entry) => {
+    const prediction = predictions.get(entry.id)!;
+    return {
+      confidence: prediction.confidence,
+      correct: prediction.folder === entry.expectedFolder,
+    };
+  });
+  const summary: System1EvalSummary = {
+    epsilon,
+    heldOut: heldOut.length,
+    selection: selectThreshold(heldOut, { epsilon }),
+  };
+
   const modelLabel = options.modelLabel ? ` ${options.modelLabel}` : '';
   return {
+    summary,
     label: `system1-${foldCount}fold${modelLabel}`,
     async classify(entry) {
       const prediction = predictions.get(entry.id);

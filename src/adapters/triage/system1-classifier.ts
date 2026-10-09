@@ -63,7 +63,8 @@ export type System1ClassifierDeps = {
   /** Local encoder. Must produce the same vectors training used (same model, same text). */
   embed: (text: string) => Promise<Float32Array>;
   myAddressFor: (accountId: number) => Promise<string>;
-  priorRepliesToSender: (accountId: number, address: string) => Promise<number>;
+  /** Mail the owner sent to `address` strictly before `before` (the email's date, matching training). */
+  priorRepliesToSender: (accountId: number, address: string, before?: Date) => Promise<number>;
   getSettings: () => System1Settings;
   recordAudit: (o: { questionId: string; version: number; agreed: boolean }) => Promise<void>;
   /** Persist the vector so training uses the identical one. */
@@ -178,7 +179,7 @@ export function withSystem1(
 
     const [myAddress, priorReplies] = await Promise.all([
       deps.myAddressFor(email.accountId),
-      deps.priorRepliesToSender(email.accountId, email.from.address),
+      deps.priorRepliesToSender(email.accountId, email.from.address, email.date),
     ]);
     const features = buildFeatures(email, { myAddress, priorRepliesToSender: priorReplies });
     const answers = decide(QUESTIONS, heads, buildInput(vector, features));

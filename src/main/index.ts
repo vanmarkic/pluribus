@@ -3,7 +3,8 @@
  *
  * Lifecycle in one place:
  * - Process-wide work (protocol, CSP, container, IPC handlers, Ollama, the
- *   daily-digest runtime) happens ONCE, in `startApp()`, when the app is ready.
+ *   daily-digest runtime, the System 1 retrain job) happens ONCE, in `startApp()`,
+ *   when the app is ready.
  * - The window is just a view onto that. It is created by the window manager
  *   (`showWindow()`), may be closed and re-created any number of times, and
  *   nothing process-wide is tied to it. On macOS the app keeps running after
@@ -15,15 +16,19 @@ import { app, BrowserWindow, dialog, session, shell, protocol, net } from 'elect
 import * as path from 'path';
 import * as fs from 'fs';
 import { pathToFileURL } from 'url';
-import { createContainer, type Container } from './container';
+import { createContainer, getModelsDir, type Container } from './container';
 import { registerIpcHandlers, getTempFiles } from './ipc';
 import { createDigestRuntime, type DigestRuntime } from './digest-wiring';
+import { createSystem1Runtime, type System1Runtime } from './system1-wiring';
+import { logger } from '../adapters/observability';
+import { readSystem1Settings } from '../core/system1/settings';
 import { createWindowManager } from './window-manager';
 import { cleanupOllamaProcess } from '../adapters/ollama-manager';
 import { startOllamaOnLaunch } from '../core/usecases/ollama-usecases';
 
 let container: Container | null = null;
 let digestRuntime: DigestRuntime | null = null;
+let system1Runtime: System1Runtime | null = null;
 
 // ==========================================
 // Custom Protocol for Cached Images
@@ -256,8 +261,20 @@ async function startApp(): Promise<void> {
 
   const c = createContainer();
   container = c;
+
+  // System 1 (on-device classifier): nightly retrain + "import model from folder".
+  // Built before the IPC handlers because the import channel needs it.
+  const system1 = createSystem1Runtime({
+    useCases: c.useCases,
+    deps: c.deps,
+    getSettings: () => readSystem1Settings(c.deps.config),
+    cacheDir: getModelsDir(),
+    logger,
+  });
+  system1Runtime = system1;
+
   // Handlers look the window up per event; there is no window yet.
-  registerIpcHandlers(() => windowManager.getWindow(), c);
+  registerIpcHandlers(() => windowManager.getWindow(), c, { importModel: system1.importModel });
   startOllamaInBackground(c);
 
   const runtime = createDigestRuntime({
@@ -297,10 +314,16 @@ async function startApp(): Promise<void> {
   } catch (error) {
     console.error('[Main] Could not start the daily digest:', error);
   }
+  try {
+    system1.start();
+  } catch (error) {
+    console.error('[Main] Could not start the System 1 retrain job:', error);
+  }
 }
 
 async function shutdownApp(): Promise<void> {
   digestRuntime?.stop(); // no digest run may start while we are quitting
+  system1Runtime?.stop(); // nor a System 1 retrain
   cleanupTempFiles(); // Clean up temp files on quit
   cleanupOllamaProcess(); // Clean up Ollama process on quit
   const c = container;

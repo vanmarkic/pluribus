@@ -9,6 +9,7 @@ A privacy-focused Electron mail client with LLM-powered email triage and intelli
 - **Privacy-First Design** - Your emails stay on your device with encrypted credential storage
 - **Intelligent Email Triage** - Automatic classification powered by Claude or a local LLM
 - **Smart Folder Organization** - Emails automatically sorted into Inbox, Planning, Feed, Social, Promotions, and Paper-Trail
+- **On-device System 1 classifier (Jev-like, multilingual)** - Learns from your mail on this device and answers the easy emails itself; escalates to the LLM only when unsure
 - **Needs your reply — daily digest** - Finds important emails you have not answered yet and reminds you once a day with a notification and an email to yourself; it works in French and English and never includes message bodies in the reminder
 - **Private by default (on-device triage with Ollama)** - Triage runs on a local model out of the box; email content only goes to Claude if you choose it, and body excerpts only if you opt in
 - **Native Experience** - Built with Electron for seamless macOS integration

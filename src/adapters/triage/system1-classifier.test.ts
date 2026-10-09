@@ -238,7 +238,8 @@ describe('withSystem1: embedding and features', () => {
     const t = setup();
     await t.classifier.classify(email, hint, []);
     expect(t.myAddressFor).toHaveBeenCalledWith(3);
-    expect(t.priorRepliesToSender).toHaveBeenCalledWith(3, 'alice@example.com');
+    // As of the email's date, like training: a backlog email must not see later replies.
+    expect(t.priorRepliesToSender).toHaveBeenCalledWith(3, 'alice@example.com', email.date);
   });
 
   it('still stores the embedding when no head exists yet (so training can start)', async () => {

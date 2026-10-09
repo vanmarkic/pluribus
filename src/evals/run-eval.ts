@@ -28,6 +28,7 @@ import { DATASET } from './dataset';
 import { runEval } from './runner';
 import { formatReport, parseLangWeights } from './metrics';
 import { STUB_CLASSIFIER } from './stub-classifier';
+import type { System1EvalSummary } from './system1-classifier';
 import type { EvalClassifier } from './types';
 
 // Resolve project root from dist/evals/ so history ends up next to source.
@@ -87,14 +88,35 @@ function appendHistory(jsonLine: string): void {
   }
 }
 
+/** What production would do with these answers: arm a head (and where), or stay in shadow mode. */
+function describeSystem1(summary: System1EvalSummary): string {
+  const bound = `${(summary.epsilon * 100).toFixed(0)}%`;
+  const s = summary.selection;
+  if (!s) {
+    return (
+      `System 1 would NOT arm on these ${summary.heldOut} held-out answers: no confidence threshold ` +
+      `keeps the 95% bound on disagreement below ${bound} (a real head needs ~110 clean ` +
+      `held-out answers, i.e. ~550 labelled emails).`
+    );
+  }
+  return (
+    `System 1 would arm at confidence >= ${s.threshold}: it answers ${(s.coverage * 100).toFixed(1)}% ` +
+    `of mail on-device (${s.accepted} answers, ${s.disagreements} wrong), disagreement <= ` +
+    `${(s.upperBound * 100).toFixed(1)}% at 95% confidence (target ${bound}).`
+  );
+}
+
 async function main() {
   const langWeights = parseLangWeights(process.env.EVAL_LANG_WEIGHTS);
   const classifier = await pickClassifier();
   console.log(`[eval] Running ${DATASET.length} entries against ${classifier.label}…`);
+  const system1 = (classifier as Partial<{ summary: System1EvalSummary }>).summary;
 
   const startedAt = Date.now();
   const report = await runEval(classifier, DATASET, {
     langWeights,
+    // For System 1 the interesting escalation rate is at the threshold it would arm with.
+    ...(system1?.selection ? { escalationThreshold: system1.selection.threshold } : {}),
     onProgress: (done, total) => {
       // Simple one-line ticker; CI logs stay readable.
       if (done % 5 === 0 || done === total) {
@@ -106,6 +128,7 @@ async function main() {
 
   process.stdout.write('\n\n');
   console.log(formatReport(report));
+  if (system1) console.log(`\n${describeSystem1(system1)}`);
   console.log(`\nWall time: ${(wallMs / 1000).toFixed(1)}s`);
 
   appendHistory(JSON.stringify(report));

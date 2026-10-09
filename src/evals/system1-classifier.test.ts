@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   createSystem1EvalClassifier,
-  trainCentroidHead,
+  trainLinearHead,
   assignFolds,
   type HeadTrainer,
 } from './system1-classifier';
@@ -89,16 +89,16 @@ describe('assignFolds', () => {
   });
 });
 
-describe('trainCentroidHead', () => {
+describe('trainLinearHead (the production head)', () => {
   const samples = [
-    { x: [1, 0], label: 'Feed' as const },
-    { x: [0.9, 0.1], label: 'Feed' as const },
-    { x: [0, 1], label: 'Social' as const },
-    { x: [0.1, 0.9], label: 'Social' as const },
+    { id: 'a', x: [1, 0], label: 'Feed' as const },
+    { id: 'b', x: [0.9, 0.1], label: 'Feed' as const },
+    { id: 'c', x: [0, 1], label: 'Social' as const },
+    { id: 'd', x: [0.1, 0.9], label: 'Social' as const },
   ];
 
-  it('predicts the nearest class with a confidence in [0, 1]', () => {
-    const predict = trainCentroidHead(samples);
+  it('predicts the right class with a confidence in [0, 1]', () => {
+    const predict = trainLinearHead(samples);
     const near = predict([0.95, 0.05]);
     expect(near.folder).toBe('Feed');
     expect(near.confidence).toBeGreaterThan(0);
@@ -106,17 +106,27 @@ describe('trainCentroidHead', () => {
     expect(predict([0.05, 0.95]).folder).toBe('Social');
   });
 
-  it('is less sure in the middle than at a centroid', () => {
-    const predict = trainCentroidHead(samples);
-    expect(predict([0.7071, 0.7071]).confidence).toBeLessThan(predict([1, 0]).confidence);
+  it('is less sure on the boundary than inside a class', () => {
+    const predict = trainLinearHead(samples);
+    expect(predict([0.5, 0.5]).confidence).toBeLessThan(predict([1, 0]).confidence);
   });
 
   it('copes with a class that has a single example', () => {
-    const predict = trainCentroidHead([
-      { x: [1, 0], label: 'Feed' },
-      { x: [0, 1], label: 'Social' },
+    const predict = trainLinearHead([
+      { id: 'a', x: [1, 0], label: 'Feed' },
+      { id: 'b', x: [0, 1], label: 'Social' },
     ]);
     expect(predict([1, 0]).folder).toBe('Feed');
+  });
+
+  it('is deterministic for a seed', () => {
+    const a = trainLinearHead(samples, 5)([0.6, 0.4]);
+    const b = trainLinearHead(samples, 5)([0.6, 0.4]);
+    expect(a).toEqual(b);
+  });
+
+  it('refuses to train on nothing', () => {
+    expect(() => trainLinearHead([])).toThrow(/without samples/);
   });
 });
 
@@ -192,6 +202,47 @@ describe('createSystem1EvalClassifier', () => {
       expect(result.confidence).toBeLessThanOrEqual(1);
       expect(result.costUsd).toBe(0);
     }
+  });
+
+  it('summarises what production would do: too little data keeps the head in shadow mode', async () => {
+    const classifier = await createSystem1EvalClassifier(SEPARABLE, { embed: fakeEmbed });
+    expect(classifier.summary.heldOut).toBe(SEPARABLE.length);
+    expect(classifier.summary.epsilon).toBe(0.05);
+    expect(classifier.summary.selection).toBeNull(); // 16 answers can never prove a 5% bound
+  });
+
+  it('summarises what production would do: enough clean data arms at a threshold with coverage', async () => {
+    const many: EvalEntry[] = [
+      ...Array.from({ length: 150 }, (_, i) =>
+        mk(`inv-${i}`, 'Paper-Trail/Invoices', `facture paiement montant total ${i}`),
+      ),
+      ...Array.from({ length: 150 }, (_, i) =>
+        mk(`soc-${i}`, 'Social', `abonne commente profil photo ${i}`),
+      ),
+    ];
+    const classifier = await createSystem1EvalClassifier(many, { embed: fakeEmbed });
+
+    const { selection } = classifier.summary;
+    expect(selection).not.toBeNull();
+    expect(selection!.coverage).toBeGreaterThan(0.9);
+    expect(selection!.disagreements).toBe(0);
+    expect(selection!.upperBound).toBeLessThanOrEqual(0.05);
+  });
+
+  it('a stricter target changes the verdict', async () => {
+    const many: EvalEntry[] = [
+      ...Array.from({ length: 150 }, (_, i) =>
+        mk(`inv-${i}`, 'Paper-Trail/Invoices', `facture paiement montant total ${i}`),
+      ),
+      ...Array.from({ length: 150 }, (_, i) =>
+        mk(`soc-${i}`, 'Social', `abonne commente profil photo ${i}`),
+      ),
+    ];
+    const classifier = await createSystem1EvalClassifier(many, {
+      embed: fakeEmbed,
+      epsilon: 0.001,
+    });
+    expect(classifier.summary.selection).toBeNull();
   });
 
   it('puts the model in the label so runs can be compared', async () => {

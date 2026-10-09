@@ -398,6 +398,11 @@ function System1Block() {
         </span>
       </div>
 
+      <div className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
+        The model is loaded when the app starts: if you change it, restart the app for the change
+        to take effect.
+      </div>
+
       {error && (
         <div role="alert" className="text-sm" style={{ color: 'var(--color-danger)' }}>
           {error}

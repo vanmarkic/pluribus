@@ -6,6 +6,8 @@ Privacy-focused Electron mail client with LLM-powered email triage. Uses Clean A
 
 **Email Triage System:** Hybrid folder-based triage using pattern matching + LLM classification. Emails are automatically moved to IMAP folders (Inbox, Planning, Feed, Social, Promotions, Paper-Trail/*). See `docs/designs/2025-12-16-email-triage-system.md` for details.
 
+**System 1:** an on-device, Jev-like classifier (frozen multilingual embeddings + small linear heads) that answers the triage questions itself when it is confident and escalates to the LLM (System 2) otherwise. See `docs/designs/2026-10-09-reply-digest-and-system1.md`.
+
 **Reply digest ("Needs your reply"):** Finds important received mail that has no reply yet and reminds the user once a day (native notification + email to self). See `docs/designs/2026-10-09-reply-digest-and-system1.md`.
 
 ## Tech Stack
@@ -148,6 +150,17 @@ ipcMain.handle('emails:list', (_, opts) => {
 - The window is owned by `main/window-manager.ts` (`getWindow()` / `showWindow()`). It can be closed and re-created while the app keeps running (macOS), so handlers that push events to the renderer take a window **getter** and use `sendToRenderer(getWindow, channel, payload)`; never capture a `BrowserWindow`.
 - A single-instance lock keeps two copies from both sending the daily digest.
 - Keep Electron-only pieces injectable (window factory, `NotificationCtor`, power monitor) so the logic is testable under vitest.
+
+## System 1 (on-device classifier)
+
+Most of the user's mail is French; System 1 runs entirely on this device (embedding, training, scoring).
+
+- **Where it lives:** pure logic in `src/core/system1/` (heads, confidence, Clopper-Pearson bound, threshold search, features, `decide`) and `core/usecases/system1-usecases.ts` (`trainSystem1`, audits); the decorator in `adapters/triage/system1-classifier.ts`; the encoder in `adapters/embeddings/`; training samples in `adapters/db/system1-training-repo.ts`; retrain job and model import in `main/system1-wiring.ts`.
+- **Decorator order is binding** and lives in one place, `main/triage-composition.ts`: `withSignalRecording(withSystem1(withBodyPrivacy(enhanced)))`. Signal recording stays outermost (System 1's own answers are recorded); System 1 stays outside body privacy (it may read body previews locally) but body privacy must stay between it and any LLM. Do not reorder.
+- **Canonical text rule:** every vector System 1 trains or scores on comes from `system1Text(email, bodyPreview?)` and the encoder service (which adds the e5 `query: ` prefix in one place). Never embed an email for System 1 any other way, and never overwrite a stored vector (`keepVector`). The embedding model id is `embeddingService.getModel()` everywhere.
+- **Never train on `email_embeddings.folder`** (LLM pseudo-labels and old `INBOX` placeholders), on fallback results, or on `system1` signals. Labels are user actions (gold) and System 2 signals (teacher) only.
+- **Privacy invariant:** no body text or snippet reaches a cloud LLM unless `llm.sendBodyExcerptsToCloud`; `src/__tests__/system1-pipeline.test.ts` proves it with System 1 in the stack. Keep it green.
+- **Tests use fake embedders.** Hugging Face is not reachable from CI; never download a model in a test. `npm run eval` uses the rule-based stub; `EVAL_CLASSIFIER=system1` needs the real model locally.
 
 ## Commands
 

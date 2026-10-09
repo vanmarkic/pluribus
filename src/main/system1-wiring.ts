@@ -121,7 +121,7 @@ export type System1ClassifierDeps = {
   heads: System1HeadRepo;
   embed: (text: string) => Promise<Float32Array>;
   myAddressFor: (accountId: number) => Promise<string>;
-  priorRepliesToSender: (accountId: number, address: string) => Promise<number>;
+  priorRepliesToSender: (accountId: number, address: string, before?: Date) => Promise<number>;
   getSettings: () => System1Settings;
   recordAudit: (o: { questionId: string; version: number; agreed: boolean }) => Promise<void>;
   storeEmbedding?: (emailId: number, vector: Float32Array) => Promise<void>;
@@ -139,7 +139,7 @@ export type BuildSystem1ClassifierDepsOptions = {
    * Mail I sent to an address (`createPriorRepliesCounter(getDb)` from
    * adapters/embeddings/sender-history). Must match the training side's definition.
    */
-  priorRepliesToSender: (accountId: number, address: string) => Promise<number>;
+  priorRepliesToSender: (accountId: number, address: string, before?: Date) => Promise<number>;
   /** e.g. `recordSystem1Audit({ system1Heads })`. */
   recordAudit: System1ClassifierDeps['recordAudit'];
   getSettings: () => System1Settings;

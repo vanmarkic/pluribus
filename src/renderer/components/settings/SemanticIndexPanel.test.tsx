@@ -133,6 +133,13 @@ describe('SemanticIndexPanel - System 1 block', () => {
     expect(screen.getByTestId('system1-model')).toHaveTextContent(MODEL);
   });
 
+  it('says that a changed model only takes effect after a restart', async () => {
+    install();
+    await renderLoaded();
+
+    expect(screen.getByText(/restart the app/)).toBeInTheDocument();
+  });
+
   it('shows one status row per question: armed / shadow, coverage, agreement, bound, size, date', async () => {
     install();
     await renderLoaded();

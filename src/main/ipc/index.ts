@@ -30,7 +30,7 @@ import { setupCalibrationHandlers } from './calibration-handlers';
 import { setupBodyMigrationHandlers } from './body-migration-handlers';
 import { setupRepliesHandlers } from './replies-handlers';
 import { setupDigestHandlers } from './digest-handlers';
-import { setupSystem1Handlers } from './system1-handlers';
+import { setupSystem1Handlers, type System1HandlerOptions } from './system1-handlers';
 
 // Re-export for external use
 export { getTempFiles };
@@ -59,8 +59,16 @@ let ipcHandlersRegistered = false;
  * - Unsubscribe
  * - Send Queue (undo send)
  * - Needs-your-reply, Daily digest, System 1
+ *
+ * `options.importModel` installs an encoder model from a folder (it belongs to
+ * the System 1 runtime, which is built from the container); without it the
+ * import channel reports "not available".
  */
-export function registerIpcHandlers(getWindow: WindowGetter, container: Container): void {
+export function registerIpcHandlers(
+  getWindow: WindowGetter,
+  container: Container,
+  options: Pick<System1HandlerOptions, 'importModel'> = {},
+): void {
   // ipcMain.handle throws on a duplicate channel, so registering twice would
   // leave a half-registered, hard-to-diagnose state. Fail loudly and early.
   // The flag is set first: even a failed first attempt leaves some channels
@@ -93,7 +101,10 @@ export function registerIpcHandlers(getWindow: WindowGetter, container: Containe
   setupBodyMigrationHandlers(container);
   setupRepliesHandlers(container);
   setupDigestHandlers(container);
-  setupSystem1Handlers(container);
+  setupSystem1Handlers(container, {
+    getWindow,
+    ...(options.importModel ? { importModel: options.importModel } : {}),
+  });
 }
 
 // Re-export validation helpers for testing
