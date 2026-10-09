@@ -2,8 +2,9 @@
  * Classification & AI Sort IPC Handlers (LLM + AI Sort)
  */
 
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain } from 'electron';
 import type { Container } from '../container';
+import { sendToRenderer, type WindowGetter } from '../window-manager';
 import {
   assertPositiveInt,
   assertNonNegativeInt,
@@ -16,7 +17,7 @@ import {
 // Setup Function
 // ==========================================
 
-export function setupClassificationHandlers(container: Container, window: BrowserWindow): void {
+export function setupClassificationHandlers(container: Container, getWindow: WindowGetter): void {
   const { useCases, deps, config } = container;
 
   // ==========================================
@@ -26,13 +27,13 @@ export function setupClassificationHandlers(container: Container, window: Browse
   ipcMain.handle('llm:classify', async (_, emailId) => {
     checkRateLimit('llm:classify', 30);
     const id = assertPositiveInt(emailId, 'emailId');
-    window.webContents.send('llm:classifying', { emailId: id });
+    sendToRenderer(getWindow, 'llm:classifying', { emailId: id });
     try {
       const result = await useCases.classifyEmail(id);
-      window.webContents.send('llm:classified', { emailId: id, result });
+      sendToRenderer(getWindow, 'llm:classified', { emailId: id, result });
       return result;
     } catch (error) {
-      window.webContents.send('llm:error', { emailId: id, error: String(error) });
+      sendToRenderer(getWindow, 'llm:error', { emailId: id, error: String(error) });
       throw error;
     }
   });

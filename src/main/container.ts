@@ -77,6 +77,8 @@ import { createEmbeddingService } from '../adapters/embeddings/index';
 import { createEmbeddingRepo } from '../adapters/embeddings/embedding-repo';
 import { createVectorSearch } from '../adapters/embeddings/vector-search';
 import { createEnhancedTriageClassifier } from '../adapters/triage/enhanced-classifier';
+import { withBodyPrivacy } from '../adapters/triage/body-privacy';
+import { withSignalRecording } from '../adapters/triage/signal-recorder';
 import { createSecureStorage } from '../adapters/keychain';
 import { createNotifier } from '../adapters/notifications';
 import { createMailSender } from '../adapters/smtp';
@@ -196,6 +198,12 @@ export type Container = {
     set: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
   };
   digestOpen: DigestOpenFlag;
+  /**
+   * Late-binds what a click on the digest notification does. The notifier is
+   * created before the window / digest runtime exist, so the default click
+   * handler delegates to whatever was registered here (no-op until then).
+   */
+  setOpenNeedsReplyHandler: (handler: () => void) => void;
   ollamaManager: OllamaManager;
   sendQueue: SendQueue;
   shutdown: () => Promise<void>;
@@ -598,7 +606,10 @@ export function createContainer(): Container {
     getState: () => ({ ...DIGEST_STATE_DEFAULTS, ...configStore.get('digestState') }),
     setState: (state) => configStore.set('digestState', state),
   };
-  const notifier = createNotifier();
+  // The notification click opens the Needs-your-reply view, but the digest
+  // runtime that implements that is built after the container. Bind it late.
+  let openNeedsReplyHook: () => void = () => {};
+  const notifier = createNotifier({ onClickDefault: () => openNeedsReplyHook() });
 
   // "Open Needs-your-reply" request flag (set by the digest notification click)
   let digestOpenPending = false;
@@ -675,7 +686,18 @@ export function createContainer(): Container {
       }
     },
   };
-  const triageClassifier = createEnhancedTriageClassifier(triageLlmClient, vectorSearch);
+  // Decorator order matters. Outermost records the signal (needs-reply /
+  // importance) the model produced; inside it, withBodyPrivacy strips body
+  // previews (and the body-derived snippet) unless the provider is local or
+  // the user opted in to cloud excerpts. Both read the same live LLM config
+  // as getLLMConfig, so a settings change applies to the very next email.
+  const triageClassifier = withSignalRecording(
+    withBodyPrivacy(createEnhancedTriageClassifier(triageLlmClient, vectorSearch), () =>
+      configStore.get('llm'),
+    ),
+    signals,
+    { modelVersion: () => configStore.get('llm').model },
+  );
 
   // Awaiting reply adapters
   const awaiting = createAwaitingRepo();
@@ -818,6 +840,9 @@ export function createContainer(): Container {
       set: (key, value) => configStore.set(key, value),
     },
     digestOpen,
+    setOpenNeedsReplyHandler: (handler) => {
+      openNeedsReplyHook = handler;
+    },
     ollamaManager,
     sendQueue,
     shutdown,

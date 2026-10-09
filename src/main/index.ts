@@ -1,18 +1,29 @@
 /**
  * Electron Main Entry Point
+ *
+ * Lifecycle in one place:
+ * - Process-wide work (protocol, CSP, container, IPC handlers, Ollama, the
+ *   daily-digest runtime) happens ONCE, in `startApp()`, when the app is ready.
+ * - The window is just a view onto that. It is created by the window manager
+ *   (`showWindow()`), may be closed and re-created any number of times, and
+ *   nothing process-wide is tied to it. On macOS the app keeps running after
+ *   the last window closes so the 09:00 digest can still fire.
+ * - A single-instance lock guarantees two copies never both run the digest.
  */
 
-import { app, BrowserWindow, session, shell, protocol, net } from 'electron';
+import { app, BrowserWindow, dialog, session, shell, protocol, net } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { pathToFileURL } from 'url';
 import { createContainer, type Container } from './container';
 import { registerIpcHandlers, getTempFiles } from './ipc';
+import { createDigestRuntime, type DigestRuntime } from './digest-wiring';
+import { createWindowManager } from './window-manager';
 import { cleanupOllamaProcess } from '../adapters/ollama-manager';
 import { startOllamaOnLaunch } from '../core/usecases/ollama-usecases';
 
-let mainWindow: BrowserWindow | null = null;
 let container: Container | null = null;
+let digestRuntime: DigestRuntime | null = null;
 
 // ==========================================
 // Custom Protocol for Cached Images
@@ -138,8 +149,13 @@ const CSP = [
   "base-uri 'self'",
 ].join('; ');
 
-async function createWindow(): Promise<void> {
-  mainWindow = new BrowserWindow({
+/**
+ * Build one BrowserWindow and load the renderer into it. Window-only work:
+ * no container, IPC or CSP setup here (that happens once in `startApp()`).
+ * Tracking and clearing the reference on 'closed' is the window manager's job.
+ */
+async function createMainWindow(): Promise<BrowserWindow> {
+  const win = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 800,
@@ -154,39 +170,8 @@ async function createWindow(): Promise<void> {
     },
   });
 
-  // Set CSP headers for all requests
-  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    callback({
-      responseHeaders: {
-        ...details.responseHeaders,
-        'Content-Security-Policy': [CSP],
-      },
-    });
-  });
-
-  // Initialize container and IPC
-  container = createContainer();
-  registerIpcHandlers(mainWindow, container);
-
-  // Start Ollama in background (non-blocking)
-  const llmConfig = container.config.get('llm');
-  startOllamaOnLaunch({
-    runner: container.ollamaManager,
-    config: {
-      provider: llmConfig.provider,
-    },
-  }).then((result) => {
-    if (result.started) {
-      console.log('[Main] Ollama started successfully');
-    } else if (result.reason === 'start-failed') {
-      console.error('[Main] Failed to start Ollama:', result.error);
-    } else {
-      console.log('[Main] Ollama auto-start skipped:', result.reason);
-    }
-  });
-
   // Restrict navigation to trusted origins only
-  mainWindow.webContents.on('will-navigate', (event, url) => {
+  win.webContents.on('will-navigate', (event, url) => {
     const allowed = [
       'http://localhost:5173', // Dev server
       'file://', // Production build
@@ -199,7 +184,7 @@ async function createWindow(): Promise<void> {
   });
 
   // Block all new windows / popups
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  win.webContents.setWindowOpenHandler(({ url }) => {
     // For external links, open in system browser instead
     if (url.startsWith('http://') || url.startsWith('https://')) {
       shell.openExternal(url);
@@ -207,39 +192,157 @@ async function createWindow(): Promise<void> {
     return { action: 'deny' };
   });
 
-  // Load app
-  if (!app.isPackaged) {
-    await mainWindow.loadURL('http://localhost:5173');
-    mainWindow.webContents.openDevTools();
-  } else {
-    await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+  // Load app. A failed load (dev server down, window closed while loading)
+  // must not reject: the window exists either way, and the manager needs to
+  // track it so it is reused rather than duplicated on the next activation.
+  try {
+    if (!app.isPackaged) {
+      await win.loadURL('http://localhost:5173');
+      win.webContents.openDevTools();
+    } else {
+      await win.loadFile(path.join(__dirname, '../renderer/index.html'));
+    }
+  } catch (error) {
+    console.error('[Main] Failed to load the renderer:', error);
   }
 
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+  return win;
+}
+
+/** The one window of the app (see window-manager.ts). */
+const windowManager = createWindowManager({ createBrowserWindow: createMainWindow });
+
+/** Set the Content-Security-Policy header on every response (once per process). */
+function installContentSecurityPolicy(): void {
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [CSP],
+      },
+    });
   });
 }
 
-// App lifecycle
-app.whenReady().then(() => {
+/** Start Ollama in the background (non-blocking, failures are logged only). */
+function startOllamaInBackground(c: Container): void {
+  const llmConfig = c.config.get('llm');
+  startOllamaOnLaunch({
+    runner: c.ollamaManager,
+    config: {
+      provider: llmConfig.provider,
+    },
+  })
+    .then((result) => {
+      if (result.started) {
+        console.log('[Main] Ollama started successfully');
+      } else if (result.reason === 'start-failed') {
+        console.error('[Main] Failed to start Ollama:', result.error);
+      } else {
+        console.log('[Main] Ollama auto-start skipped:', result.reason);
+      }
+    })
+    .catch((error) => console.error('[Main] Ollama auto-start crashed:', error));
+}
+
+/**
+ * Process-wide startup. Runs exactly once, when the app is ready. Closing and
+ * re-opening the window never goes through here.
+ */
+async function startApp(): Promise<void> {
   registerCachedImageProtocol(); // Register custom protocol for serving cached images
   cleanupTempFiles(); // Clean up temp files on startup
-  createWindow();
-});
+  installContentSecurityPolicy();
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
+  const c = createContainer();
+  container = c;
+  // Handlers look the window up per event; there is no window yet.
+  registerIpcHandlers(() => windowManager.getWindow(), c);
+  startOllamaInBackground(c);
 
-app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
-});
+  const runtime = createDigestRuntime({
+    useCases: c.useCases,
+    digestConfig: c.deps.digestConfig,
+    digestOpen: c.digestOpen,
+    getWindow: () => windowManager.getWindow(),
+    showWindow: () => windowManager.showWindow(),
+  });
+  digestRuntime = runtime;
+  // The notifier was built before the runtime existed; a click on the digest
+  // notification now opens the Needs-your-reply view.
+  c.setOpenNeedsReplyHandler(() => void runtime.openNeedsReply());
 
-app.on('before-quit', async () => {
+  // macOS: dock-icon click (or relaunch) with no window open. Registered after
+  // the IPC handlers exist, so a window is never created ahead of them.
+  app.on('activate', () => {
+    void windowManager.showWindow().catch((error) => {
+      console.error('[Main] Could not open the window:', error);
+    });
+  });
+  // A second launch hands over to this instance (see the lock below).
+  app.on('second-instance', () => {
+    void windowManager.showWindow().catch((error) => {
+      console.error('[Main] Could not open the window:', error);
+    });
+  });
+
+  // The first window. If it fails to come up the digest must still run.
+  try {
+    await windowManager.showWindow();
+  } catch (error) {
+    console.error('[Main] Could not open the window:', error);
+  }
+  try {
+    runtime.start();
+  } catch (error) {
+    console.error('[Main] Could not start the daily digest:', error);
+  }
+}
+
+async function shutdownApp(): Promise<void> {
+  digestRuntime?.stop(); // no digest run may start while we are quitting
   cleanupTempFiles(); // Clean up temp files on quit
   cleanupOllamaProcess(); // Clean up Ollama process on quit
-  await container?.shutdown();
-});
+  const c = container;
+  container = null; // 'before-quit' can fire more than once: shut down once
+  try {
+    await c?.shutdown();
+  } catch (error) {
+    console.error('[Main] Shutdown failed:', error);
+  }
+}
+
+// App lifecycle
+//
+// Only one instance may run: each instance would run its own digest scheduler
+// and email the digest to the user twice. A second launch quits immediately,
+// and only the lock holder registers the handlers below (the loser's
+// 'before-quit' must not wipe the running instance's temp files).
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app
+    .whenReady()
+    .then(startApp)
+    .catch((error) => {
+      console.error('[Main] Startup failed:', error);
+      dialog.showErrorBox(
+        'Mail could not start',
+        error instanceof Error ? error.message : String(error),
+      );
+      app.quit();
+    });
+
+  // macOS keeps running without a window (the daily digest still fires);
+  // elsewhere closing the last window quits.
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit();
+  });
+
+  app.on('before-quit', () => {
+    void shutdownApp();
+  });
+}
 
 // Error handling
 process.on('uncaughtException', (err) => console.error('Uncaught:', err));

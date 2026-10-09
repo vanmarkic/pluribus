@@ -9,18 +9,19 @@
  * original invoke promise with the full text on completion.
  */
 
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain } from 'electron';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import type { Container } from '../container';
 import { classifyStreaming } from '../../adapters/llm';
 import { parseInput } from './schemas';
+import { sendToRenderer, type WindowGetter } from '../window-manager';
 
 const StreamExplainInput = z.object({
   emailId: z.number().int().positive(),
 });
 
-export function setupStreamingHandlers(container: Container, window: BrowserWindow): void {
+export function setupStreamingHandlers(container: Container, getWindow: WindowGetter): void {
   const { deps, config } = container;
 
   ipcMain.handle('llm:streamExplain', async (_event, input: unknown) => {
@@ -63,17 +64,15 @@ export function setupStreamingHandlers(container: Container, window: BrowserWind
         },
         deps.secrets,
       )) {
-        if (window.isDestroyed()) return;
-        window.webContents.send(channel, event);
+        // No window (closed) or being torn down: nobody is listening, stop.
+        if (!sendToRenderer(getWindow, channel, event)) return;
         if (event.type === 'done' || event.type === 'error') break;
       }
     })().catch(err => {
-      if (!window.isDestroyed()) {
-        window.webContents.send(`llm:stream:${requestId}`, {
-          type: 'error',
-          message: err instanceof Error ? err.message : String(err),
-        });
-      }
+      sendToRenderer(getWindow, `llm:stream:${requestId}`, {
+        type: 'error',
+        message: err instanceof Error ? err.message : String(err),
+      });
     });
 
     return { requestId };

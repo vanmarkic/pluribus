@@ -7,8 +7,8 @@
  * This file orchestrates all IPC handler setup by domain.
  */
 
-import { BrowserWindow } from 'electron';
 import type { Container } from '../container';
+import type { WindowGetter } from '../window-manager';
 import { setupEmailHandlers, getTempFiles } from './email-handlers';
 import { setupSyncHandlers } from './sync-handlers';
 import { setupClassificationHandlers } from './classification-handlers';
@@ -35,8 +35,14 @@ import { setupSystem1Handlers } from './system1-handlers';
 // Re-export for external use
 export { getTempFiles };
 
+let ipcHandlersRegistered = false;
+
 /**
- * Register all IPC handlers
+ * Register all IPC handlers (once per process)
+ *
+ * `getWindow` is late-bound: handlers that push events to the renderer ask
+ * for the current window each time, because the window can be closed and
+ * re-created while the app keeps running (macOS).
  *
  * Organized by domain vertical slices:
  * - Email & Attachments
@@ -54,10 +60,21 @@ export { getTempFiles };
  * - Send Queue (undo send)
  * - Needs-your-reply, Daily digest, System 1
  */
-export function registerIpcHandlers(window: BrowserWindow, container: Container): void {
+export function registerIpcHandlers(getWindow: WindowGetter, container: Container): void {
+  // ipcMain.handle throws on a duplicate channel, so registering twice would
+  // leave a half-registered, hard-to-diagnose state. Fail loudly and early.
+  // The flag is set first: even a failed first attempt leaves some channels
+  // registered, and a retry could only trip over them.
+  if (ipcHandlersRegistered) {
+    throw new Error(
+      'IPC handlers are already registered: registerIpcHandlers must be called once per process',
+    );
+  }
+  ipcHandlersRegistered = true;
+
   setupEmailHandlers(container);
-  setupSyncHandlers(container, window);
-  setupClassificationHandlers(container, window);
+  setupSyncHandlers(container, getWindow);
+  setupClassificationHandlers(container, getWindow);
   setupAccountHandlers(container);
   setupSendHandlers(container);
   setupConfigHandlers(container);
@@ -71,7 +88,7 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   setupLlmCallsHandlers(container);
   setupEmbeddingHandlers(container);
   setupSecurityEventsHandlers(container);
-  setupStreamingHandlers(container, window);
+  setupStreamingHandlers(container, getWindow);
   setupCalibrationHandlers(container);
   setupBodyMigrationHandlers(container);
   setupRepliesHandlers(container);
