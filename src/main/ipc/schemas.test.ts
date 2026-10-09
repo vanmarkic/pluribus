@@ -8,8 +8,10 @@ import {
   ReplyBackfillAccountInput,
   DigestSettingsInput,
   SendBodyExcerptsToCloudInput,
+  System1SettingsInput,
   parseInput,
 } from './schemas';
+import { DEFAULT_SYSTEM1_SETTINGS, SYSTEM1_EMBEDDING_MODELS } from '../../core/domain';
 
 describe('parseInput', () => {
   it('returns the parsed value on success', () => {
@@ -195,6 +197,75 @@ describe('SendBodyExcerptsToCloudInput', () => {
     expect(parseInput(SendBodyExcerptsToCloudInput, false, 'flag')).toBe(false);
     for (const bad of ['true', 1, 0, null, undefined]) {
       expect(() => parseInput(SendBodyExcerptsToCloudInput, bad, 'flag')).toThrow(/Invalid/);
+    }
+  });
+});
+
+describe('System1SettingsInput', () => {
+  it('accepts the full default settings and any partial update', () => {
+    expect(parseInput(System1SettingsInput, DEFAULT_SYSTEM1_SETTINGS, 'system1')).toEqual(
+      DEFAULT_SYSTEM1_SETTINGS,
+    );
+    expect(parseInput(System1SettingsInput, { enabled: false }, 'system1')).toEqual({
+      enabled: false,
+    });
+    expect(parseInput(System1SettingsInput, {}, 'system1')).toEqual({});
+  });
+
+  it('only accepts the known encoder models', () => {
+    for (const model of SYSTEM1_EMBEDDING_MODELS) {
+      expect(parseInput(System1SettingsInput, { embeddingModel: model }, 's')).toEqual({
+        embeddingModel: model,
+      });
+    }
+    for (const bad of [
+      'Xenova/some-other-model',
+      '../../etc/passwd',
+      'http://evil.example/model',
+      '',
+      7,
+      null,
+    ]) {
+      expect(() => parseInput(System1SettingsInput, { embeddingModel: bad }, 's')).toThrow(
+        /embeddingModel/,
+      );
+    }
+  });
+
+  it('bounds targetDisagreement to 0.01..0.2', () => {
+    for (const ok of [0.01, 0.05, 0.2]) {
+      expect(parseInput(System1SettingsInput, { targetDisagreement: ok }, 's')).toEqual({
+        targetDisagreement: ok,
+      });
+    }
+    for (const bad of [0, 0.009, 0.21, 1, -0.05, NaN, '0.05', null]) {
+      expect(() => parseInput(System1SettingsInput, { targetDisagreement: bad }, 's')).toThrow(
+        /targetDisagreement/,
+      );
+    }
+  });
+
+  it('bounds auditRate to 0..0.5', () => {
+    for (const ok of [0, 0.05, 0.5]) {
+      expect(parseInput(System1SettingsInput, { auditRate: ok }, 's')).toEqual({ auditRate: ok });
+    }
+    for (const bad of [-0.01, 0.51, 1, NaN, '0.1', null]) {
+      expect(() => parseInput(System1SettingsInput, { auditRate: bad }, 's')).toThrow(/auditRate/);
+    }
+  });
+
+  it('requires a real boolean for enabled', () => {
+    for (const bad of ['yes', 1, 0, null]) {
+      expect(() => parseInput(System1SettingsInput, { enabled: bad }, 's')).toThrow(/enabled/);
+    }
+  });
+
+  it('rejects unknown keys and non-objects', () => {
+    expect(() => parseInput(System1SettingsInput, { enabled: true, cacheDir: '/tmp' }, 's')).toThrow(
+      /Invalid/,
+    );
+    for (const bad of [null, undefined, 'system1', 7, []]) {
+      expect(() => parseInput(System1SettingsInput, bad, 's')).toThrow(/Invalid/);
     }
   });
 });

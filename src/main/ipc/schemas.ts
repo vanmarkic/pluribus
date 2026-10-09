@@ -12,6 +12,7 @@
  */
 
 import { z } from 'zod';
+import { SYSTEM1_EMBEDDING_MODELS } from '../../core/domain';
 
 // ────────────────────────────────────────────────────────────────────
 // Shared primitives
@@ -99,6 +100,24 @@ export const DigestSettingsInput = z
   .partial();
 
 export const SendBodyExcerptsToCloudInput = z.boolean();
+
+// ────────────────────────────────────────────────────────────────────
+// config:set — system1 section (on-device classifier)
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * System 1 settings, as a partial update merged by the handler. The encoder
+ * is an allowlist of known Xenova model ids: the id picks a cache folder and a
+ * download URL, so it must never be free text.
+ */
+export const System1SettingsInput = z
+  .strictObject({
+    enabled: z.boolean(),
+    embeddingModel: z.enum(SYSTEM1_EMBEDDING_MODELS),
+    targetDisagreement: z.number().min(0.01).max(0.2),
+    auditRate: z.number().min(0).max(0.5),
+  })
+  .partial();
 
 // ────────────────────────────────────────────────────────────────────
 // Helper: uniform parse with a friendly error message

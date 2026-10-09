@@ -58,6 +58,7 @@ export const mockMailApi = {
   system1: {
     getStatus: ok({ embeddingModel: '', heads: [] }),
     retrain: ok({ embeddingModel: '', heads: [] }),
+    importModel: ok({ status: 'cancelled' }),
   },
   config: { get: ok(null), set: noop, getTriageFolders: ok([]) },
   on: () => {},

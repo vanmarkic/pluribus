@@ -9,9 +9,10 @@
  */
 
 import type { MailAPI } from '../main/preload';
-import { DEFAULT_DIGEST_SETTINGS } from '../core/domain';
+import { DEFAULT_DIGEST_SETTINGS, DEFAULT_SYSTEM1_SETTINGS } from '../core/domain';
 import type { DigestRunResult, DigestTrigger } from '../core/domain';
 import type { System1Status } from '../core/system1/types';
+import type { System1ModelImportResult } from '../core/model-import';
 import {
   buildForgottenReplies,
   demoFixtures,
@@ -200,18 +201,42 @@ export function createMockApi(): MailAPI {
       },
     ],
   });
+  // Demo: the folder head has learned enough to answer on its own; the other
+  // two are still in shadow mode (not enough, or not clean enough, data yet).
   const mockSystem1Status = (): System1Status => ({
-    embeddingModel: 'all-MiniLM-L6-v2',
-    heads: ['folder', 'needsReply', 'importance'].map((questionId) => ({
-      questionId,
-      armed: false,
-      version: null,
-      coverage: null,
-      agreement: null,
-      disagreementUpperBound: null,
-      trainSize: 0,
-      trainedAt: null,
-    })),
+    embeddingModel: 'Xenova/multilingual-e5-small',
+    heads: [
+      {
+        questionId: 'folder',
+        armed: true,
+        version: 4,
+        coverage: 0.62,
+        agreement: 0.94,
+        disagreementUpperBound: 0.047,
+        trainSize: 412,
+        trainedAt: new Date(Date.now() - 6 * 60 * 60 * 1000),
+      },
+      {
+        questionId: 'needsReply',
+        armed: false,
+        version: 2,
+        coverage: 0.31,
+        agreement: 0.88,
+        disagreementUpperBound: 0.113,
+        trainSize: 188,
+        trainedAt: new Date(Date.now() - 6 * 60 * 60 * 1000),
+      },
+      {
+        questionId: 'importance',
+        armed: false,
+        version: null,
+        coverage: null,
+        agreement: null,
+        disagreementUpperBound: null,
+        trainSize: 41,
+        trainedAt: null,
+      },
+    ],
   });
 
   return {
@@ -454,6 +479,7 @@ export function createMockApi(): MailAPI {
             sendBodyExcerptsToCloud: false,
           },
           digest: { ...DEFAULT_DIGEST_SETTINGS },
+          system1: { ...DEFAULT_SYSTEM1_SETTINGS },
         };
         return defaults[key];
       },
@@ -686,10 +712,22 @@ export function createMockApi(): MailAPI {
     system1: {
       getStatus: async () => mockSystem1Status(),
       retrain: async () => mockSystem1Status(),
+      // The demo has no native folder picker: pretend the user picked a valid model folder.
+      importModel: async (): Promise<System1ModelImportResult> => ({
+        status: 'imported',
+        model: 'Xenova/multilingual-e5-small',
+        files: 6,
+        bytes: 118_000_000,
+      }),
     },
 
     embeddings: {
-      getStats: async () => ({ totalEmails: 0, indexed: 0, coverage: 0, model: 'all-MiniLM-L6-v2' }),
+      getStats: async () => ({
+        totalEmails: 0,
+        indexed: 0,
+        coverage: 0,
+        model: 'Xenova/multilingual-e5-small',
+      }),
       backfill: async () => ({ taskId: 'mock', total: 0 }),
     },
 

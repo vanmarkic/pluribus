@@ -14,6 +14,7 @@
 import type { Deps } from '../ports';
 import type { Email, TriageClassificationResult, TriageFolder, TrainingExample } from '../domain';
 import { extractDomain } from '../domain';
+import { indexEmailForSearch } from './embedding-usecases';
 
 // ============================================
 // Mail that must never be triaged
@@ -98,8 +99,8 @@ export const triageEmail = (deps: Pick<Deps, 'emails' | 'patternMatcher' | 'tria
  * If below threshold, classification still happens but email stays in place.
  */
 export const triageAndMoveEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps'>) =>
-  async (emailId: number, options: { confidenceThreshold?: number; bodyPreview?: string } = {}): Promise<TriageClassificationResult> => {
-    const { confidenceThreshold = 0.7, bodyPreview } = options;
+  async (emailId: number, options: { confidenceThreshold?: number; bodyPreview?: string; forceSystem2?: boolean } = {}): Promise<TriageClassificationResult> => {
+    const { confidenceThreshold = 0.7, bodyPreview, forceSystem2 } = options;
 
     const email = await deps.emails.findById(emailId);
     if (!email) throw new Error('Email not found');
@@ -126,9 +127,14 @@ export const triageAndMoveEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'fol
     // Step 2: Get relevant training examples
     const examples = await deps.trainingRepo.getRelevantExamples(email.accountId, email, 30);
 
-    // Step 3: LLM classification with pattern hint (and a body excerpt when the caller supplied one)
-    const result = bodyPreview !== undefined
-      ? await deps.triageClassifier.classify(email, patternResult, examples, { bodyPreview })
+    // Step 3: classification with pattern hint (and a body excerpt when the caller supplied one).
+    // `forceSystem2` skips the on-device model and asks the LLM (e.g. an explicit re-classify).
+    const classifyOpts = {
+      ...(bodyPreview !== undefined ? { bodyPreview } : {}),
+      ...(forceSystem2 ? { forceSystem2: true } : {}),
+    };
+    const result = Object.keys(classifyOpts).length > 0
+      ? await deps.triageClassifier.classify(email, patternResult, examples, classifyOpts)
       : await deps.triageClassifier.classify(email, patternResult, examples);
 
     // Step 4: Log the classification
@@ -199,7 +205,7 @@ export const moveEmailToTriageFolder = (deps: Pick<Deps, 'emails' | 'accounts' |
     });
   };
 
-export const learnFromTriageCorrection = (deps: Pick<Deps, 'emails' | 'trainingRepo' | 'senderRules' | 'vectorSearch'>) =>
+export const learnFromTriageCorrection = (deps: Pick<Deps, 'emails' | 'trainingRepo' | 'senderRules' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService'>) =>
   async (emailId: number, aiSuggestion: string, userChoice: TriageFolder): Promise<void> => {
     const email = await deps.emails.findById(emailId);
     if (!email) throw new Error('Email not found');
@@ -220,10 +226,11 @@ export const learnFromTriageCorrection = (deps: Pick<Deps, 'emails' | 'trainingR
       source: 'review_folder',
     });
 
-    // Index embedding for this training example (async, non-blocking)
+    // Index embedding for this training example (async, non-blocking). Uses the
+    // canonical System 1 text and keeps a vector System 1 already stored; only
+    // the label (the user's choice) changes.
     try {
-      const emailText = `${email.subject}\n${email.snippet}`;
-      await deps.vectorSearch.indexEmail(emailId, emailText, userChoice, wasCorrection);
+      await indexEmailForSearch(deps)(emailId, userChoice, wasCorrection);
     } catch (error) {
       // Don't fail the use case if embedding indexing fails
       console.warn('Failed to index embedding for training example:', error);
@@ -335,18 +342,15 @@ export const processSnoozedEmails = (deps: Pick<Deps, 'snoozes' | 'emails' | 'ac
     return processed;
   };
 
-export const saveTrainingExample = (deps: Pick<Deps, 'emails' | 'trainingRepo' | 'vectorSearch'>) =>
+export const saveTrainingExample = (deps: Pick<Deps, 'emails' | 'trainingRepo' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService'>) =>
   async (example: Omit<TrainingExample, 'id' | 'createdAt'>): Promise<TrainingExample> => {
     const saved = await deps.trainingRepo.save(example);
-    
-    // Index embedding for this training example (async, non-blocking)
+
+    // Index embedding for this training example (async, non-blocking); same
+    // canonical text and keepVector rule as learnFromTriageCorrection.
     if (example.emailId) {
       try {
-        const email = await deps.emails.findById(example.emailId);
-        if (email) {
-          const emailText = `${email.subject}\n${email.snippet}`;
-          await deps.vectorSearch.indexEmail(example.emailId, emailText, example.userChoice, example.wasCorrection);
-        }
+        await indexEmailForSearch(deps)(example.emailId, example.userChoice, example.wasCorrection);
       } catch (error) {
         // Don't fail the use case if embedding indexing fails
         console.warn('Failed to index embedding for training example:', error);

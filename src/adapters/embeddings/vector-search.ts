@@ -30,11 +30,12 @@ export function createVectorSearch(
       topK: number = 5,
       accountId?: number
     ): Promise<VectorSearchResult[]> {
-      // Get all embeddings (filtered by account if specified)
-      const allEmbeddings = await embeddingRepo.findAll(
-        embeddingService.getModel(),
-        accountId
-      );
+      // Get all embeddings (filtered by account if specified). Rows without a
+      // label ('' = unknown, e.g. vectors stored by System 1 before any folder
+      // was decided) cannot vote for a folder.
+      const allEmbeddings = (
+        await embeddingRepo.findAll(embeddingService.getModel(), accountId)
+      ).filter((emb) => emb.folder !== '');
 
       // No embeddings yet - return early before generating query embedding
       if (allEmbeddings.length === 0) {
@@ -63,19 +64,28 @@ export function createVectorSearch(
       emailId: number,
       emailText: string,
       folder: string,
-      isCorrection: boolean = false
+      isCorrection: boolean = false,
+      opts: { keepVector?: boolean } = {}
     ): Promise<void> {
+      const model = embeddingService.getModel();
+      const saveOpts = opts.keepVector ? { keepVector: true } : {};
+
+      // keepVector: a vector already stored for this (email, model) was made
+      // by the System 1 path from its canonical text. Reuse it, update the
+      // label only, and skip the (slow) re-embedding.
+      if (opts.keepVector) {
+        const existing = await embeddingRepo.findByEmail(emailId, model);
+        if (existing) {
+          await embeddingRepo.save(emailId, existing.embedding, folder, isCorrection, model, saveOpts);
+          return;
+        }
+      }
+
       // Generate embedding
       const embedding = await embeddingService.embed(emailText);
 
-      // Save to database
-      await embeddingRepo.save(
-        emailId,
-        embedding,
-        folder,
-        isCorrection,
-        embeddingService.getModel()
-      );
+      // Save to database (keepVector also covers a row stored while we were embedding)
+      await embeddingRepo.save(emailId, embedding, folder, isCorrection, model, saveOpts);
     },
 
     calculateConfidence(similar: VectorSearchResult[]): { folder: string; confidence: number } | null {

@@ -19,7 +19,7 @@ import { extractDomain, extractSubjectPattern } from '../domain';
 // Import triage function (will be resolved after barrel export)
 import { triageAndMoveEmail, shouldSkipTriage } from './triage-usecases';
 // Best-effort body excerpts for the triage LLM (privacy-gated)
-import { fetchBodyPreview, isHumanCandidate, mayUseBodyPreview } from './body-preview';
+import { fetchBodyPreview, isHumanCandidate, mayFetchBodyPreview } from './body-preview';
 // #88: auto-index classified emails into the semantic-search corpus
 import { indexEmailForSearch } from './embedding-usecases';
 // #96: post-classification confidence calibration
@@ -139,10 +139,12 @@ export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'classifier' | 'cl
     const skipped = emailIds.length - emailsToClassify.length;
 
     // Body excerpts help the model judge reply-needed/importance, but only go
-    // to local models (or with explicit opt-in). Fail closed on config errors.
+    // to local models (or with explicit opt-in). They are also gathered when
+    // System 1 is enabled, which embeds them on-device; withBodyPrivacy strips
+    // them before any cloud LLM. Fail closed on config errors.
     let previewsAllowed = false;
     try {
-      previewsAllowed = mayUseBodyPreview(deps.config.getLLMConfig());
+      previewsAllowed = mayFetchBodyPreview(deps.config);
     } catch {
       previewsAllowed = false;
     }
@@ -184,7 +186,13 @@ export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'classifier' | 'cl
         // over-confident; the fitted Platt model maps it to an empirical
         // probability. Identity passthrough when no model has been fit
         // yet.
-        const calibratedConfidence = calibrateConfidence(triageResult.confidence, calibrationModel);
+        // System 1 confidence is not an LLM self-report: its threshold was
+        // chosen against measured disagreement, so Platt scaling (fit on LLM
+        // confidences) must not touch it.
+        const calibratedConfidence =
+          triageResult.source === 'system1'
+            ? triageResult.confidence
+            : calibrateConfidence(triageResult.confidence, calibrationModel);
 
         // Sync triage result to classificationState for ReviewQueue UI
         const status = calibratedConfidence >= confidenceThreshold
@@ -581,10 +589,12 @@ export const reclassifyEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'folder
       });
     }
 
-    // Run full triage classification (pattern + training + LLM + move)
+    // Run full triage classification (pattern + training + LLM + move).
+    // The user asked for a fresh opinion, so System 1 is bypassed.
     const llmConfig = deps.config.getLLMConfig();
     const triageResult = await triageAndMoveEmail(deps)(emailId, {
       confidenceThreshold: llmConfig.confidenceThreshold,
+      forceSystem2: true,
     });
 
     // Update classification state with triage results

@@ -6,9 +6,18 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { classifyNewEmails } from './classification-usecases';
+
+// Background indexing reads the local body cache itself (covered in
+// embedding-usecases.test.ts); stubbing it keeps "which bodies does the
+// classifier get?" assertions about the classifier only.
+const { indexSpy } = vi.hoisted(() => ({ indexSpy: vi.fn(async () => true) }));
+vi.mock('./embedding-usecases', () => ({ indexEmailForSearch: () => indexSpy }));
+
+import { classifyNewEmails, reclassifyEmail } from './classification-usecases';
 import { isUntriagedFolderPath, triageAndMoveEmail } from './triage-usecases';
-import type { Account, Email, Folder, TriageClassificationResult } from '../domain';
+import { withBodyPrivacy } from '../../adapters/triage/body-privacy';
+import { DEFAULT_SYSTEM1_SETTINGS } from '../domain';
+import type { Account, Email, Folder, System1Settings, TriageClassificationResult } from '../domain';
 import type { LLMConfig } from '../ports';
 
 const ME = 'me@test.com';
@@ -72,6 +81,12 @@ type Setup = {
   /** folder id -> path */
   folders?: Record<number, string>;
   config?: Partial<LLMConfig>;
+  /** System 1 settings; omitted = System 1 off (so the LLM-privacy rules are tested on their own). */
+  system1?: Partial<System1Settings>;
+  /** Throw when the System 1 settings are read. */
+  system1Throws?: boolean;
+  /** Active Platt calibration (default: none = identity). */
+  calibration?: { a: number; b: number; fitSize: number };
   budget?: { used: number; limit: number };
   cachedBodies?: Record<number, { text: string; html: string }>;
   fetchBody?: (emailId: number) => Promise<{ text: string; html: string }>;
@@ -97,7 +112,7 @@ function setup(s: Setup) {
   const classify = vi.fn(async (_e: Email, _h: unknown, _x: unknown, _o?: unknown) => result);
   const moveMessage = vi.fn(async () => {});
   const log = vi.fn(async () => {});
-  const setState = vi.fn(async () => {});
+  const setState = vi.fn(async (_state: unknown) => {});
   const getBody = vi.fn(async (id: number) => s.cachedBodies?.[id] ?? null);
   const saveBody = vi.fn(async () => {});
   const fetchBody = vi.fn(s.fetchBody ?? (async () => ({ text: 'remote body text', html: '' })));
@@ -135,8 +150,21 @@ function setup(s: Setup) {
     trainingRepo: { getRelevantExamples: vi.fn(async () => []) },
     triageLog: { log },
     imapFolderOps: { moveMessage },
-    config: { getLLMConfig: () => llmConfig(s.config) },
+    config: {
+      getLLMConfig: () => llmConfig(s.config),
+      getSystem1Settings: () => {
+        if (s.system1Throws) throw new Error('settings unreadable');
+        return { ...DEFAULT_SYSTEM1_SETTINGS, enabled: false, ...s.system1 };
+      },
+    },
     sync: { fetchBody },
+    ...(s.calibration
+      ? {
+          calibration: {
+            loadLatest: vi.fn(async () => ({ ...s.calibration, fittedAt: new Date() })),
+          },
+        }
+      : {}),
   };
   return {
     deps: deps as never,
@@ -348,11 +376,152 @@ describe('classifyNewEmails - body previews', () => {
   });
 });
 
+describe('classifyNewEmails - System 1 body previews', () => {
+  const body = { text: 'Bonjour,\nPourriez-vous me confirmer vendredi ?\n-- \nAlice', html: '' };
+
+  it('fetches a preview under anthropic when System 1 is enabled (the preview stays on-device)', async () => {
+    const t = setup({
+      emails: [makeEmail(1)],
+      config: { provider: 'anthropic' },
+      system1: { enabled: true },
+      cachedBodies: { 1: body },
+    });
+    await classifyNewEmails(t.deps)([1]);
+    expect(t.classify.mock.calls[0]![3]).toEqual({
+      bodyPreview: 'Bonjour,\nPourriez-vous me confirmer vendredi ?',
+    });
+  });
+
+  it('fetches over IMAP under anthropic when System 1 is enabled and the body is not cached', async () => {
+    const t = setup({
+      emails: [makeEmail(1)],
+      config: { provider: 'anthropic' },
+      system1: { enabled: true },
+    });
+    await classifyNewEmails(t.deps)([1]);
+    expect(t.fetchBody).toHaveBeenCalledWith(account, 1);
+  });
+
+  it('still fetches no body under anthropic when System 1 is disabled', async () => {
+    const t = setup({
+      emails: [makeEmail(1)],
+      config: { provider: 'anthropic' },
+      system1: { enabled: false },
+      cachedBodies: { 1: body },
+    });
+    await classifyNewEmails(t.deps)([1]);
+    expect(t.getBody).not.toHaveBeenCalled();
+    expect(t.fetchBody).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the System 1 settings cannot be read under anthropic', async () => {
+    const t = setup({
+      emails: [makeEmail(1)],
+      config: { provider: 'anthropic' },
+      system1Throws: true,
+      cachedBodies: { 1: body },
+    });
+    const result = await classifyNewEmails(t.deps)([1]);
+    expect(result.classified).toBe(1);
+    expect(t.getBody).not.toHaveBeenCalled();
+    expect(t.classify.mock.calls[0]).toHaveLength(3);
+  });
+
+  it('withBodyPrivacy still strips the preview (and snippet) before System 2 under anthropic', async () => {
+    const t = setup({
+      emails: [makeEmail(1, { snippet: 'first words of the body' })],
+      config: { provider: 'anthropic' },
+      system1: { enabled: true },
+      cachedBodies: { 1: body },
+    });
+    const privacy = withBodyPrivacy({ classify: t.classify }, () =>
+      llmConfig({ provider: 'anthropic' }),
+    );
+    // Stands in for System 1: it sees the options as the use case passed them.
+    const seenBySystem1 = vi.fn();
+    (t.raw as any).triageClassifier = {
+      classify: async (e: Email, h: unknown, x: unknown, o?: { bodyPreview?: string }) => {
+        seenBySystem1(o);
+        return privacy.classify(e, h as never, x as never, o);
+      },
+    };
+
+    await classifyNewEmails(t.deps)([1]);
+
+    expect(seenBySystem1).toHaveBeenCalledWith({
+      bodyPreview: 'Bonjour,\nPourriez-vous me confirmer vendredi ?',
+    });
+    const [email, , , opts] = t.classify.mock.calls[0]!;
+    expect(opts).not.toHaveProperty('bodyPreview');
+    expect(email.snippet).toBe('');
+  });
+});
+
+describe('classifyNewEmails - indexing', () => {
+  it('indexes each classified email under the folder the triage chose', async () => {
+    indexSpy.mockClear();
+    const t = setup({ emails: [makeEmail(1)], result: { folder: 'Planning' } });
+    await classifyNewEmails(t.deps)([1]);
+    expect(indexSpy).toHaveBeenCalledWith(1, 'Planning', false);
+  });
+});
+
+describe('classifyNewEmails - System 1 confidence is not Platt-calibrated', () => {
+  // sigmoid(0.9 - 3) = 0.109: a visible change for an LLM confidence of 0.9.
+  const calibration = { a: 1, b: -3, fitSize: 100 };
+
+  it('keeps the confidence of a System 1 result as is', async () => {
+    const t = setup({
+      emails: [makeEmail(1)],
+      calibration,
+      result: { source: 'system1', confidence: 0.9 },
+    });
+    await classifyNewEmails(t.deps)([1]);
+    expect(t.setState).toHaveBeenCalledWith(
+      expect.objectContaining({ confidence: 0.9, status: 'classified', priority: 'high' }),
+    );
+  });
+
+  it('still calibrates an LLM result', async () => {
+    const t = setup({
+      emails: [makeEmail(1)],
+      calibration,
+      result: { source: 'llm', confidence: 0.9 },
+    });
+    await classifyNewEmails(t.deps)([1]);
+    const state = t.setState.mock.calls[0]![0] as { confidence: number; status: string };
+    expect(state.confidence).toBeCloseTo(0.109, 2);
+    expect(state.status).toBe('pending_review');
+  });
+});
+
+describe('reclassifyEmail', () => {
+  it('always asks System 2 (forceSystem2) so a re-check never returns the same System 1 answer', async () => {
+    const t = setup({ emails: [makeEmail(1)] });
+    (t.raw as any).classificationState = {
+      getState: vi.fn(async () => null),
+      setState: t.setState,
+      logFeedback: vi.fn(async () => {}),
+    };
+    await reclassifyEmail(t.deps)(1);
+    expect(t.classify).toHaveBeenCalledTimes(1);
+    expect(t.classify.mock.calls[0]![3]).toEqual({ forceSystem2: true });
+  });
+});
+
 describe('triageAndMoveEmail', () => {
   it('forwards the preview to the classifier', async () => {
     const t = setup({ emails: [makeEmail(1)] });
     await triageAndMoveEmail(t.deps)(1, { bodyPreview: 'Hello?' });
     expect(t.classify.mock.calls[0]![3]).toEqual({ bodyPreview: 'Hello?' });
+  });
+
+  it('forwards forceSystem2, alone or with a preview', async () => {
+    const t = setup({ emails: [makeEmail(1)] });
+    await triageAndMoveEmail(t.deps)(1, { forceSystem2: true });
+    await triageAndMoveEmail(t.deps)(1, { bodyPreview: 'Hello?', forceSystem2: true });
+    expect(t.classify.mock.calls[0]![3]).toEqual({ forceSystem2: true });
+    expect(t.classify.mock.calls[1]![3]).toEqual({ bodyPreview: 'Hello?', forceSystem2: true });
   });
 
   it('calls the classifier with three arguments when there is no preview', async () => {

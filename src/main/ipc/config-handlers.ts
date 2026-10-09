@@ -9,10 +9,15 @@ import {
   assertBoolean,
   assertString,
 } from './validation';
-import { DigestSettingsInput, SendBodyExcerptsToCloudInput, parseInput } from './schemas';
+import {
+  DigestSettingsInput,
+  SendBodyExcerptsToCloudInput,
+  System1SettingsInput,
+  parseInput,
+} from './schemas';
 
 // `digestState` (scheduler bookkeeping) is deliberately NOT allowlisted.
-const ALLOWED_CONFIG_KEYS = ['llm', 'digest'] as const;
+const ALLOWED_CONFIG_KEYS = ['llm', 'digest', 'system1'] as const;
 type AllowedConfigKey = (typeof ALLOWED_CONFIG_KEYS)[number];
 
 // ==========================================
@@ -99,6 +104,17 @@ export function setupConfigHandlers(container: Container): void {
         emailToSelf: patch.emailToSelf ?? current.emailToSelf,
         showSubjects: patch.showSubjects ?? current.showSubjects,
         allowBiometricPrompt: patch.allowBiometricPrompt ?? current.allowBiometricPrompt,
+      });
+    }
+    // System 1 settings accept a partial update too; the encoder is an allowlist.
+    if (k === 'system1') {
+      const patch = parseInput(System1SettingsInput, value, 'system1');
+      const current = config.get('system1');
+      return config.set('system1', {
+        enabled: patch.enabled ?? current.enabled,
+        embeddingModel: patch.embeddingModel ?? current.embeddingModel,
+        targetDisagreement: patch.targetDisagreement ?? current.targetDisagreement,
+        auditRate: patch.auditRate ?? current.auditRate,
       });
     }
     return config.set(k as AllowedConfigKey, value);

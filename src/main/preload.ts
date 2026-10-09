@@ -8,6 +8,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ForgottenRepliesResult, DigestRunResult } from '../core/domain';
 import type { System1Status } from '../core/system1/types';
+import type { System1ModelImportResult } from '../core/model-import';
 
 // Event subscription tracking
 type Callback = (...args: any[]) => void;
@@ -208,6 +209,9 @@ const api = {
   system1: {
     getStatus: () => ipcRenderer.invoke('system1:getStatus') as Promise<System1Status>,
     retrain: () => ipcRenderer.invoke('system1:retrain') as Promise<System1Status>,
+    // Opens a native folder picker in the main process; the renderer never supplies a path.
+    importModel: () =>
+      ipcRenderer.invoke('system1:importModel') as Promise<System1ModelImportResult>,
   },
 
   embeddings: {

@@ -89,17 +89,25 @@ export function createEmbeddingRepo(db: Database): EmbeddingRepo {
       embedding: number[],
       folder: string,
       isCorrection: boolean,
-      model: string
+      model: string,
+      opts: { keepVector?: boolean; keepFolder?: boolean } = {}
     ): Promise<EmailEmbedding> {
       const serialized = serializeEmbedding(embedding);
+
+      // On a (email, model) conflict: keepVector leaves the stored vector alone
+      // (only the label changes), keepFolder leaves the label alone (only the
+      // vector changes). The SQL is assembled from fixed fragments, never from input.
+      const updateVector = opts.keepVector ? 'embedding = embedding' : 'embedding = excluded.embedding';
+      const updateLabel = opts.keepFolder
+        ? 'folder = folder, is_correction = is_correction'
+        : 'folder = excluded.folder, is_correction = excluded.is_correction';
 
       const stmt = db.prepare(`
         INSERT INTO email_embeddings (email_id, embedding, folder, is_correction, embedding_model)
         VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(email_id, embedding_model) DO UPDATE SET
-          embedding = excluded.embedding,
-          folder = excluded.folder,
-          is_correction = excluded.is_correction
+          ${updateVector},
+          ${updateLabel}
         RETURNING *
       `);
 

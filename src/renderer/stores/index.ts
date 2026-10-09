@@ -10,6 +10,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Email, EmailBody, Attachment, Account, SyncProgress, Draft, DraftInput, ClassificationStats, ClassificationFeedback, ConfusedPattern, ClassificationState, RecentContact, ForgottenRepliesResult, DigestRunResult } from '../../core/domain';
 import type { System1Status } from '../../core/system1/types';
+import type { System1ModelImportResult } from '../../core/model-import';
 
 export { useEmailUiStore } from './emailUiStore';
 export type { EmailFilter } from './emailUiStore';
@@ -240,6 +241,7 @@ declare global {
       system1: {
         getStatus: () => Promise<System1Status>;
         retrain: () => Promise<System1Status>;
+        importModel: () => Promise<System1ModelImportResult>;
       };
       embeddings: {
         getStats: () => Promise<{

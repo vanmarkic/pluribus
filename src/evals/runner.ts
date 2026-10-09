@@ -6,7 +6,7 @@
  */
 
 import type { TriageFolder } from '../core/domain';
-import { computeReport } from './metrics';
+import { computeReport, type ComputeReportOptions } from './metrics';
 import type { EvalClassifier, EvalEntry, EvalResult, EvalReport } from './types';
 
 const ALL_FOLDERS: TriageFolder[] = [
@@ -23,7 +23,7 @@ const ALL_FOLDERS: TriageFolder[] = [
 export async function runEval(
   classifier: EvalClassifier,
   dataset: EvalEntry[],
-  options: { onProgress?: (done: number, total: number) => void } = {},
+  options: { onProgress?: (done: number, total: number) => void } & ComputeReportOptions = {},
 ): Promise<EvalReport> {
   const results: EvalResult[] = [];
   let done = 0;
@@ -40,6 +40,7 @@ export async function runEval(
         latencyMs: decision.latencyMs,
         costUsd: decision.costUsd ?? 0,
         correct,
+        lang: entry.lang,
       });
     } catch (err) {
       results.push({
@@ -50,6 +51,7 @@ export async function runEval(
         latencyMs: 0,
         costUsd: 0,
         correct: entry.expectedFolder === 'INBOX',
+        lang: entry.lang,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -57,5 +59,6 @@ export async function runEval(
     options.onProgress?.(done, dataset.length);
   }
 
-  return computeReport(results, classifier.label, ALL_FOLDERS);
+  const { onProgress: _onProgress, ...reportOptions } = options;
+  return computeReport(results, classifier.label, ALL_FOLDERS, reportOptions);
 }

@@ -2,7 +2,7 @@
  * Vector Search Tests
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import * as BetterSqlite3 from 'better-sqlite3';
 import { createVectorSearch } from './vector-search';
 import { createEmbeddingService } from './index';
@@ -162,5 +162,89 @@ describe('VectorSearch', () => {
     // Should be sorted by similarity descending
     expect(results[0].similarity).toBeGreaterThanOrEqual(results[1].similarity);
     expect(results[1].similarity).toBeGreaterThanOrEqual(results[2].similarity);
+  });
+});
+
+describe('VectorSearch with a deterministic encoder', () => {
+  const MODEL = 'Xenova/multilingual-e5-small';
+  let db: Database;
+  let embeddingRepo: ReturnType<typeof createEmbeddingRepo>;
+  let embed: Mock<(text: string) => Promise<number[]>>;
+  let vectorSearch: ReturnType<typeof createVectorSearch>;
+
+  beforeEach(() => {
+    db = new (BetterSqlite3 as any).default(':memory:') as Database;
+    db.exec(fs.readFileSync(path.join(__dirname, '../db/schema.sql'), 'utf8'));
+    db.prepare(
+      'INSERT INTO accounts (name, email, imap_host, imap_port, smtp_host, smtp_port, username) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    ).run('Test', 'test@example.com', 'imap.example.com', 993, 'smtp.example.com', 587, 'test');
+    db.prepare('INSERT INTO folders (account_id, path, name) VALUES (?, ?, ?)').run(
+      1,
+      'INBOX',
+      'INBOX',
+    );
+    for (let id = 1; id <= 3; id++) {
+      db.prepare(
+        `INSERT INTO emails (message_id, account_id, folder_id, uid, from_address, to_addresses, date)
+         VALUES (?, 1, 1, ?, 'a@x.com', '[]', '2026-01-01T10:00:00.000Z')`,
+      ).run(`<m${id}>`, id);
+    }
+    embeddingRepo = createEmbeddingRepo(db);
+    embed = vi.fn(async (text: string) => (text.includes('facture') ? [1, 0, 0] : [0, 1, 0]));
+    const service = {
+      embed,
+      similarity: (a: number[], b: number[]) => a.reduce((s, v, i) => s + v * (b[i] ?? 0), 0),
+      getModel: () => MODEL,
+    };
+    vectorSearch = createVectorSearch(service, embeddingRepo);
+  });
+
+  it('stores embeddings under the encoder model id', async () => {
+    await vectorSearch.indexEmail(1, 'facture de mars', 'Paper-Trail/Invoices');
+    expect(await embeddingRepo.count(MODEL)).toBe(1);
+    expect(await embeddingRepo.count('all-MiniLM-L6-v2')).toBe(0);
+  });
+
+  it('keepVector reuses the stored vector: no re-embedding, label updated', async () => {
+    await embeddingRepo.save(1, [0, 0, 1], '', false, MODEL); // stored by System 1, label unknown
+
+    await vectorSearch.indexEmail(1, 'facture de mars', 'Paper-Trail/Invoices', false, {
+      keepVector: true,
+    });
+
+    expect(embed).not.toHaveBeenCalled();
+    const row = await embeddingRepo.findByEmail(1, MODEL);
+    expect(row?.embedding).toEqual([0, 0, 1]);
+    expect(row?.folder).toBe('Paper-Trail/Invoices');
+  });
+
+  it('keepVector embeds when nothing is stored yet', async () => {
+    await vectorSearch.indexEmail(2, 'facture de mars', 'Paper-Trail/Invoices', false, {
+      keepVector: true,
+    });
+    expect(embed).toHaveBeenCalledTimes(1);
+    expect((await embeddingRepo.findByEmail(2, MODEL))?.embedding).toEqual([1, 0, 0]);
+  });
+
+  it('without keepVector a re-index replaces the vector', async () => {
+    await embeddingRepo.save(1, [0, 0, 1], '', false, MODEL);
+    await vectorSearch.indexEmail(1, 'facture de mars', 'Feed', false);
+    expect((await embeddingRepo.findByEmail(1, MODEL))?.embedding).toEqual([1, 0, 0]);
+  });
+
+  it("ignores rows whose label is unknown ('') when voting for a folder", async () => {
+    await embeddingRepo.save(1, [1, 0, 0], '', false, MODEL); // identical to the query but unlabeled
+    await embeddingRepo.save(2, [0.6, 0.8, 0], 'Paper-Trail/Invoices', false, MODEL);
+
+    const hits = await vectorSearch.findSimilar('facture', 5);
+
+    expect(hits.map((h) => h.emailId)).toEqual([2]);
+    expect(hits.every((h) => h.folder !== '')).toBe(true);
+  });
+
+  it('returns nothing (and does not embed) when only unlabeled rows exist', async () => {
+    await embeddingRepo.save(1, [1, 0, 0], '', false, MODEL);
+    expect(await vectorSearch.findSimilar('facture', 5)).toEqual([]);
+    expect(embed).not.toHaveBeenCalled();
   });
 });

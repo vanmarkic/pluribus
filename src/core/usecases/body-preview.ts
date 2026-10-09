@@ -11,8 +11,9 @@
  * preview", never a failed classification.
  */
 
-import type { Deps, LLMConfig } from '../ports';
+import type { ConfigStore, Deps, LLMConfig } from '../ports';
 import type { Email, EmailBody } from '../domain';
+import { readSystem1Settings } from '../system1/settings';
 import { getEmailBody } from './email-usecases';
 
 /** Maximum preview length in characters. */
@@ -24,6 +25,20 @@ export const BODY_PREVIEW_TIMEOUT_MS = 8000;
 /** Body previews leave the machine only for local models or with explicit opt-in. */
 export function mayUseBodyPreview(config: Pick<LLMConfig, 'provider' | 'sendBodyExcerptsToCloud'>) {
   return config.provider === 'ollama' || config.sendBodyExcerptsToCloud === true;
+}
+
+/**
+ * Should a preview be gathered at all? Yes when the LLM may see it (see
+ * above), and also whenever System 1 is enabled: System 1 embeds the excerpt
+ * on this device only. `withBodyPrivacy` still strips it before any cloud LLM,
+ * so enabling System 1 never sends body text anywhere.
+ *
+ * Throws if a setting cannot be read; callers treat that as "no preview".
+ */
+export function mayFetchBodyPreview(
+  config: Pick<ConfigStore, 'getLLMConfig' | 'getSystem1Settings'>,
+): boolean {
+  return mayUseBodyPreview(config.getLLMConfig()) || readSystem1Settings(config).enabled;
 }
 
 /** Human mail: not a newsletter (no List-Unsubscribe) and not written by the user. */

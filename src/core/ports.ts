@@ -590,13 +590,19 @@ export type EmbeddingRepo = {
   findByEmail: (emailId: number, model?: string) => Promise<EmailEmbedding | null>;
   /** Find all embeddings for similarity search */
   findAll: (model?: string, accountId?: number) => Promise<EmailEmbedding[]>;
-  /** Save embedding for an email */
+  /**
+   * Save embedding for an email. `folder` is '' when the label is unknown.
+   * On an existing (email, model) row, `keepVector` leaves the stored vector
+   * alone and only updates the label; `keepFolder` replaces the vector and
+   * leaves the label alone.
+   */
   save: (
     emailId: number,
     embedding: number[],
     folder: string,
     isCorrection: boolean,
     model: string,
+    opts?: { keepVector?: boolean; keepFolder?: boolean },
   ) => Promise<EmailEmbedding>;
   /** Delete embeddings for an email */
   delete: (emailId: number) => Promise<void>;
@@ -618,12 +624,17 @@ export type VectorSearch = {
     topK?: number,
     accountId?: number,
   ) => Promise<VectorSearchResult[]>;
-  /** Index an email for future similarity search */
+  /**
+   * Index an email for future similarity search. With `keepVector`, a vector
+   * already stored for this (email, model) is reused and only its label is
+   * updated, so the System 1 decorator's vector is never overwritten.
+   */
   indexEmail: (
     emailId: number,
     emailText: string,
     folder: string,
     isCorrection?: boolean,
+    opts?: { keepVector?: boolean },
   ) => Promise<void>;
   /** Calculate confidence from similar neighbors */
   calculateConfidence: (

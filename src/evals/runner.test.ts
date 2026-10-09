@@ -42,4 +42,46 @@ describe('runEval', () => {
     const report = await runEval(STUB_CLASSIFIER, DATASET);
     expect(report.accuracy).toBeGreaterThan(0.5);
   });
+
+  it('carries each entry\'s language into the report', async () => {
+    const report = await runEval(STUB_CLASSIFIER, DATASET);
+    const french = DATASET.filter((e) => e.lang === 'fr').length;
+    const english = DATASET.filter((e) => e.lang === 'en').length;
+    expect(report.byLanguage?.['fr']?.total).toBe(french);
+    expect(report.byLanguage?.['en']?.total).toBe(english);
+    expect(report.langWeights).toEqual({ fr: 0.95, en: 0.05 });
+  });
+
+  it('weights the headline by the requested language mix', async () => {
+    const mixed = await runEval(STUB_CLASSIFIER, DATASET, { langWeights: { fr: 0, en: 1 } });
+    expect(mixed.weightedAccuracy).toBeCloseTo(mixed.byLanguage?.['en']?.accuracy ?? NaN, 10);
+    expect(mixed.langWeights).toEqual({ en: 1 });
+  });
+
+  it('keeps per-language numbers when a classifier throws', async () => {
+    const broken: EvalClassifier = {
+      label: 'broken',
+      async classify() {
+        throw new Error('down');
+      },
+    };
+    const report = await runEval(broken, DATASET.slice(0, 6));
+    expect(Object.values(report.byLanguage ?? {}).reduce((s, m) => s + m.total, 0)).toBe(6);
+  });
+});
+
+describe('CI gate: the stub classifier on the extended (mostly French) dataset', () => {
+  // Same bars as .github/workflows/ci.yml (EVAL_MIN_ACCURACY / EVAL_MIN_MACRO_F1 = 0.75).
+  it('clears the language-weighted macro-F1 and accuracy gates', async () => {
+    const report = await runEval(STUB_CLASSIFIER, DATASET);
+    expect(report.weightedMacroF1).toBeGreaterThanOrEqual(0.75);
+    expect(report.weightedAccuracy).toBeGreaterThanOrEqual(0.75);
+  });
+
+  it('is not just good at English: the French slice clears the bar on its own', async () => {
+    const report = await runEval(STUB_CLASSIFIER, DATASET);
+    expect(report.byLanguage?.['fr']?.accuracy).toBeGreaterThanOrEqual(0.75);
+    expect(report.byLanguage?.['fr']?.macroF1).toBeGreaterThanOrEqual(0.75);
+    expect(report.byLanguage?.['en']?.accuracy).toBeGreaterThanOrEqual(0.75);
+  });
 });
