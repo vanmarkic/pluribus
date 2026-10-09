@@ -39,6 +39,7 @@ import type {
   ReplyCandidate,
   DigestSettings,
   DigestState,
+  System1Settings,
 } from './domain';
 import type { HeadRecord, HeadMetrics, TrainingSample } from './system1/types';
 
@@ -339,6 +340,8 @@ export type ConfigStore = {
   getLLMConfig: () => LLMConfig;
   getRemoteImagesSetting: () => RemoteImagesSetting;
   setRemoteImagesSetting: (setting: RemoteImagesSetting) => void;
+  /** Optional so older mocks keep working; read via `readSystem1Settings`. */
+  getSystem1Settings?: () => System1Settings;
 };
 
 // ============================================

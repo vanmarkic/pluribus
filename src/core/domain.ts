@@ -567,6 +567,36 @@ export const DEFAULT_DIGEST_SETTINGS: DigestSettings = {
   allowBiometricPrompt: false,
 };
 
+// ============================================
+// System 1 (local, Jev-like classifier)
+// ============================================
+
+/** On-device sentence encoders System 1 may use (all run locally via ONNX). */
+export const SYSTEM1_EMBEDDING_MODELS = [
+  'Xenova/multilingual-e5-small', // default: strong on French, 384d
+  'Xenova/paraphrase-multilingual-MiniLM-L12-v2',
+  'Xenova/all-MiniLM-L6-v2', // English-only, legacy
+] as const;
+
+export type System1EmbeddingModel = (typeof SYSTEM1_EMBEDDING_MODELS)[number];
+
+export type System1Settings = {
+  /** Shadow mode until a head is armed, so enabling is always safe. */
+  enabled: boolean;
+  embeddingModel: System1EmbeddingModel;
+  /** ε: max disagreement with System 2 among accepted answers (95% bound). */
+  targetDisagreement: number;
+  /** Share of confident System 1 answers re-checked by System 2. */
+  auditRate: number;
+};
+
+export const DEFAULT_SYSTEM1_SETTINGS: System1Settings = {
+  enabled: true,
+  embeddingModel: 'Xenova/multilingual-e5-small',
+  targetDisagreement: 0.05,
+  auditRate: 0.05,
+};
+
 export type DigestState = {
   /** Local 'YYYY-MM-DD' of the last scheduled run. */
   lastRunDate: string | null;

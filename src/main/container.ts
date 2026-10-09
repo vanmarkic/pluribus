@@ -13,10 +13,12 @@ import Store from 'electron-store';
 import {
   createUseCases,
   DEFAULT_DIGEST_SETTINGS,
+  DEFAULT_SYSTEM1_SETTINGS,
   type UseCases,
   type Deps,
   type DigestSettings,
   type DigestState,
+  type System1Settings,
 } from '../core';
 
 // Adapters
@@ -117,6 +119,7 @@ type AppConfig = {
   digest: DigestSettings;
   /** Internal scheduler bookkeeping. Never exposed over IPC. */
   digestState: DigestState;
+  system1: System1Settings;
 };
 
 const LLM_DEFAULTS = {
@@ -145,6 +148,7 @@ const configStore = new Store<AppConfig>({
     },
     digest: DEFAULT_DIGEST_SETTINGS,
     digestState: DIGEST_STATE_DEFAULTS,
+    system1: DEFAULT_SYSTEM1_SETTINGS,
   },
 });
 
@@ -161,10 +165,18 @@ const migratedDigest = { ...DEFAULT_DIGEST_SETTINGS, ...storedDigest };
 if (JSON.stringify(storedDigest) !== JSON.stringify(migratedDigest)) {
   configStore.set('digest', migratedDigest);
 }
+
 const storedDigestState = configStore.get('digestState');
 const migratedDigestState = { ...DIGEST_STATE_DEFAULTS, ...storedDigestState };
 if (JSON.stringify(storedDigestState) !== JSON.stringify(migratedDigestState)) {
   configStore.set('digestState', migratedDigestState);
+}
+
+// Migration: ensure new System 1 fields have defaults
+const storedSystem1 = configStore.get('system1');
+const migratedSystem1 = { ...DEFAULT_SYSTEM1_SETTINGS, ...storedSystem1 };
+if (JSON.stringify(storedSystem1) !== JSON.stringify(migratedSystem1)) {
+  configStore.set('system1', migratedSystem1);
 }
 
 // Migration: update old Ollama URL (11434) to new bundled port (11435)
@@ -595,6 +607,7 @@ export function createContainer(): Container {
   const config = {
     getLLMConfig: () => configStore.get('llm'),
     getRemoteImagesSetting: () => configStore.get('security').remoteImages,
+    getSystem1Settings: () => ({ ...DEFAULT_SYSTEM1_SETTINGS, ...configStore.get('system1') }),
     setRemoteImagesSetting: (setting: RemoteImagesSetting) => {
       configStore.set('security', { ...configStore.get('security'), remoteImages: setting });
     },
