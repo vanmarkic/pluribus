@@ -82,11 +82,10 @@ describe('withSignalRecording', () => {
     const { inner } = innerReturning(
       result({ source: 'system1', needsReply: 0.12, importance: 2, confidence: 0.97 }),
     );
-    await withSignalRecording(inner, repo, { modelVersion: () => 'system1:folder@v3' }).classify(
-      email,
-      hint,
-      [],
-    );
+    await withSignalRecording(inner, repo, {
+      modelVersion: () => 'claude-haiku-4-5',
+      system1ModelVersion: () => 'system1:Xenova/multilingual-e5-small',
+    }).classify(email, hint, []);
     expect(upsert).toHaveBeenCalledWith({
       emailId: 42,
       source: 'system1',
@@ -94,8 +93,31 @@ describe('withSignalRecording', () => {
       importance: 2,
       folder: 'Planning',
       confidence: 0.97,
-      modelVersion: 'system1:folder@v3',
+      modelVersion: 'system1:Xenova/multilingual-e5-small',
     });
+  });
+
+  it('defaults the system1 model version to "system1", not the LLM model id', async () => {
+    const { repo, upsert } = makeSignals();
+    const { inner } = innerReturning(result({ source: 'system1' }));
+    await withSignalRecording(inner, repo, { modelVersion: () => 'claude-haiku-4-5' }).classify(
+      email,
+      hint,
+      [],
+    );
+    expect(upsert).toHaveBeenCalledWith(expect.objectContaining({ modelVersion: 'system1' }));
+  });
+
+  it('keeps recording the LLM model id for system2 even when a system1 version is set', async () => {
+    const { repo, upsert } = makeSignals();
+    const { inner } = innerReturning(result({ source: 'llm' }));
+    await withSignalRecording(inner, repo, {
+      modelVersion: () => 'mistral:7b',
+      system1ModelVersion: () => 'system1:x',
+    }).classify(email, hint, []);
+    expect(upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ source: 'system2', modelVersion: 'mistral:7b' }),
+    );
   });
 
   it('records nothing for a fallback result', async () => {

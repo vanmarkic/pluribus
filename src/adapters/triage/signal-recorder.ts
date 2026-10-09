@@ -20,6 +20,11 @@ import type { SignalSource } from '../../core/domain';
 export type SignalRecordingOptions = {
   /** Identifier of the model that produced the answer, e.g. 'claude-haiku-4-5' or 'mistral:7b'. */
   modelVersion: () => string;
+  /**
+   * Identifier recorded for on-device answers, e.g. 'system1:Xenova/multilingual-e5-small'.
+   * Separate from `modelVersion` (which names the LLM). Defaults to 'system1'.
+   */
+  system1ModelVersion?: () => string;
 };
 
 const SOURCE_TO_SIGNAL: Record<string, SignalSource | undefined> = {
@@ -49,7 +54,10 @@ export function withSignalRecording(
             importance: result.importance ?? null,
             folder: result.folder,
             confidence: result.confidence,
-            modelVersion: opts.modelVersion(),
+            modelVersion:
+              signalSource === 'system1'
+                ? (opts.system1ModelVersion?.() ?? 'system1')
+                : opts.modelVersion(),
           });
         } catch (error) {
           console.warn(`Failed to record ${signalSource} signal for email ${email.id}:`, error);
