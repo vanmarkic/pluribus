@@ -5,7 +5,7 @@
  * - Main: Inbox, Sent, Drafts
  * - Triage: Planning, Feed, Social, Promotions
  * - Paper Trail: Invoices, Admin, Travel
- * - AI: Classify, Review
+ * - AI: Classify, Review, Needs your reply, Awaiting Reply
  * - System: Archive, Trash
  * - Bottom: Settings, License, Account Switcher
  */
@@ -15,7 +15,7 @@ import {
   IconInbox, IconSend, IconDocument, IconArchiveBox, IconDelete,
   IconSettings, IconPen, IconSparkles, IconChecklist,
   IconClock3, IconNewspaper, IconNotification, IconMegaphone,
-  IconBill, IconBriefcase, IconPlane, IconTimer
+  IconBill, IconBriefcase, IconPlane, IconTimer, IconCircleBack
 } from 'obra-icons-react';
 import { skipToken } from '@reduxjs/toolkit/query/react';
 import {
@@ -28,6 +28,7 @@ import {
   invalidateEmailList,
   store,
 } from '../stores';
+import { selectReplyCount, useRepliesStore, useReplyCountRefresh } from '../stores/repliesStore';
 import { AccountSwitcher } from './AccountSwitcher';
 import { LicenseStatusBadge } from './LicenseActivation';
 
@@ -60,8 +61,12 @@ export function Sidebar() {
   // Classification is disabled when Ollama is not ready (downloading/starting)
   const isClassificationDisabled = !isOllamaReady && ollamaPhase !== 'skipped';
 
-  // Awaiting reply count
+  // Awaiting reply count (mail I sent, waiting on them)
   const awaitingCount = awaitingEmails.length;
+
+  // Needs-your-reply count (mail I received, waiting on me); kept fresh while mounted
+  const needsReplyCount = useRepliesStore(selectReplyCount);
+  useReplyCountRefresh();
 
   useEffect(() => {
     loadDraftCount();
@@ -272,6 +277,15 @@ export function Sidebar() {
         >
           <IconChecklist className="w-4 h-4" />
           <span className="flex-1 text-left">Review</span>
+        </button>
+
+        <button
+          onClick={() => handleNavClick('needs-reply')}
+          className={`sidebar-item w-full ${view === 'needs-reply' ? 'active' : ''}`}
+        >
+          <IconCircleBack className="w-4 h-4" />
+          <span className="flex-1 text-left">Needs your reply</span>
+          {needsReplyCount > 0 && <span className="sidebar-item-count">{needsReplyCount}</span>}
         </button>
 
         <button

@@ -63,22 +63,26 @@ export function createSecureStorage(): SecureStorage {
     }
   });
 
+  /**
+   * Whether reading a credential can require a biometric prompt right now.
+   * Only macOS has one today; 'never' mode disables it everywhere.
+   */
+  function biometricGateActive(): boolean {
+    return config.biometricMode !== 'never' && process.platform === 'darwin';
+  }
+
   async function promptBiometric(reason: string): Promise<boolean> {
-    if (config.biometricMode === 'never') return true;
-
-    if (process.platform === 'darwin') {
-      try {
-        await systemPreferences.promptTouchID(reason);
-        return true;
-      } catch {
-        return false;
-      }
-    }
-
     // Windows Hello - would need native module
     // Linux - typically no biometric API
     // Fall back to allowing access
-    return true;
+    if (!biometricGateActive()) return true;
+
+    try {
+      await systemPreferences.promptTouchID(reason);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   function checkSession(key: string): string | null {
@@ -113,7 +117,11 @@ export function createSecureStorage(): SecureStorage {
       if (!authed) throw new Error('Biometric authentication failed');
     }
 
-    // Decrypt from store
+    return readStored(key);
+  }
+
+  /** Decrypt straight from the store. Does NOT check or prompt for authentication. */
+  function readStored(key: string): string | null {
     const encrypted = store.get(`${STORE_KEY_PREFIX}${key}`);
     if (!encrypted) return null;
 
@@ -168,6 +176,28 @@ export function createSecureStorage(): SecureStorage {
 
     async getApiKey(service) {
       return decrypt(`api:${service}`, `Access ${service} API key`);
+    },
+
+    // Unattended read (daily digest, deferred emails). Returns the password only
+    // when getPassword would hand it out WITHOUT a biometric prompt. Never calls
+    // promptBiometric / promptTouchID, and never refreshes the session expiry.
+    async getPasswordIfUnlocked(account) {
+      const key = `imap:${account}`;
+
+      // No biometric gate here ('never' mode, or a platform without one such as
+      // Linux/Windows): getPassword would not prompt either, so read like it does.
+      if (!biometricGateActive()) {
+        if (config.biometricMode !== 'always') {
+          const cached = checkSession(key);
+          if (cached) return cached;
+        }
+        return readStored(key);
+      }
+
+      // Biometric gate (macOS): 'always' needs a prompt on every read, and
+      // 'session' / 'lock' only have the password once the session cache holds it.
+      if (config.biometricMode === 'always') return null;
+      return checkSession(key);
     },
 
     clearSession() {

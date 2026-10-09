@@ -2,8 +2,42 @@
  * Embedding Service Tests
  */
 
-import { describe, it, expect } from 'vitest';
-import { createEmbeddingService, serializeEmbedding, deserializeEmbedding, prepareEmailText } from './index';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+
+const { transformersEnv, pipelineMock, extractorMock } = vi.hoisted(() => {
+  const extractor = vi.fn(async (_text: string, _opts: unknown) => ({
+    data: new Float32Array([0.6, 0.8, 0]),
+  }));
+  return {
+    transformersEnv: {
+      cacheDir: '/default/cache',
+      localModelPath: '/models/',
+      allowRemoteModels: true,
+      allowLocalModels: false,
+    },
+    pipelineMock: vi.fn(async (_task: string, _model: string, _opts: unknown) => extractor),
+    extractorMock: extractor,
+  };
+});
+
+vi.mock('@xenova/transformers', () => ({ env: transformersEnv, pipeline: pipelineMock }));
+
+import { isEmbeddingModelNotInstalled } from '../../core/embedding-model';
+import {
+  createEmbeddingService,
+  EmbeddingModelNotInstalledError,
+  serializeEmbedding,
+  deserializeEmbedding,
+  prepareEmailText,
+  prepareModelInput,
+  embeddingModelKey,
+  isModelCached,
+  importModelFromFolder,
+  requiredModelFiles,
+} from './index';
 
 describe('EmbeddingService', () => {
   it.skip('should generate embeddings of correct dimension', async () => {
@@ -12,7 +46,7 @@ describe('EmbeddingService', () => {
     const embedding = await service.embed('Hello, world!');
 
     expect(embedding).toBeDefined();
-    expect(embedding.length).toBe(384); // all-MiniLM-L6-v2 dimension
+    expect(embedding.length).toBe(384); // multilingual-e5-small dimension
     expect(embedding.every((v) => typeof v === 'number')).toBe(true);
   });
 
@@ -72,7 +106,726 @@ describe('EmbeddingService', () => {
 
   it('should return model identifier', () => {
     const service = createEmbeddingService();
+    // Default is the multilingual encoder (most of the mail is French).
+    expect(service.getModel()).toBe('Xenova/multilingual-e5-small');
+    expect(service.getModelName()).toBe('Xenova/multilingual-e5-small');
+  });
+
+  it('keeps the legacy storage key for the English-only model', () => {
+    const service = createEmbeddingService({ modelName: 'Xenova/all-MiniLM-L6-v2' });
     expect(service.getModel()).toBe('all-MiniLM-L6-v2');
+    expect(service.getModelName()).toBe('Xenova/all-MiniLM-L6-v2');
+    expect(embeddingModelKey('Xenova/paraphrase-multilingual-MiniLM-L12-v2')).toBe(
+      'Xenova/paraphrase-multilingual-MiniLM-L12-v2',
+    );
+  });
+
+  it('rejects model ids that could escape the cache directory', () => {
+    for (const bad of ['../evil', '/abs/path', 'a\\b', 'Xenova/../x', '']) {
+      expect(() => createEmbeddingService({ modelName: bad })).toThrow(/model/i);
+    }
+  });
+});
+
+describe('model input prefix', () => {
+  it('adds "query: " for e5 models only', () => {
+    expect(prepareModelInput('Xenova/multilingual-e5-small', 'bonjour')).toBe('query: bonjour');
+    expect(prepareModelInput('Xenova/multilingual-e5-base', 'bonjour')).toBe('query: bonjour');
+    expect(prepareModelInput('Xenova/all-MiniLM-L6-v2', 'bonjour')).toBe('bonjour');
+    expect(prepareModelInput('Xenova/paraphrase-multilingual-MiniLM-L12-v2', 'bonjour')).toBe(
+      'bonjour',
+    );
+  });
+});
+
+/** Create the files a transformers.js model folder needs. */
+function writeModel(root: string, opts: { quantized?: boolean; skip?: string[] } = {}): void {
+  const files = requiredModelFiles(opts.quantized ?? true).filter(
+    (f) => !(opts.skip ?? []).includes(f),
+  );
+  for (const rel of files) {
+    const full = path.join(root, rel);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, rel.endsWith('.onnx') ? 'onnx-bytes' : '{}');
+  }
+}
+
+describe('local encoder (mocked transformers.js)', () => {
+  const MODEL = 'Xenova/multilingual-e5-small';
+  let cacheDir: string;
+
+  beforeEach(() => {
+    cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pluribus-enc-'));
+    pipelineMock.mockClear();
+    extractorMock.mockClear();
+    transformersEnv.cacheDir = '/default/cache';
+    transformersEnv.localModelPath = '/models/';
+    transformersEnv.allowRemoteModels = true;
+    transformersEnv.allowLocalModels = false;
+  });
+
+  afterEach(() => {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  });
+
+  it('does nothing until the first embed (no cache setup, no model load)', () => {
+    createEmbeddingService({ cacheDir });
+    expect(pipelineMock).not.toHaveBeenCalled();
+    expect(transformersEnv.cacheDir).toBe('/default/cache');
+  });
+
+  it('points transformers.js at the cache dir and allows local models', async () => {
+    writeModel(path.join(cacheDir, MODEL));
+    const service = createEmbeddingService({ cacheDir });
+    await service.embed('bonjour');
+    expect(transformersEnv.cacheDir).toBe(cacheDir);
+    expect(transformersEnv.localModelPath).toBe(cacheDir);
+    expect(transformersEnv.allowLocalModels).toBe(true);
+  });
+
+  it('forbids remote access once the model folder is on disk', async () => {
+    writeModel(path.join(cacheDir, MODEL));
+    const service = createEmbeddingService({ cacheDir });
+    expect(service.isModelCached()).toBe(true);
+    await service.embed('bonjour');
+    expect(transformersEnv.allowRemoteModels).toBe(false);
+  });
+
+  it('treats an incomplete model folder as not installed', async () => {
+    writeModel(path.join(cacheDir, MODEL), { skip: ['onnx/model_quantized.onnx'] });
+    const service = createEmbeddingService({ cacheDir });
+    await expect(service.embed('bonjour')).rejects.toBeInstanceOf(EmbeddingModelNotInstalledError);
+    expect(transformersEnv.allowRemoteModels).toBe(false);
+    expect(pipelineMock).not.toHaveBeenCalled();
+  });
+
+  it('passes the pinned revision and quantization to the pipeline', async () => {
+    writeModel(path.join(cacheDir, MODEL, 'abc123'));
+    const service = createEmbeddingService({ cacheDir, revision: 'abc123', quantized: true });
+    await service.embed('bonjour');
+    expect(pipelineMock).toHaveBeenCalledWith('feature-extraction', MODEL, {
+      quantized: true,
+      revision: 'abc123',
+    });
+  });
+
+  it("defaults to the 'main' revision and a quantized model", async () => {
+    writeModel(path.join(cacheDir, MODEL));
+    const service = createEmbeddingService({ cacheDir });
+    await service.embed('bonjour');
+    expect(pipelineMock).toHaveBeenCalledWith('feature-extraction', MODEL, {
+      quantized: true,
+      revision: 'main',
+    });
+  });
+
+  it('finds a model downloaded under a pinned revision', async () => {
+    writeModel(path.join(cacheDir, MODEL, 'abc123'));
+    const service = createEmbeddingService({ cacheDir, revision: 'abc123' });
+    expect(service.isModelCached()).toBe(true);
+    await service.embed('bonjour');
+    expect(transformersEnv.allowRemoteModels).toBe(false);
+  });
+
+  it('applies the e5 "query: " prefix in the one place that embeds', async () => {
+    writeModel(path.join(cacheDir, MODEL));
+    const service = createEmbeddingService({ cacheDir });
+    await service.embed('Facture de mars');
+    expect(extractorMock).toHaveBeenCalledWith('query: Facture de mars', {
+      pooling: 'mean',
+      normalize: true,
+    });
+  });
+
+  it('does not prefix non-e5 models', async () => {
+    writeModel(path.join(cacheDir, 'Xenova/all-MiniLM-L6-v2'));
+    const service = createEmbeddingService({ cacheDir, modelName: 'Xenova/all-MiniLM-L6-v2' });
+    await service.embed('Facture de mars');
+    expect(extractorMock).toHaveBeenCalledWith('Facture de mars', {
+      pooling: 'mean',
+      normalize: true,
+    });
+  });
+
+  it('returns a plain number[] and loads the pipeline only once', async () => {
+    writeModel(path.join(cacheDir, MODEL));
+    const service = createEmbeddingService({ cacheDir });
+    const [a, b] = await Promise.all([service.embed('un'), service.embed('deux')]);
+    expect(Array.isArray(a)).toBe(true);
+    expect(a[0]).toBeCloseTo(0.6, 5);
+    expect(b).toHaveLength(3);
+    await service.embed('trois');
+    expect(pipelineMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries after a failed load, but not in a tight loop', async () => {
+    let clock = 1_000_000;
+    writeModel(path.join(cacheDir, MODEL));
+    pipelineMock.mockRejectedValueOnce(new Error('corrupt model'));
+    const service = createEmbeddingService({ cacheDir, now: () => clock });
+
+    await expect(service.embed('un')).rejects.toThrow('corrupt model');
+    // Within the cool-down the failure is replayed without loading again.
+    await expect(service.embed('deux')).rejects.toThrow('corrupt model');
+    expect(pipelineMock).toHaveBeenCalledTimes(1);
+
+    clock += 61_000;
+    await expect(service.embed('trois')).resolves.toHaveLength(3);
+    expect(pipelineMock).toHaveBeenCalledTimes(2);
+    // A cached model never goes online, not even on a retry.
+    expect(transformersEnv.allowRemoteModels).toBe(false);
+  });
+
+  it('reset() re-checks the cache on the next embed (after an import)', async () => {
+    const service = createEmbeddingService({ cacheDir });
+    await expect(service.embed('un')).rejects.toBeInstanceOf(EmbeddingModelNotInstalledError);
+
+    writeModel(path.join(cacheDir, MODEL));
+    service.reset();
+    await expect(service.embed('deux')).resolves.toHaveLength(3);
+    expect(transformersEnv.allowRemoteModels).toBe(false);
+    expect(pipelineMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The privacy rule: huggingface.co sees the user's IP address, so the model is
+ * only ever fetched after an explicit `downloadModel()` (the Settings button).
+ */
+describe('model download is explicit (mocked transformers.js)', () => {
+  const MODEL = 'Xenova/multilingual-e5-small';
+  let cacheDir: string;
+  /** `env.allowRemoteModels` as the library saw it, at every pipeline() call. */
+  let remoteAtCall: boolean[];
+
+  /** A pipeline() that behaves like a download: writes the model files, reports progress. */
+  const downloading = (dir: string) => async (_task: string, _model: string, o: unknown) => {
+    remoteAtCall.push(transformersEnv.allowRemoteModels);
+    const callback = (o as { progress_callback?: (e: unknown) => void }).progress_callback;
+    callback?.({ status: 'initiate', name: MODEL, file: 'config.json' });
+    callback?.({
+      status: 'progress',
+      name: MODEL,
+      file: 'onnx/model_quantized.onnx',
+      progress: 50,
+      loaded: 59,
+      total: 118,
+    });
+    writeModel(path.join(dir, MODEL));
+    return extractorMock;
+  };
+
+  beforeEach(() => {
+    cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pluribus-dl-'));
+    remoteAtCall = [];
+    pipelineMock.mockReset();
+    pipelineMock.mockImplementation(async () => {
+      remoteAtCall.push(transformersEnv.allowRemoteModels);
+      return extractorMock;
+    });
+    extractorMock.mockClear();
+    transformersEnv.cacheDir = '/default/cache';
+    transformersEnv.localModelPath = '/models/';
+    transformersEnv.allowRemoteModels = true; // the library's own default
+    transformersEnv.allowLocalModels = false;
+  });
+
+  afterEach(() => {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  });
+
+  describe('without a download request', () => {
+    it('embed() throws EmbeddingModelNotInstalledError and never asks the library for anything', async () => {
+      const service = createEmbeddingService({ cacheDir });
+      const failure = await service.embed('bonjour').catch((e: unknown) => e);
+
+      expect(failure).toBeInstanceOf(EmbeddingModelNotInstalledError);
+      expect(isEmbeddingModelNotInstalled(failure)).toBe(true);
+      expect((failure as Error).message).toMatch(/not installed/i);
+      expect((failure as EmbeddingModelNotInstalledError).model).toBe(MODEL);
+      expect(pipelineMock).not.toHaveBeenCalled();
+      expect(extractorMock).not.toHaveBeenCalled();
+    });
+
+    it('switches remote loading off from the moment the service exists, and keeps it off', async () => {
+      expect(transformersEnv.allowRemoteModels).toBe(true);
+      const service = createEmbeddingService({ cacheDir });
+      expect(transformersEnv.allowRemoteModels).toBe(false);
+
+      for (let i = 0; i < 3; i++) {
+        await expect(service.embed(`mail ${i}`)).rejects.toBeInstanceOf(
+          EmbeddingModelNotInstalledError,
+        );
+      }
+      expect(transformersEnv.allowRemoteModels).toBe(false);
+      expect(pipelineMock).not.toHaveBeenCalled();
+    });
+
+    it('stays off even if something else turned remote loading back on', async () => {
+      const service = createEmbeddingService({ cacheDir });
+      transformersEnv.allowRemoteModels = true;
+      await expect(service.embed('bonjour')).rejects.toBeInstanceOf(
+        EmbeddingModelNotInstalledError,
+      );
+      expect(transformersEnv.allowRemoteModels).toBe(false);
+    });
+
+    it('reports "not installed" and leaves the disk alone', () => {
+      const service = createEmbeddingService({ cacheDir });
+      expect(service.getDownloadState()).toEqual({
+        installed: false,
+        downloading: false,
+        error: null,
+      });
+      expect(fs.readdirSync(cacheDir)).toEqual([]);
+    });
+
+    it('is the default, whether or not autoDownload is spelled out', async () => {
+      const explicit = createEmbeddingService({ cacheDir, autoDownload: false });
+      await expect(explicit.embed('x')).rejects.toBeInstanceOf(EmbeddingModelNotInstalledError);
+      expect(pipelineMock).not.toHaveBeenCalled();
+    });
+
+    it('is not fooled by a half-finished install (no onnx file yet)', async () => {
+      writeModel(path.join(cacheDir, MODEL), { skip: ['onnx/model_quantized.onnx'] });
+      const service = createEmbeddingService({ cacheDir });
+      await expect(service.embed('x')).rejects.toBeInstanceOf(EmbeddingModelNotInstalledError);
+      expect(service.getDownloadState().installed).toBe(false);
+      expect(pipelineMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('downloadModel()', () => {
+    it('turns remote loading on only for the call, and off again afterwards', async () => {
+      pipelineMock.mockImplementationOnce(downloading(cacheDir));
+      const service = createEmbeddingService({ cacheDir });
+      expect(transformersEnv.allowRemoteModels).toBe(false);
+
+      await service.downloadModel();
+
+      expect(pipelineMock).toHaveBeenCalledTimes(1);
+      expect(pipelineMock).toHaveBeenCalledWith('feature-extraction', MODEL, {
+        quantized: true,
+        revision: 'main',
+      });
+      expect(remoteAtCall).toEqual([true]);
+      expect(transformersEnv.allowRemoteModels).toBe(false);
+      // The cache dir is applied for the download as for every other load.
+      expect(transformersEnv.cacheDir).toBe(cacheDir);
+      expect(transformersEnv.localModelPath).toBe(cacheDir);
+    });
+
+    it('leaves the service installed and working, without going online again', async () => {
+      pipelineMock.mockImplementationOnce(downloading(cacheDir));
+      const service = createEmbeddingService({ cacheDir });
+      await service.downloadModel();
+
+      expect(service.isModelCached()).toBe(true);
+      expect(service.getDownloadState()).toEqual({
+        installed: true,
+        downloading: false,
+        error: null,
+      });
+
+      await expect(service.embed('bonjour')).resolves.toHaveLength(3);
+      // The downloaded pipeline is reused: no second load, no second look at the network.
+      expect(pipelineMock).toHaveBeenCalledTimes(1);
+      expect(transformersEnv.allowRemoteModels).toBe(false);
+      expect(extractorMock).toHaveBeenCalledWith('query: bonjour', {
+        pooling: 'mean',
+        normalize: true,
+      });
+    });
+
+    it('passes the pinned revision to the download', async () => {
+      pipelineMock.mockImplementationOnce(async () => {
+        remoteAtCall.push(transformersEnv.allowRemoteModels);
+        writeModel(path.join(cacheDir, MODEL, 'abc123'));
+        return extractorMock;
+      });
+      const service = createEmbeddingService({ cacheDir, revision: 'abc123' });
+      await service.downloadModel();
+      expect(pipelineMock).toHaveBeenCalledWith('feature-extraction', MODEL, {
+        quantized: true,
+        revision: 'abc123',
+      });
+      expect(service.getDownloadState().installed).toBe(true);
+    });
+
+    it('reports progress, and a failing observer cannot break the download', async () => {
+      pipelineMock.mockImplementationOnce(downloading(cacheDir));
+      const service = createEmbeddingService({ cacheDir });
+      const seen: unknown[] = [];
+
+      await service.downloadModel({
+        onProgress: (p) => {
+          seen.push(p);
+          throw new Error('observer bug');
+        },
+      });
+
+      // Only real progress events are forwarded (not "initiate"/"done").
+      expect(seen).toEqual([{ file: 'onnx/model_quantized.onnx', loaded: 59, total: 118 }]);
+      expect(service.getDownloadState().installed).toBe(true);
+    });
+
+    it('passes no progress callback when nobody listens', async () => {
+      const service = createEmbeddingService({ cacheDir });
+      pipelineMock.mockImplementationOnce(async (_t, _m, o) => {
+        expect(o).not.toHaveProperty('progress_callback');
+        writeModel(path.join(cacheDir, MODEL));
+        return extractorMock;
+      });
+      await service.downloadModel();
+    });
+
+    it('does nothing when the model is already installed', async () => {
+      writeModel(path.join(cacheDir, MODEL));
+      const service = createEmbeddingService({ cacheDir });
+      await service.downloadModel();
+      expect(pipelineMock).not.toHaveBeenCalled();
+      expect(transformersEnv.allowRemoteModels).toBe(false);
+      expect(service.getDownloadState().installed).toBe(true);
+    });
+
+    it('concurrent calls share one download', async () => {
+      let release: () => void = () => {};
+      pipelineMock.mockImplementationOnce(
+        () =>
+          new Promise<typeof extractorMock>((resolve) => {
+            remoteAtCall.push(transformersEnv.allowRemoteModels);
+            release = () => {
+              writeModel(path.join(cacheDir, MODEL));
+              resolve(extractorMock);
+            };
+          }),
+      );
+      const service = createEmbeddingService({ cacheDir });
+
+      const first = service.downloadModel();
+      const second = service.downloadModel();
+      const third = service.downloadModel();
+      expect(second).toBe(first);
+      expect(third).toBe(first);
+
+      release();
+      await Promise.all([first, second, third]);
+
+      expect(pipelineMock).toHaveBeenCalledTimes(1);
+      expect(remoteAtCall).toEqual([true]);
+      expect(transformersEnv.allowRemoteModels).toBe(false);
+    });
+
+    describe('while it runs', () => {
+      it('reports downloading, stays "not installed", and embed() does not wait for it', async () => {
+        let release: () => void = () => {};
+        pipelineMock.mockImplementationOnce(
+          () =>
+            new Promise<typeof extractorMock>((resolve) => {
+              remoteAtCall.push(transformersEnv.allowRemoteModels);
+              release = () => {
+                writeModel(path.join(cacheDir, MODEL));
+                resolve(extractorMock);
+              };
+            }),
+        );
+        const service = createEmbeddingService({ cacheDir });
+        const download = service.downloadModel();
+
+        expect(service.getDownloadState()).toEqual({
+          installed: false,
+          downloading: true,
+          error: null,
+        });
+        // New mail is classified by the LLM meanwhile: embed() answers at once.
+        await expect(service.embed('bonjour')).rejects.toBeInstanceOf(
+          EmbeddingModelNotInstalledError,
+        );
+        expect(pipelineMock).toHaveBeenCalledTimes(1);
+        // ...and a rejected embed() did not switch the running download off.
+        expect(transformersEnv.allowRemoteModels).toBe(false);
+
+        release();
+        await download;
+        expect(service.getDownloadState()).toEqual({
+          installed: true,
+          downloading: false,
+          error: null,
+        });
+        await expect(service.embed('bonjour')).resolves.toHaveLength(3);
+      });
+
+      it('does not count half-written files as installed', async () => {
+        let release: () => void = () => {};
+        pipelineMock.mockImplementationOnce(
+          () =>
+            new Promise<typeof extractorMock>((resolve) => {
+              // The model files are all there but the library has not returned yet.
+              writeModel(path.join(cacheDir, MODEL));
+              release = () => resolve(extractorMock);
+            }),
+        );
+        const service = createEmbeddingService({ cacheDir });
+        const download = service.downloadModel();
+
+        expect(service.isModelCached()).toBe(true);
+        expect(service.getDownloadState().installed).toBe(false);
+        await expect(service.embed('x')).rejects.toBeInstanceOf(EmbeddingModelNotInstalledError);
+
+        release();
+        await download;
+        expect(service.getDownloadState().installed).toBe(true);
+      });
+    });
+
+    describe('when it fails', () => {
+      it('turns remote loading off again, reports the error and leaves the model missing', async () => {
+        pipelineMock.mockImplementationOnce(async () => {
+          remoteAtCall.push(transformersEnv.allowRemoteModels);
+          throw new Error('getaddrinfo ENOTFOUND huggingface.co');
+        });
+        const service = createEmbeddingService({ cacheDir });
+
+        await expect(service.downloadModel()).rejects.toThrow(/ENOTFOUND/);
+
+        expect(remoteAtCall).toEqual([true]);
+        expect(transformersEnv.allowRemoteModels).toBe(false);
+        expect(service.getDownloadState()).toEqual({
+          installed: false,
+          downloading: false,
+          error: 'getaddrinfo ENOTFOUND huggingface.co',
+        });
+        await expect(service.embed('x')).rejects.toBeInstanceOf(EmbeddingModelNotInstalledError);
+      });
+
+      it('can be retried right away (no cool-down for a user-started download)', async () => {
+        pipelineMock.mockRejectedValueOnce(new Error('network down'));
+        pipelineMock.mockImplementationOnce(downloading(cacheDir));
+        const service = createEmbeddingService({ cacheDir });
+
+        await expect(service.downloadModel()).rejects.toThrow('network down');
+        await expect(service.downloadModel()).resolves.toBeUndefined();
+
+        expect(pipelineMock).toHaveBeenCalledTimes(2);
+        expect(remoteAtCall).toEqual([true]);
+        expect(service.getDownloadState()).toEqual({
+          installed: true,
+          downloading: false,
+          error: null,
+        });
+        await expect(service.embed('x')).resolves.toHaveLength(3);
+        expect(transformersEnv.allowRemoteModels).toBe(false);
+      });
+
+      it('clears the previous error as soon as a new attempt starts', async () => {
+        pipelineMock.mockRejectedValueOnce(new Error('network down'));
+        let release: () => void = () => {};
+        pipelineMock.mockImplementationOnce(
+          () =>
+            new Promise<typeof extractorMock>((resolve) => {
+              release = () => {
+                writeModel(path.join(cacheDir, MODEL));
+                resolve(extractorMock);
+              };
+            }),
+        );
+        const service = createEmbeddingService({ cacheDir });
+        await expect(service.downloadModel()).rejects.toThrow();
+        expect(service.getDownloadState().error).toBe('network down');
+
+        const retry = service.downloadModel();
+        expect(service.getDownloadState()).toEqual({
+          installed: false,
+          downloading: true,
+          error: null,
+        });
+        release();
+        await retry;
+      });
+
+      it('says so when the library could not save the files (disk full)', async () => {
+        // pipeline() resolves, but nothing reached the disk.
+        const service = createEmbeddingService({ cacheDir });
+
+        await expect(service.downloadModel()).rejects.toThrow(/could not be saved/);
+
+        const state = service.getDownloadState();
+        expect(state.installed).toBe(false);
+        expect(state.error).toMatch(/could not be saved/);
+        await expect(service.embed('x')).rejects.toBeInstanceOf(EmbeddingModelNotInstalledError);
+      });
+
+      it('does not poison a later embed with the download failure', async () => {
+        pipelineMock.mockRejectedValueOnce(new Error('network down'));
+        const service = createEmbeddingService({ cacheDir });
+        await expect(service.downloadModel()).rejects.toThrow();
+
+        // The user installs the model by hand instead.
+        writeModel(path.join(cacheDir, MODEL));
+        service.reset();
+        await expect(service.embed('x')).resolves.toHaveLength(3);
+        expect(service.getDownloadState()).toEqual({
+          installed: true,
+          downloading: false,
+          error: null,
+        });
+        expect(transformersEnv.allowRemoteModels).toBe(false);
+      });
+    });
+  });
+
+  describe('autoDownload: true (scripts only)', () => {
+    it('downloads on the first embed, then goes offline for good', async () => {
+      pipelineMock.mockImplementationOnce(downloading(cacheDir));
+      const service = createEmbeddingService({ cacheDir, autoDownload: true });
+
+      await expect(service.embed('bonjour')).resolves.toHaveLength(3);
+
+      expect(remoteAtCall).toEqual([true]);
+      expect(transformersEnv.allowRemoteModels).toBe(false);
+      expect(service.getDownloadState().installed).toBe(true);
+    });
+
+    it('does not go online when the model is already there', async () => {
+      writeModel(path.join(cacheDir, MODEL));
+      const service = createEmbeddingService({ cacheDir, autoDownload: true });
+      await service.embed('bonjour');
+      expect(remoteAtCall).toEqual([false]);
+    });
+  });
+});
+
+describe('isModelCached', () => {
+  let cacheDir: string;
+  beforeEach(() => {
+    cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pluribus-cached-'));
+  });
+  afterEach(() => {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  });
+
+  it('is false for an empty cache and true for a complete model folder', () => {
+    expect(isModelCached(cacheDir, 'Xenova/multilingual-e5-small')).toBe(false);
+    writeModel(path.join(cacheDir, 'Xenova/multilingual-e5-small'));
+    expect(isModelCached(cacheDir, 'Xenova/multilingual-e5-small')).toBe(true);
+    expect(isModelCached(cacheDir, 'Xenova/all-MiniLM-L6-v2')).toBe(false);
+  });
+
+  it('ignores zero-byte files (interrupted copy)', () => {
+    const root = path.join(cacheDir, 'Xenova/multilingual-e5-small');
+    writeModel(root);
+    fs.writeFileSync(path.join(root, 'onnx/model_quantized.onnx'), '');
+    expect(isModelCached(cacheDir, 'Xenova/multilingual-e5-small')).toBe(false);
+  });
+
+  it('needs the full-precision model when quantization is off', () => {
+    const root = path.join(cacheDir, 'Xenova/multilingual-e5-small');
+    writeModel(root, { quantized: true });
+    expect(isModelCached(cacheDir, 'Xenova/multilingual-e5-small', { quantized: false })).toBe(
+      false,
+    );
+  });
+});
+
+describe('importModelFromFolder', () => {
+  const MODEL = 'Xenova/multilingual-e5-small';
+  let work: string;
+  let cacheDir: string;
+
+  beforeEach(() => {
+    work = fs.mkdtempSync(path.join(os.tmpdir(), 'pluribus-import-'));
+    cacheDir = path.join(work, 'userData', 'models');
+  });
+  afterEach(() => {
+    fs.rmSync(work, { recursive: true, force: true });
+  });
+
+  it('copies a model folder into the cache so the encoder can go offline', async () => {
+    const src = path.join(work, 'downloaded');
+    writeModel(src);
+    fs.writeFileSync(path.join(src, 'special_tokens_map.json'), '{"x":1}');
+    fs.writeFileSync(path.join(src, 'README.md'), 'ignored');
+
+    const result = await importModelFromFolder(src, cacheDir, MODEL);
+
+    expect(result.dir).toBe(path.join(cacheDir, MODEL));
+    expect(isModelCached(cacheDir, MODEL)).toBe(true);
+    expect(fs.readFileSync(path.join(cacheDir, MODEL, 'onnx/model_quantized.onnx'), 'utf8')).toBe(
+      'onnx-bytes',
+    );
+    expect(fs.existsSync(path.join(cacheDir, MODEL, 'special_tokens_map.json'))).toBe(true);
+    // Only the files the encoder needs are copied.
+    expect(fs.existsSync(path.join(cacheDir, MODEL, 'README.md'))).toBe(false);
+    expect(result.files).toEqual(
+      expect.arrayContaining(['config.json', 'onnx/model_quantized.onnx']),
+    );
+    expect(result.bytes).toBeGreaterThan(0);
+  });
+
+  it('accepts a cache-root folder that contains <org>/<name>', async () => {
+    const root = path.join(work, 'cache-root');
+    writeModel(path.join(root, MODEL));
+    await importModelFromFolder(root, cacheDir, MODEL);
+    expect(isModelCached(cacheDir, MODEL)).toBe(true);
+  });
+
+  it('validates the folder and names what is missing', async () => {
+    const src = path.join(work, 'partial');
+    writeModel(src, { skip: ['tokenizer.json', 'onnx/model_quantized.onnx'] });
+
+    await expect(importModelFromFolder(src, cacheDir, MODEL)).rejects.toThrow(
+      /tokenizer\.json.*onnx\/model_quantized\.onnx/s,
+    );
+    expect(fs.existsSync(path.join(cacheDir, MODEL))).toBe(false);
+  });
+
+  it('rejects an empty onnx file', async () => {
+    const src = path.join(work, 'empty-onnx');
+    writeModel(src);
+    fs.writeFileSync(path.join(src, 'onnx/model_quantized.onnx'), '');
+    await expect(importModelFromFolder(src, cacheDir, MODEL)).rejects.toThrow(/model_quantized/);
+  });
+
+  it('rejects a path that is not a folder', async () => {
+    const file = path.join(work, 'file.txt');
+    fs.writeFileSync(file, 'x');
+    await expect(importModelFromFolder(file, cacheDir, MODEL)).rejects.toThrow(/folder/i);
+    await expect(importModelFromFolder(path.join(work, 'nope'), cacheDir, MODEL)).rejects.toThrow(
+      /folder/i,
+    );
+  });
+
+  it('leaves no partial files behind and keeps an existing install intact when the copy fails', async () => {
+    writeModel(path.join(cacheDir, MODEL));
+    const src = path.join(work, 'good');
+    writeModel(src);
+
+    // The third file copied fails (disk full).
+    const realCopy = fs.promises.copyFile.bind(fs.promises);
+    let calls = 0;
+    const spy = vi.spyOn(fs.promises, 'copyFile').mockImplementation(async (from, to, mode) => {
+      calls++;
+      if (calls === 3) throw new Error('disk full');
+      return realCopy(from, to, mode);
+    });
+
+    try {
+      await expect(importModelFromFolder(src, cacheDir, MODEL)).rejects.toThrow('disk full');
+    } finally {
+      spy.mockRestore();
+    }
+    const leftovers = fs
+      .readdirSync(path.join(cacheDir, MODEL), { recursive: true })
+      .map(String)
+      .filter((f) => f.endsWith('.part'));
+    expect(leftovers).toEqual([]);
+    expect(isModelCached(cacheDir, MODEL)).toBe(true);
+  });
+
+  it('refuses unsafe model ids', async () => {
+    const src = path.join(work, 'any');
+    writeModel(src);
+    await expect(importModelFromFolder(src, cacheDir, '../escape')).rejects.toThrow(/model/i);
   });
 });
 

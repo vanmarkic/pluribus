@@ -359,6 +359,12 @@ export type TriageClassificationResult = {
   patternHint?: TriageFolder;
   patternAgreed: boolean;
   reasoning: string;
+  /** Probability (0..1) that the email expects a personal reply from the user. */
+  needsReply?: number;
+  /** How much the email matters to the user (1 low .. 4 critical). */
+  importance?: ImportanceLevel;
+  /** Which classifier produced this result. */
+  source?: 'llm' | 'fallback' | 'system1';
 };
 
 export type TrainingExample = {
@@ -406,7 +412,7 @@ export type TriageLogEntry = {
   llmConfidence: number | null;
   patternAgreed: boolean | null;
   finalFolder: string;
-  source: 'llm' | 'pattern-fallback' | 'sender_rule' | 'user-override';
+  source: 'llm' | 'pattern-fallback' | 'sender_rule' | 'user-override' | 'system1';
   reasoning: string | null;
   createdAt: Date;
 };
@@ -466,4 +472,164 @@ export type SimilarEmail = {
   folder: string;
   similarity: number;
   wasCorrection: boolean;
+};
+
+// ============================================
+// Reply digest (needs-your-reply)
+// ============================================
+
+export type SignalSource = 'user' | 'system2' | 'system1';
+
+/** 1 low, 2 normal, 3 important, 4 critical */
+export type ImportanceLevel = 1 | 2 | 3 | 4;
+
+export type EmailSignal = {
+  emailId: number;
+  source: SignalSource;
+  /** Probability 0..1 (system2/user store 0 or 1). */
+  needsReply: number | null;
+  importance: ImportanceLevel | null;
+  folder: TriageFolder | null;
+  /** 0..1, the producer's confidence. */
+  confidence: number | null;
+  /** e.g. 'mistral:7b', 'claude-haiku-4-5', 'system1:folder@v3'. */
+  modelVersion: string | null;
+  updatedAt: Date;
+};
+
+export type ReplyReminderState = 'done' | 'dismissed' | 'snoozed';
+
+export type ReplyReminder = {
+  emailId: number;
+  state: ReplyReminderState;
+  snoozedUntil: Date | null;
+  updatedAt: Date;
+};
+
+export type ReplyCandidate = {
+  email: Email;
+  folderPath: string;
+  /** Effective signal (precedence user > system2 > system1). */
+  signal: EmailSignal | null;
+  toIncludesMe: boolean;
+};
+
+export type ForgottenReply = {
+  emailId: number;
+  accountId: number;
+  from: { address: string; name: string | null };
+  subject: string;
+  date: Date;
+  ageHours: number;
+  folderPath: string;
+  /** 0..1 */
+  needsReply: number;
+  importance: ImportanceLevel;
+  /** Ranking score, higher first. */
+  score: number;
+  basis: 'signal' | 'heuristic';
+  signalSource: SignalSource | null;
+  /** Short human-readable, no body text. */
+  reason: string;
+};
+
+export type ForgottenRepliesResult = {
+  accountId: number;
+  accountEmail: string;
+  items: ForgottenReply[];
+  /** 'no-sent-mail' => no mail from me in lookback => digest suppressed. */
+  sentHealth: 'ok' | 'no-sent-mail';
+  generatedAt: Date;
+};
+
+/** Lowest importance a mail may have to enter the digest (2 normal, 3 important, 4 critical). */
+export type DigestMinImportance = 2 | 3 | 4;
+
+export type DigestSettings = {
+  enabled: boolean;
+  /** 'HH:MM' local 24h */
+  time: string;
+  /** How long an unanswered mail waits before it counts as forgotten. */
+  graceHours: number;
+  lookbackDays: number;
+  maxItems: number;
+  /** Mails rated below this never enter the digest. */
+  minImportance: DigestMinImportance;
+  emailToSelf: boolean;
+  /** Show sender and subject (first 3) in the OS notification instead of only a count. */
+  showSubjects: boolean;
+  /** Allow a Touch ID prompt at the scheduled run. */
+  allowBiometricPrompt: boolean;
+  /** Start the app hidden at login (macOS, Windows) so the scheduled digest always runs. */
+  launchAtLogin: boolean;
+};
+
+export const DEFAULT_DIGEST_SETTINGS: DigestSettings = {
+  enabled: true,
+  time: '09:00',
+  graceHours: 96, // 4 days
+  lookbackDays: 14,
+  maxItems: 10,
+  minImportance: 2,
+  emailToSelf: true,
+  showSubjects: true,
+  allowBiometricPrompt: true,
+  launchAtLogin: true,
+};
+
+// ============================================
+// System 1 (local, Jev-like classifier)
+// ============================================
+
+/** On-device sentence encoders System 1 may use (all run locally via ONNX). */
+export const SYSTEM1_EMBEDDING_MODELS = [
+  'Xenova/multilingual-e5-small', // default: strong on French, 384d
+  'Xenova/paraphrase-multilingual-MiniLM-L12-v2',
+  'Xenova/all-MiniLM-L6-v2', // English-only, legacy
+] as const;
+
+export type System1EmbeddingModel = (typeof SYSTEM1_EMBEDDING_MODELS)[number];
+
+export type System1Settings = {
+  /** Shadow mode until a head is armed, so enabling is always safe. */
+  enabled: boolean;
+  embeddingModel: System1EmbeddingModel;
+  /** ε: max disagreement with System 2 among accepted answers (95% bound). */
+  targetDisagreement: number;
+  /** Share of confident System 1 answers re-checked by System 2. */
+  auditRate: number;
+};
+
+export const DEFAULT_SYSTEM1_SETTINGS: System1Settings = {
+  enabled: true,
+  embeddingModel: 'Xenova/multilingual-e5-small',
+  targetDisagreement: 0.05,
+  auditRate: 0.05,
+};
+
+export type DigestState = {
+  /** Local 'YYYY-MM-DD' of the last scheduled run. */
+  lastRunDate: string | null;
+  /** Digest emails deferred because credentials were locked. */
+  pendingEmailAccountIds: number[];
+  /** Set once the launch-at-login setting has been applied to the OS. */
+  loginItemApplied?: boolean;
+};
+
+export type DigestTrigger = 'scheduled' | 'manual' | 'test';
+
+export type DigestAccountOutcome = {
+  accountId: number;
+  itemCount: number;
+  synced: boolean;
+  email: 'sent' | 'deferred' | 'skipped' | 'failed';
+  sentHealth: 'ok' | 'no-sent-mail';
+};
+
+export type DigestRunResult = {
+  ranAt: Date;
+  trigger: DigestTrigger;
+  totalItems: number;
+  notified: boolean;
+  accounts: DigestAccountOutcome[];
 };

@@ -92,7 +92,7 @@ const EXPECTING_REPLY_PATTERNS = [
  * Returns false if we're confident it does NOT expect a reply.
  * Returns null if LLM should decide.
  */
-function quickCheck(body: string): boolean | null {
+export function quickCheck(body: string): boolean | null {
   // First check: patterns that indicate NO reply expected
   // These take priority to avoid false positives
   for (const pattern of NO_REPLY_EXPECTED_PATTERNS) {

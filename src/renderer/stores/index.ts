@@ -8,7 +8,9 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Email, EmailBody, Attachment, Account, SyncProgress, Draft, DraftInput, ClassificationStats, ClassificationFeedback, ConfusedPattern, ClassificationState, RecentContact } from '../../core/domain';
+import type { Email, EmailBody, Attachment, Account, SyncProgress, Draft, DraftInput, ClassificationStats, ClassificationFeedback, ConfusedPattern, ClassificationState, RecentContact, ForgottenRepliesResult, DigestRunResult } from '../../core/domain';
+import type { System1Status } from '../../core/system1/types';
+import type { System1ModelImportResult } from '../../core/model-import';
 
 export { useEmailUiStore } from './emailUiStore';
 export type { EmailFilter } from './emailUiStore';
@@ -221,6 +223,27 @@ declare global {
           eceAfter: number | null;
         }>>;
       };
+      // "Needs your reply" (forgotten replies)
+      replies: {
+        list: () => Promise<ForgottenRepliesResult[]>;
+        done: (emailId: number) => Promise<void>;
+        snooze: (emailId: number, hours: number) => Promise<void>;
+        dismiss: (emailId: number) => Promise<void>;
+        backfill: (accountId: number) => Promise<{ processed: number; skipped: number }>;
+      };
+      // Daily digest
+      digest: {
+        runNow: () => Promise<DigestRunResult>;
+        sendTest: () => Promise<DigestRunResult>;
+        consumePendingOpen: () => Promise<boolean>;
+      };
+      // System 1 (local classifier)
+      system1: {
+        getStatus: () => Promise<System1Status>;
+        retrain: () => Promise<System1Status>;
+        importModel: () => Promise<System1ModelImportResult>;
+        downloadModel: () => Promise<System1Status>;
+      };
       embeddings: {
         getStats: () => Promise<{
           totalEmails: number;
@@ -228,7 +251,11 @@ declare global {
           coverage: number;
           model: string;
         }>;
-        backfill: (opts?: { limit?: number; accountId?: number }) => Promise<{ taskId: string; total: number }>;
+        backfill: (opts?: { limit?: number; accountId?: number }) => Promise<{
+          taskId: string;
+          total: number;
+          status: 'started' | 'model-not-installed';
+        }>;
       };
       llmCalls: {
         getStats: () => Promise<{
@@ -532,7 +559,7 @@ export const useAccountStore = create<AccountStore>()(
 // ============================================
 
 type View = 'inbox' | 'sent' | 'starred' | 'archive' | 'trash' | 'drafts' | 'settings' | 'ai-sort'
-  | 'planning' | 'review' | 'feed' | 'social' | 'promotions' | 'awaiting'
+  | 'planning' | 'review' | 'feed' | 'social' | 'promotions' | 'awaiting' | 'needs-reply'
   | 'paper-trail/invoices' | 'paper-trail/admin' | 'paper-trail/travel';
 type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward' | null;
 

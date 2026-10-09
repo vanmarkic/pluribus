@@ -372,6 +372,7 @@ function createMockDeps(overrides: Partial<Deps> = {}): Deps {
       deletePassword: async () => false,
       setApiKey: async () => {},
       getApiKey: async () => null,
+      getPasswordIfUnlocked: async () => null,
       clearSession: () => {},
       getConfig: () => ({
         biometricMode: 'never',
@@ -482,6 +483,52 @@ function createMockDeps(overrides: Partial<Deps> = {}): Deps {
       moveMessage: async () => {},
       moveToTrash: async () => 'Trash',
       ensureTriageFolders: async () => [],
+    },
+    // Reply digest + System 1
+    signals: {
+      upsert: async () => {},
+      get: async () => null,
+      getEffective: async () => null,
+      listByEmail: async () => [],
+      listBySource: async () => [],
+    },
+    replyReminders: {
+      set: async () => {},
+      get: async () => null,
+      clear: async () => {},
+    },
+    replyCandidates: {
+      listUnanswered: async () => [],
+      countSentByMe: async () => 0,
+    },
+    system1Heads: {
+      save: async () => ({}) as any,
+      getLatest: async () => null,
+      setArmed: async () => {},
+      updateMetrics: async () => {},
+    },
+    system1Training: {
+      listSamples: async () => [],
+    },
+    notifier: {
+      isSupported: () => false,
+      notify: () => {},
+    },
+    digestConfig: {
+      getSettings: () => ({
+        enabled: true,
+        time: '09:00',
+        graceHours: 24,
+        lookbackDays: 14,
+        maxItems: 10,
+        minImportance: 2,
+        emailToSelf: true,
+        showSubjects: false,
+        allowBiometricPrompt: false,
+        launchAtLogin: false,
+      }),
+      getState: () => ({ lastRunDate: null, pendingEmailAccountIds: [] }),
+      setState: () => {},
     },
   };
 

@@ -12,6 +12,7 @@
  */
 
 import { z } from 'zod';
+import { SYSTEM1_EMBEDDING_MODELS } from '../../core/domain';
 
 // ────────────────────────────────────────────────────────────────────
 // Shared primitives
@@ -61,6 +62,65 @@ export const SecurityEventsListRecentInput = z
   .optional();
 
 export const SecurityEventsCountByTypeInput = z.union([z.undefined(), isoTimestamp]);
+
+// ────────────────────────────────────────────────────────────────────
+// replies:* handlers
+// ────────────────────────────────────────────────────────────────────
+
+export const ReplyEmailIdInput = positiveInt;
+
+/** Snooze duration in hours: 1 hour .. 30 days. */
+export const ReplySnoozeHoursInput = positiveInt.max(720);
+
+export const ReplyBackfillAccountInput = positiveInt;
+
+// ────────────────────────────────────────────────────────────────────
+// config:set — digest section and llm.sendBodyExcerptsToCloud
+// ────────────────────────────────────────────────────────────────────
+
+/** 'HH:MM' local 24h. */
+export const DIGEST_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * Digest settings. Every field is optional so the renderer can send a partial
+ * update (the handler merges it into the stored settings); unknown keys are
+ * rejected so internal state such as `digestState` can never be smuggled in.
+ */
+export const DigestSettingsInput = z
+  .strictObject({
+    enabled: z.boolean(),
+    time: z.string().regex(DIGEST_TIME_PATTERN, { message: 'must be HH:MM (24h)' }),
+    graceHours: positiveInt.max(336),
+    lookbackDays: positiveInt.max(90),
+    maxItems: positiveInt.max(50),
+    /** 2 = normal and above, 3 = important and above, 4 = critical only. */
+    minImportance: z.union([z.literal(2), z.literal(3), z.literal(4)]),
+    emailToSelf: z.boolean(),
+    showSubjects: z.boolean(),
+    allowBiometricPrompt: z.boolean(),
+    launchAtLogin: z.boolean(),
+  })
+  .partial();
+
+export const SendBodyExcerptsToCloudInput = z.boolean();
+
+// ────────────────────────────────────────────────────────────────────
+// config:set — system1 section (on-device classifier)
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * System 1 settings, as a partial update merged by the handler. The encoder
+ * is an allowlist of known Xenova model ids: the id picks a cache folder and a
+ * download URL, so it must never be free text.
+ */
+export const System1SettingsInput = z
+  .strictObject({
+    enabled: z.boolean(),
+    embeddingModel: z.enum(SYSTEM1_EMBEDDING_MODELS),
+    targetDisagreement: z.number().min(0.01).max(0.2),
+    auditRate: z.number().min(0).max(0.5),
+  })
+  .partial();
 
 // ────────────────────────────────────────────────────────────────────
 // Helper: uniform parse with a friendly error message

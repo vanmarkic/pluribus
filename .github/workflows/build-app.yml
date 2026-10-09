@@ -1,0 +1,101 @@
+name: Build macOS app
+
+# Builds an UNSIGNED (ad-hoc signed, not notarized) Apple Silicon .dmg so the app
+# can be downloaded from a pull request run and tried without building locally.
+# It is not a release build: there is no Developer ID certificate in CI.
+
+# The default branch is `master`; `main` is kept so a future rename keeps CI working.
+# (These workflows used to list only `main`, so they never ran on pushes or PRs.)
+on:
+  pull_request:
+    branches: [main, master]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+
+# macOS minutes are expensive: a new push cancels the previous build of the same ref.
+concurrency:
+  group: build-app-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Opt out of Husky hooks during CI installs. Unlike ci.yml the Electron binary
+  # IS downloaded: electron-rebuild and electron-builder both need it.
+  HUSKY: 0
+
+jobs:
+  mac-dmg:
+    name: macOS arm64 .dmg
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+
+      # dist:dmg = tsc + vite build, electron-rebuild (better-sqlite3 for Electron's ABI),
+      # then electron-builder. Flags after `--` are appended to the electron-builder call.
+      #  - identity "-"  : ad-hoc signature. Without any signature an arm64 app does not launch,
+      #                    and electron-builder has no automatic ad-hoc fallback.
+      #  - entitlements  : CI-only file (package.json points to build/*.plist, which is not in git).
+      #  - --publish never: never try to upload to GitHub Releases from a PR.
+      #  - CSC_FOR_PULL_REQUEST: electron-builder skips ALL signing on PR builds (even with identity "-"),
+      #    which leaves a bundle with a broken signature that will not launch on Apple Silicon. The
+      #    warning it prints is about real certificates and secrets; this job has neither (ad-hoc
+      #    identity, `contents: read`, and fork PRs get no secrets under the `pull_request` trigger).
+      - name: Build app and .dmg
+        env:
+          CSC_FOR_PULL_REQUEST: 'true'
+        run: >
+          npm run dist:dmg --
+          --arm64
+          --publish never
+          -c.mac.identity=-
+          -c.mac.entitlements=.github/mac/entitlements.plist
+          -c.mac.entitlementsInherit=.github/mac/entitlements.plist
+
+      # We cannot launch the app on the runner, so at least prove the bundle is
+      # internally consistent and carries the entitlements it needs.
+      - name: Verify code signature
+        run: |
+          APP="$(find release -maxdepth 2 -name '*.app' -type d | head -n 1)"
+          [ -n "$APP" ] || { echo "::error::No .app bundle found under release/"; exit 1; }
+          echo "App bundle: $APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -d --verbose=2 "$APP" 2>&1 | grep -E 'Identifier|Signature|flags' || true
+          ENTITLEMENTS="$(codesign -d --entitlements :- "$APP" 2>/dev/null)"
+          echo "$ENTITLEMENTS"
+          for key in allow-jit allow-unsigned-executable-memory disable-library-validation; do
+            echo "$ENTITLEMENTS" | grep -q "com.apple.security.cs.$key" \
+              || { echo "::error::Entitlement com.apple.security.cs.$key is missing from the signed app"; exit 1; }
+          done
+
+      - name: Upload .dmg
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pluribus-mac-arm64-dmg
+          path: release/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Explain first launch
+        run: |
+          {
+            echo "### Unsigned macOS build"
+            echo
+            echo "Download **Pluribus-mac-arm64-dmg** from the artifacts below (Apple Silicon only, kept 14 days)."
+            echo
+            echo "The app is ad-hoc signed but not notarized, so macOS blocks the first launch."
+            echo "Drag it to Applications, then either right-click it and choose **Open**, or run:"
+            echo
+            echo '```'
+            echo 'xattr -dr com.apple.quarantine /Applications/Mail.app'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

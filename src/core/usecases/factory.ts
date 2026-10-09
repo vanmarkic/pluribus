@@ -21,6 +21,9 @@ import * as threadUseCases from './thread-usecases';
 import * as embeddingUseCases from './embedding-usecases';
 import * as calibrationUseCases from './calibration-usecases';
 import * as bodyMigrationUseCases from './body-migration-usecases';
+import * as replyUseCases from './reply-usecases';
+import * as digestUseCases from './digest-usecases';
+import * as system1UseCases from './system1-usecases';
 
 /**
  * Create all use cases with dependencies
@@ -162,6 +165,21 @@ export function createUseCases(deps: Deps) {
     // bodyMigration port for raw-body reads so core stays pure.
     countPlaintextBodies: bodyMigrationUseCases.countPlaintextBodies(deps),
     migrateEmailBodiesToEncrypted: bodyMigrationUseCases.migrateEmailBodiesToEncrypted(deps),
+
+    // Reply digest ("Needs your reply")
+    findForgottenReplies: replyUseCases.findForgottenReplies(deps),
+    listForgottenReplies: replyUseCases.listForgottenReplies(deps),
+    markReplyDone: replyUseCases.markReplyDone(deps),
+    snoozeReply: replyUseCases.snoozeReply(deps),
+    dismissReply: replyUseCases.dismissReply(deps),
+    backfillReplySignals: replyUseCases.backfillReplySignals(deps),
+    runDailyDigest: digestUseCases.runDailyDigest(deps),
+    sendPendingDigestEmails: digestUseCases.sendPendingDigestEmails(deps),
+
+    // System 1 (Milestone 2)
+    getSystem1Status: system1UseCases.getSystem1Status(deps),
+    trainSystem1: system1UseCases.trainSystem1(deps),
+    recordSystem1Audit: system1UseCases.recordSystem1Audit(deps),
   };
 }
 

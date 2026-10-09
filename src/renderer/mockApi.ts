@@ -9,7 +9,17 @@
  */
 
 import type { MailAPI } from '../main/preload';
-import { demoFixtures, dripSeeds, type DemoEmail } from './mockApi/fixtures';
+import { DEFAULT_DIGEST_SETTINGS, DEFAULT_SYSTEM1_SETTINGS } from '../core/domain';
+import type { DigestRunResult, DigestTrigger } from '../core/domain';
+import type { System1Status } from '../core/system1/types';
+import type { System1ModelImportResult } from '../core/model-import';
+import {
+  buildForgottenReplies,
+  demoFixtures,
+  dripSeeds,
+  DEMO_ACCOUNT_EMAIL,
+  type DemoEmail,
+} from './mockApi/fixtures';
 
 // Event listeners storage
 type Callback = (...args: unknown[]) => void;
@@ -167,6 +177,111 @@ export function createMockApi(): MailAPI {
       email: mockEmails[3], // Bob Smith's email
     },
   ];
+
+  // Settings saved during this demo session (config.set → config.get)
+  const savedConfig = new Map<string, unknown>();
+
+  // "Needs your reply" items (mutable: done / snooze / dismiss remove them)
+  let forgottenReplies = buildForgottenReplies();
+  const removeForgottenReply = (emailId: number) => {
+    forgottenReplies = forgottenReplies.filter((r) => r.emailId !== emailId);
+  };
+  const mockDigestRun = (trigger: DigestTrigger): DigestRunResult => ({
+    ranAt: new Date(),
+    trigger,
+    totalItems: forgottenReplies.length,
+    notified: trigger === 'test' || forgottenReplies.length > 0,
+    accounts: [
+      {
+        accountId: 1,
+        itemCount: forgottenReplies.length,
+        synced: false,
+        email: trigger === 'test' ? 'sent' : 'skipped',
+        sentHealth: 'ok',
+      },
+    ],
+  });
+  // Demo: the folder head has learned enough to answer on its own; the other
+  // two are still in shadow mode (not enough, or not clean enough, data yet).
+  const trainedSystem1Status = (): System1Status => ({
+    embeddingModel: 'Xenova/multilingual-e5-small',
+    modelInstalled: true,
+    modelDownloading: false,
+    modelError: null,
+    heads: [
+      {
+        questionId: 'folder',
+        armed: true,
+        version: 4,
+        coverage: 0.62,
+        agreement: 0.94,
+        disagreementUpperBound: 0.047,
+        trainSize: 412,
+        trainedAt: new Date(Date.now() - 6 * 60 * 60 * 1000),
+      },
+      {
+        questionId: 'needsReply',
+        armed: false,
+        version: 2,
+        coverage: 0.31,
+        agreement: 0.88,
+        disagreementUpperBound: 0.113,
+        trainSize: 188,
+        trainedAt: new Date(Date.now() - 6 * 60 * 60 * 1000),
+      },
+      {
+        questionId: 'importance',
+        armed: false,
+        version: null,
+        coverage: null,
+        agreement: null,
+        disagreementUpperBound: null,
+        trainSize: 41,
+        trainedAt: null,
+      },
+    ],
+  });
+
+  // The on-device model starts NOT installed, like on a fresh install (the real app never
+  // downloads it on its own). "Download model" (or the import) flips it to installed.
+  let modelState: 'missing' | 'downloading' | 'installed' = 'missing';
+  let pendingModelDownload: Promise<void> | null = null;
+  const MOCK_MODEL_DOWNLOAD_MS = 2500;
+  const mockSystem1Status = (): System1Status => {
+    const trained = trainedSystem1Status();
+    if (modelState === 'installed') return trained;
+    // Nothing can be embedded without the model, so nothing has been trained either.
+    return {
+      ...trained,
+      modelInstalled: false,
+      modelDownloading: modelState === 'downloading',
+      heads: trained.heads.map((head) => ({
+        questionId: head.questionId,
+        armed: false,
+        version: null,
+        coverage: null,
+        agreement: null,
+        disagreementUpperBound: null,
+        trainSize: 0,
+        trainedAt: null,
+      })),
+    };
+  };
+  const mockDownloadModel = async (): Promise<System1Status> => {
+    if (modelState === 'installed') return mockSystem1Status();
+    if (!pendingModelDownload) {
+      modelState = 'downloading';
+      pendingModelDownload = new Promise<void>((resolve) => {
+        setTimeout(() => {
+          modelState = 'installed';
+          pendingModelDownload = null;
+          resolve();
+        }, MOCK_MODEL_DOWNLOAD_MS);
+      });
+    }
+    await pendingModelDownload;
+    return mockSystem1Status();
+  };
 
   return {
     emails: {
@@ -388,6 +503,8 @@ export function createMockApi(): MailAPI {
 
     config: {
       get: async (key) => {
+        // Values saved this session (Settings) win over the defaults.
+        if (savedConfig.has(key)) return savedConfig.get(key);
         const defaults: Record<string, unknown> = {
           'llm.provider': 'anthropic',
           'llm.model': 'claude-3-haiku',
@@ -395,10 +512,24 @@ export function createMockApi(): MailAPI {
           'llm.dailyEmailLimit': 100,
           'llm.autoClassify': false,
           'images.remoteSetting': 'auto',
+          llm: {
+            provider: 'anthropic',
+            model: 'claude-3-haiku',
+            dailyBudget: 100000,
+            dailyEmailLimit: 100,
+            autoClassify: false,
+            confidenceThreshold: 0.7,
+            reclassifyCooldownDays: 7,
+            sendBodyExcerptsToCloud: false,
+          },
+          digest: { ...DEFAULT_DIGEST_SETTINGS },
+          system1: { ...DEFAULT_SYSTEM1_SETTINGS },
         };
         return defaults[key];
       },
-      set: async () => {},
+      set: async (key, value) => {
+        savedConfig.set(key, value);
+      },
       getTriageFolders: async () => [
         'INBOX', 'Planning', 'Review', 'Paper-Trail/Invoices', 'Paper-Trail/Admin',
         'Paper-Trail/Travel', 'Feed', 'Social', 'Promotions', 'Archive'
@@ -596,9 +727,59 @@ export function createMockApi(): MailAPI {
       getLatest: async () => null,
       getHistory: async () => [],
     },
+
+    // Needs your reply (forgotten replies)
+    replies: {
+      list: async () => [
+        {
+          accountId: 1,
+          accountEmail: DEMO_ACCOUNT_EMAIL,
+          items: forgottenReplies.map((r) => ({ ...r })),
+          sentHealth: 'ok' as const,
+          generatedAt: new Date(),
+        },
+      ],
+      done: async (emailId: number) => removeForgottenReply(emailId),
+      snooze: async (emailId: number) => removeForgottenReply(emailId),
+      dismiss: async (emailId: number) => removeForgottenReply(emailId),
+      backfill: async () => ({ processed: 0, skipped: 0 }),
+    },
+
+    // Daily digest
+    digest: {
+      runNow: async () => mockDigestRun('manual'),
+      sendTest: async () => mockDigestRun('test'),
+      consumePendingOpen: async () => false,
+    },
+
+    // System 1 (local classifier)
+    system1: {
+      getStatus: async () => mockSystem1Status(),
+      retrain: async () => mockSystem1Status(),
+      // The demo has no native folder picker: pretend the user picked a valid model folder.
+      importModel: async (): Promise<System1ModelImportResult> => {
+        modelState = 'installed';
+        return {
+          status: 'imported',
+          model: 'Xenova/multilingual-e5-small',
+          files: 6,
+          bytes: 118_000_000,
+        };
+      },
+      downloadModel: mockDownloadModel,
+    },
+
     embeddings: {
-      getStats: async () => ({ totalEmails: 0, indexed: 0, coverage: 0, model: 'all-MiniLM-L6-v2' }),
-      backfill: async () => ({ taskId: 'mock', total: 0 }),
+      getStats: async () => ({
+        totalEmails: 0,
+        indexed: 0,
+        coverage: 0,
+        model: 'Xenova/multilingual-e5-small',
+      }),
+      backfill: async () =>
+        modelState === 'installed'
+          ? { taskId: 'mock', total: 0, status: 'started' as const }
+          : { taskId: '', total: 0, status: 'model-not-installed' as const },
     },
 
     // These two keys extend llm which is already in the surrounding object

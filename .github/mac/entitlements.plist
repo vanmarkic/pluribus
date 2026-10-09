@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!--
+      Entitlements for the unsigned CI build (.github/workflows/build-app.yml).
+
+      Same content as electron-builder's default template. The app is signed
+      ad hoc (no Apple certificate), and ad-hoc signing with the hardened
+      runtime refuses to load Electron's pre-signed frameworks (different Team ID)
+      unless library validation is disabled. Used for both the app and its
+      helper processes.
+
+      This is deliberately separate from build/entitlements.mac*.plist, which
+      package.json points to for local release builds and which are not in the
+      repository (build/ is gitignored).
+    -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+  </dict>
+</plist>

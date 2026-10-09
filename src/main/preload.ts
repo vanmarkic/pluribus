@@ -6,6 +6,9 @@
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
+import type { ForgottenRepliesResult, DigestRunResult } from '../core/domain';
+import type { System1Status } from '../core/system1/types';
+import type { System1ModelImportResult } from '../core/model-import';
 
 // Event subscription tracking
 type Callback = (...args: any[]) => void;
@@ -19,6 +22,7 @@ const listeners = new Map<string, Set<Callback>>();
   'llm:error',
   'ollama:download-progress',
   'license:state-changed',
+  'digest:open',
 ].forEach((channel) => {
   ipcRenderer.on(channel, (_, data) => {
     listeners.get(channel)?.forEach((cb) => cb(data));
@@ -180,6 +184,40 @@ const api = {
       >,
   },
 
+  // "Needs your reply" (forgotten replies) — main/ipc/replies-handlers.ts
+  replies: {
+    list: () => ipcRenderer.invoke('replies:list') as Promise<ForgottenRepliesResult[]>,
+    done: (emailId: number) => ipcRenderer.invoke('replies:done', emailId) as Promise<void>,
+    snooze: (emailId: number, hours: number) =>
+      ipcRenderer.invoke('replies:snooze', emailId, hours) as Promise<void>,
+    dismiss: (emailId: number) => ipcRenderer.invoke('replies:dismiss', emailId) as Promise<void>,
+    backfill: (accountId: number) =>
+      ipcRenderer.invoke('replies:backfill', accountId) as Promise<{
+        processed: number;
+        skipped: number;
+      }>,
+  },
+
+  // Daily digest — main/ipc/digest-handlers.ts
+  digest: {
+    runNow: () => ipcRenderer.invoke('digest:runNow') as Promise<DigestRunResult>,
+    sendTest: () => ipcRenderer.invoke('digest:sendTest') as Promise<DigestRunResult>,
+    consumePendingOpen: () => ipcRenderer.invoke('digest:consumePendingOpen') as Promise<boolean>,
+  },
+
+  // System 1 (local classifier) — main/ipc/system1-handlers.ts
+  system1: {
+    getStatus: () => ipcRenderer.invoke('system1:getStatus') as Promise<System1Status>,
+    retrain: () => ipcRenderer.invoke('system1:retrain') as Promise<System1Status>,
+    // Opens a native folder picker in the main process; the renderer never supplies a path.
+    importModel: () =>
+      ipcRenderer.invoke('system1:importModel') as Promise<System1ModelImportResult>,
+    // Downloads the on-device model from huggingface.co (the user's IP is visible to that site, no
+    // mail data is sent). Only ever called from the "Download model" button. Resolves with the new
+    // status when done; while it runs, poll getStatus() (modelDownloading).
+    downloadModel: () => ipcRenderer.invoke('system1:downloadModel') as Promise<System1Status>,
+  },
+
   embeddings: {
     getStats: () =>
       ipcRenderer.invoke('embeddings:getStats') as Promise<{
@@ -189,7 +227,11 @@ const api = {
         model: string;
       }>,
     backfill: (opts?: { limit?: number; accountId?: number }) =>
-      ipcRenderer.invoke('embeddings:backfill', opts) as Promise<{ taskId: string; total: number }>,
+      ipcRenderer.invoke('embeddings:backfill', opts) as Promise<{
+        taskId: string;
+        total: number;
+        status: 'started' | 'model-not-installed';
+      }>,
   },
 
   llmCalls: {

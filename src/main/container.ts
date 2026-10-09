@@ -10,7 +10,16 @@ import { app } from 'electron';
 import Store from 'electron-store';
 
 // Core
-import { createUseCases, type UseCases, type Deps } from '../core';
+import {
+  createUseCases,
+  DEFAULT_DIGEST_SETTINGS,
+  DEFAULT_SYSTEM1_SETTINGS,
+  type UseCases,
+  type Deps,
+  type DigestSettings,
+  type DigestState,
+  type System1Settings,
+} from '../core';
 
 // Adapters
 // Tags removed - using folders for organization (Issue #54)
@@ -33,6 +42,11 @@ import {
   createSecurityEventRepo,
   createCalibrationRepo,
   createBodyMigrationRepo,
+  createSignalRepo,
+  createReplyReminderRepo,
+  createReplyCandidateRepo,
+  createSystem1HeadRepo,
+  createSystem1TrainingRepo,
   wrapEmailRepoWithEncryption,
 } from '../adapters/db';
 import { logger } from '../adapters/observability';
@@ -63,9 +77,14 @@ import {
 } from '../adapters/triage';
 import { createEmbeddingService } from '../adapters/embeddings/index';
 import { createEmbeddingRepo } from '../adapters/embeddings/embedding-repo';
+import { createPriorRepliesCounter } from '../adapters/embeddings/sender-history';
 import { createVectorSearch } from '../adapters/embeddings/vector-search';
-import { createEnhancedTriageClassifier } from '../adapters/triage/enhanced-classifier';
+import { readSystem1Settings } from '../core/system1/settings';
+import { composeTriageClassifier } from './triage-composition';
+import { pickSystemLocale } from './system-locale';
+import { createConfigEvents } from './config-events';
 import { createSecureStorage } from '../adapters/keychain';
+import { createNotifier } from '../adapters/notifications';
 import { createMailSender } from '../adapters/smtp';
 import { createImageCache } from '../adapters/image-cache';
 import { createBackgroundTaskManager } from '../adapters/background';
@@ -73,7 +92,12 @@ import { createOllamaManager, type OllamaManager } from '../adapters/ollama-mana
 import { createOllamaTextGenerator } from '../adapters/ollama';
 import { createLicenseService } from '../adapters/license';
 import { createSendQueue, type SendQueue } from '../adapters/send-queue';
-import type { RemoteImagesSetting, DatabaseHealth, EmailDraft } from '../core/ports';
+import type {
+  RemoteImagesSetting,
+  DatabaseHealth,
+  EmailDraft,
+  DigestConfigStore,
+} from '../core/ports';
 
 // ============================================
 // Config Store (non-sensitive settings only)
@@ -89,10 +113,15 @@ type AppConfig = {
     confidenceThreshold: number;
     reclassifyCooldownDays: number;
     ollamaServerUrl: string;
+    sendBodyExcerptsToCloud: boolean;
   };
   security: {
     remoteImages: RemoteImagesSetting;
   };
+  digest: DigestSettings;
+  /** Internal scheduler bookkeeping. Never exposed over IPC. */
+  digestState: DigestState;
+  system1: System1Settings;
 };
 
 const LLM_DEFAULTS = {
@@ -104,6 +133,13 @@ const LLM_DEFAULTS = {
   confidenceThreshold: 0.85,
   reclassifyCooldownDays: 7,
   ollamaServerUrl: 'http://127.0.0.1:11435',
+  // Privacy-first: body excerpts only ever go to local models unless enabled.
+  sendBodyExcerptsToCloud: false,
+};
+
+const DIGEST_STATE_DEFAULTS: DigestState = {
+  lastRunDate: null,
+  pendingEmailAccountIds: [],
 };
 
 const configStore = new Store<AppConfig>({
@@ -112,6 +148,9 @@ const configStore = new Store<AppConfig>({
     security: {
       remoteImages: 'block', // Privacy-first default
     },
+    digest: DEFAULT_DIGEST_SETTINGS,
+    digestState: DIGEST_STATE_DEFAULTS,
+    system1: DEFAULT_SYSTEM1_SETTINGS,
   },
 });
 
@@ -120,6 +159,26 @@ const storedLlm = configStore.get('llm');
 const migratedLlm = { ...LLM_DEFAULTS, ...storedLlm };
 if (JSON.stringify(storedLlm) !== JSON.stringify(migratedLlm)) {
   configStore.set('llm', migratedLlm);
+}
+
+// Migration: ensure new digest fields have defaults (same shallow merge as llm)
+const storedDigest = configStore.get('digest');
+const migratedDigest = { ...DEFAULT_DIGEST_SETTINGS, ...storedDigest };
+if (JSON.stringify(storedDigest) !== JSON.stringify(migratedDigest)) {
+  configStore.set('digest', migratedDigest);
+}
+
+const storedDigestState = configStore.get('digestState');
+const migratedDigestState = { ...DIGEST_STATE_DEFAULTS, ...storedDigestState };
+if (JSON.stringify(storedDigestState) !== JSON.stringify(migratedDigestState)) {
+  configStore.set('digestState', migratedDigestState);
+}
+
+// Migration: ensure new System 1 fields have defaults
+const storedSystem1 = configStore.get('system1');
+const migratedSystem1 = { ...DEFAULT_SYSTEM1_SETTINGS, ...storedSystem1 };
+if (JSON.stringify(storedSystem1) !== JSON.stringify(migratedSystem1)) {
+  configStore.set('system1', migratedSystem1);
 }
 
 // Migration: update old Ollama URL (11434) to new bundled port (11435)
@@ -132,8 +191,29 @@ if (currentLlm.ollamaServerUrl?.includes(':11434')) {
 }
 
 // ============================================
+// Where encoder models live
+// ============================================
+
+/**
+ * Cache of the on-device encoder models (userData/models). The embedding
+ * service downloads into it (once, if the model is missing) and reads from it;
+ * "Import model from folder" copies into it.
+ */
+export const getModelsDir = (): string => path.join(app.getPath('userData'), 'models');
+
+// ============================================
 // Container Type
 // ============================================
+
+/**
+ * In-memory "open the Needs-your-reply view" flag. A digest notification click
+ * marks it pending; the renderer consumes it once on mount (or on 'digest:open').
+ */
+export type DigestOpenFlag = {
+  markPending: () => void;
+  /** Returns whether a request was pending and clears it. */
+  consume: () => boolean;
+};
 
 export type Container = {
   deps: Deps;
@@ -141,7 +221,19 @@ export type Container = {
   config: {
     get: <K extends keyof AppConfig>(key: K) => AppConfig[K];
     set: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
+    /** Listen for writes made through `set` (e.g. the digest settings changing). */
+    onChange: <K extends keyof AppConfig>(
+      key: K,
+      listener: (value: AppConfig[K]) => void,
+    ) => () => void;
   };
+  digestOpen: DigestOpenFlag;
+  /**
+   * Late-binds what a click on the digest notification does. The notifier is
+   * created before the window / digest runtime exist, so the default click
+   * handler delegates to whatever was registered here (no-op until then).
+   */
+  setOpenNeedsReplyHandler: (handler: () => void) => void;
   ollamaManager: OllamaManager;
   sendQueue: SendQueue;
   shutdown: () => Promise<void>;
@@ -152,6 +244,10 @@ export type Container = {
 // ============================================
 
 export function createContainer(): Container {
+  const configEvents = createConfigEvents<AppConfig>((key, err) =>
+    logger.error({ err, key }, 'config change listener failed'),
+  );
+
   // Initialize database
   const userDataPath = app.getPath('userData');
   const dbPath = path.join(userDataPath, 'mail.db');
@@ -210,6 +306,11 @@ export function createContainer(): Container {
   const securityEvents = createSecurityEventRepo(getDb);
   const calibration = createCalibrationRepo(getDb);
   const bodyMigration = createBodyMigrationRepo(getDb);
+  const signals = createSignalRepo(getDb);
+  const replyReminders = createReplyReminderRepo(getDb);
+  const replyCandidates = createReplyCandidateRepo(getDb);
+  const system1Heads = createSystem1HeadRepo(getDb);
+  const system1Training = createSystem1TrainingRepo(getDb);
 
   // Security audit sink (#98). Centralised so every security-relevant event
   // emitter in the container funnels through one write path. Defensive:
@@ -528,8 +629,35 @@ export function createContainer(): Container {
   const config = {
     getLLMConfig: () => configStore.get('llm'),
     getRemoteImagesSetting: () => configStore.get('security').remoteImages,
+    getSystem1Settings: () => ({ ...DEFAULT_SYSTEM1_SETTINGS, ...configStore.get('system1') }),
     setRemoteImagesSetting: (setting: RemoteImagesSetting) => {
       configStore.set('security', { ...configStore.get('security'), remoteImages: setting });
+    },
+  };
+
+  // Reply digest: settings + scheduler bookkeeping live in the electron-store
+  const digestConfig: DigestConfigStore = {
+    getSettings: () => ({ ...DEFAULT_DIGEST_SETTINGS, ...configStore.get('digest') }),
+    getState: () => ({ ...DIGEST_STATE_DEFAULTS, ...configStore.get('digestState') }),
+    setState: (state) => configStore.set('digestState', state),
+    // The digest notification and email follow the system language (French or English).
+    getLocale: () => pickSystemLocale(app),
+  };
+  // The notification click opens the Needs-your-reply view, but the digest
+  // runtime that implements that is built after the container. Bind it late.
+  let openNeedsReplyHook: () => void = () => {};
+  const notifier = createNotifier({ onClickDefault: () => openNeedsReplyHook() });
+
+  // "Open Needs-your-reply" request flag (set by the digest notification click)
+  let digestOpenPending = false;
+  const digestOpen: DigestOpenFlag = {
+    markPending: () => {
+      digestOpenPending = true;
+    },
+    consume: () => {
+      const pending = digestOpenPending;
+      digestOpenPending = false;
+      return pending;
     },
   };
 
@@ -556,8 +684,16 @@ export function createContainer(): Container {
   const triageLog = createTriageLogRepo(getDb);
   const imapFolderOps = createImapFolderOps(secrets);
 
-  // Embedding & vector search adapters
-  const embeddingService = createEmbeddingService();
+  // Embedding & vector search adapters. The encoder runs on this device: the model
+  // named in the System 1 settings is read from the models dir. It is never downloaded
+  // on its own (huggingface.co would see the user's IP): only the "Download model" click
+  // in Settings (or importing a folder) installs it, and until then System 1 is off.
+  // Changing the model in settings takes effect after a restart.
+  const embeddingService = createEmbeddingService({
+    modelName: readSystem1Settings(config).embeddingModel,
+    cacheDir: getModelsDir(),
+    autoDownload: false,
+  });
   const embeddingRepo = createEmbeddingRepo(getDb());
   const vectorSearch = createVectorSearch(embeddingService, embeddingRepo);
 
@@ -595,7 +731,37 @@ export function createContainer(): Container {
       }
     },
   };
-  const triageClassifier = createEnhancedTriageClassifier(triageLlmClient, vectorSearch);
+  // The classifier stack (decorator order is binding; see triage-composition.ts):
+  // signal recording > System 1 > body privacy > enhanced classifier. System 1 may see
+  // body previews because it runs on this device; body privacy still strips them before
+  // any cloud LLM. Settings are read live, so a change applies to the very next email.
+  //
+  // The audit recorder is the use case, but use cases are built from these deps, so
+  // it is bound late (it can only be called once an email is being classified).
+  let lateUseCases: UseCases | null = null;
+  const triageClassifier = composeTriageClassifier({
+    llmClient: triageLlmClient,
+    vectorSearch,
+    signals,
+    getLLMConfig: () => configStore.get('llm'),
+    system1: {
+      heads: system1Heads,
+      embeddingService,
+      embeddingRepo,
+      accounts,
+      priorRepliesToSender: createPriorRepliesCounter(getDb),
+      recordAudit: (audit) =>
+        lateUseCases
+          ? lateUseCases.recordSystem1Audit(audit)
+          : Promise.reject(new Error('System 1 audit recorded before the use cases were ready')),
+      getSettings: () => readSystem1Settings(config),
+      // Diagnostics only: System 1 never passes mail content to its logger.
+      log: (msg, meta) => {
+        const level = msg.startsWith('System 1 shadow') ? 'debug' : 'warn';
+        logger[level]({ component: 'system1', ...meta }, msg);
+      },
+    },
+  });
 
   // Awaiting reply adapters
   const awaiting = createAwaitingRepo();
@@ -659,10 +825,19 @@ export function createContainer(): Container {
     calibration,
     // Email-body encryption migration (#99 follow-up)
     bodyMigration,
+    // Reply digest + System 1
+    signals,
+    replyReminders,
+    replyCandidates,
+    system1Heads,
+    system1Training,
+    notifier,
+    digestConfig,
   };
 
   // Create use cases
   const useCases = createUseCases(deps);
+  lateUseCases = useCases;
 
   // Create OllamaManager for bundled Ollama binary management
   const ollamaManager = createOllamaManager();
@@ -727,7 +902,15 @@ export function createContainer(): Container {
     useCases,
     config: {
       get: (key) => configStore.get(key),
-      set: (key, value) => configStore.set(key, value),
+      set: (key, value) => {
+        configStore.set(key, value);
+        configEvents.emit(key, value);
+      },
+      onChange: configEvents.onChange,
+    },
+    digestOpen,
+    setOpenNeedsReplyHandler: (handler) => {
+      openNeedsReplyHook = handler;
     },
     ollamaManager,
     sendQueue,

@@ -9,7 +9,7 @@
  * type stays unchanged; the renderer never sees the demo metadata.
  */
 
-import type { Email, EmailBody } from '../../core/domain';
+import type { Email, EmailBody, ForgottenReply } from '../../core/domain';
 
 type Seed = {
   folder: string;
@@ -348,6 +348,38 @@ const seeds: Seed[] = [
       "Thanks Priya — agenda looks right. My read on the migration: we hold for one more sprint. The auth changes need a clean window. Talk Wednesday.",
     isRead: true,
   },
+
+  // --- Read but never answered (backs the "Needs your reply" fixtures below) ---
+  {
+    folder: 'INBOX',
+    subject: 'Quote for the Q3 rollout (40 seats)?',
+    fromAddr: 'hannah.meyer@harborretail.com',
+    fromName: 'Hannah Meyer',
+    hoursAgo: 72,
+    snippet:
+      "Hi — we're planning to roll Pluribus out to our support team next quarter, about 40 seats. Could you send over a quote with volume pricing? We'd like to decide by the end of the month.",
+    isRead: true,
+  },
+  {
+    folder: 'Planning',
+    subject: 'Question about the tokens v3 rollout order',
+    fromAddr: 'mateus@nimbus.co',
+    fromName: 'Mateus Rocha',
+    hoursAgo: 48,
+    snippet:
+      "Quick one — should the marketing site move to tokens v3 before or after the app? I don't want to block you if the order matters for the auth work.",
+    isRead: true,
+  },
+  {
+    folder: 'INBOX',
+    subject: 'Missing receipts for your Q2 expenses',
+    fromAddr: 'elise@vdb-accounting.be',
+    fromName: 'Elise Vandenberghe',
+    hoursAgo: 120,
+    snippet:
+      'Hello, to finalise your Q2 filing I still need the receipts for the February and March travel expenses. Could you send them over before the 20th?',
+    isRead: true,
+  },
 ];
 
 const FOLDER_TO_ID: Record<string, number> = {
@@ -407,6 +439,64 @@ seeds.forEach((seed, idx) => {
     if (email) initialBodies[email.id] = seed.body;
   }
 });
+
+const DEMO_ACCOUNT_ID = 1;
+export const DEMO_ACCOUNT_EMAIL = 'demo@pluribus.app';
+
+type ReplySeed = Pick<
+  ForgottenReply,
+  'needsReply' | 'importance' | 'basis' | 'signalSource' | 'reason'
+>;
+
+/** How each "read but never answered" demo email shows up in "Needs your reply". */
+const replySeeds: Record<string, ReplySeed> = {
+  'Quote for the Q3 rollout (40 seats)?': {
+    needsReply: 0.95,
+    importance: 4,
+    basis: 'signal',
+    signalSource: 'system2',
+    reason: 'Asked you for a quote 3 days ago',
+  },
+  'Question about the tokens v3 rollout order': {
+    needsReply: 0.85,
+    importance: 3,
+    basis: 'signal',
+    signalSource: 'system2',
+    reason: 'Asked you a question 2 days ago',
+  },
+  'Missing receipts for your Q2 expenses': {
+    needsReply: 0.6,
+    importance: 3,
+    basis: 'heuristic',
+    signalSource: null,
+    reason: 'Looks like a request for a document, 5 days ago',
+  },
+};
+
+/**
+ * Three forgotten replies for the demo account, best first. Each points at a
+ * real demo email so clicking an item opens it in the reader.
+ */
+export function buildForgottenReplies(now: Date = new Date()): ForgottenReply[] {
+  const items: ForgottenReply[] = [];
+  for (const email of initial) {
+    const seed = replySeeds[email.subject];
+    if (!seed) continue;
+    const ageHours = Math.max(0, (now.getTime() - email.date.getTime()) / (60 * 60 * 1000));
+    items.push({
+      emailId: email.id,
+      accountId: DEMO_ACCOUNT_ID,
+      from: { address: email.from.address, name: email.from.name },
+      subject: email.subject,
+      date: email.date,
+      ageHours,
+      folderPath: email.__folder,
+      score: seed.importance * seed.needsReply * (1 + Math.min(ageHours / 24, 7) / 14),
+      ...seed,
+    });
+  }
+  return items.sort((a, b) => b.score - a.score);
+}
 
 export const demoFixtures = {
   emails: initial,

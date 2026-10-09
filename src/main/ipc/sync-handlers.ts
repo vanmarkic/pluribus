@@ -2,8 +2,9 @@
  * Sync IPC Handlers
  */
 
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain } from 'electron';
 import type { Container } from '../container';
+import { sendToRenderer, type WindowGetter } from '../window-manager';
 import {
   assertPositiveInt,
   assertBoolean,
@@ -15,7 +16,7 @@ import {
 // Setup Function
 // ==========================================
 
-export function setupSyncHandlers(container: Container, window: BrowserWindow): void {
+export function setupSyncHandlers(container: Container, getWindow: WindowGetter): void {
   const { useCases, deps } = container;
 
   ipcMain.handle('sync:start', async (_, accountId, opts) => {
@@ -48,8 +49,9 @@ export function setupSyncHandlers(container: Container, window: BrowserWindow): 
     return useCases.cancelSync(assertPositiveInt(accountId, 'accountId'));
   });
 
-  // Forward sync progress to renderer
+  // Forward sync progress to the renderer. The window is looked up per event:
+  // sync can outlive the window (macOS keeps the app running without one).
   deps.sync.onProgress((progress) => {
-    window.webContents.send('sync:progress', progress);
+    sendToRenderer(getWindow, 'sync:progress', progress);
   });
 }

@@ -829,7 +829,7 @@ describe('classifyNewEmails - Property-Based Regression Tests', () => {
         folderId: 1,
         uid: i + 1,
         subject: `Email ${i}`,
-        from: { address: 'test@example.com', name: 'Test' },
+        from: { address: 'sender@example.com', name: 'Test' },
         to: ['user@example.com'],
         date: new Date(Date.now() - i * 1000),
         snippet: 'test',

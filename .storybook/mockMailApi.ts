@@ -13,6 +13,14 @@ const ok =
 
 const noop = async () => {};
 
+const system1Status = (installed: boolean) => ({
+  embeddingModel: '',
+  heads: [],
+  modelInstalled: installed,
+  modelDownloading: false,
+  modelError: null,
+});
+
 export const mockMailApi = {
   emails: {
     list: ok([]),
@@ -31,6 +39,37 @@ export const mockMailApi = {
     download: ok({ path: '', action: '' }),
   },
   accounts: { list: ok([]), get: ok(null) },
+  replies: {
+    list: ok([]),
+    done: noop,
+    snooze: noop,
+    dismiss: noop,
+    backfill: ok({ processed: 0, skipped: 0 }),
+  },
+  digest: {
+    runNow: ok({
+      ranAt: new Date(),
+      trigger: 'manual',
+      totalItems: 0,
+      notified: false,
+      accounts: [],
+    }),
+    sendTest: ok({
+      ranAt: new Date(),
+      trigger: 'test',
+      totalItems: 0,
+      notified: false,
+      accounts: [],
+    }),
+    consumePendingOpen: ok(false),
+  },
+  // A fresh install: the on-device model is not installed until "Download model" is clicked.
+  system1: {
+    getStatus: ok(system1Status(false)),
+    retrain: ok(system1Status(false)),
+    importModel: ok({ status: 'cancelled' }),
+    downloadModel: ok(system1Status(true)),
+  },
   config: { get: ok(null), set: noop, getTriageFolders: ok([]) },
   on: () => {},
   off: () => {},

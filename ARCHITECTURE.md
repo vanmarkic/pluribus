@@ -14,32 +14,46 @@ This project follows **Clean Architecture** without the boilerplate. Key princip
 ```
 src/
 ├── core/                   # Pure business logic (zero dependencies)
-│   ├── domain.ts           # Types: Email, Tag, Account, etc.
-│   ├── ports.ts            # Function type signatures for adapters
-│   ├── usecases.ts         # Use cases as curried functions
+│   ├── domain.ts           # Types: Email, Account, ForgottenReply, DigestSettings, ...
+│   ├── ports.ts            # Function type signatures for adapters (Deps)
+│   ├── reply-scoring.ts    # Gate + rank unanswered mail (pure)
+│   ├── system1/            # Types for the on-device model (Milestone 2)
+│   ├── usecases/           # Use cases as curried functions, one file per area
+│   │   ├── factory.ts      # createUseCases(deps)
+│   │   ├── reply-usecases.ts   # findForgottenReplies, markReplyDone, snoozeReply, ...
+│   │   └── digest-usecases.ts  # runDailyDigest, sendPendingDigestEmails, renderDigestEmail
 │   └── index.ts
 │
-├── adapters/               # External implementations
-│   ├── db/                 # SQLite repositories
-│   │   ├── schema.sql
-│   │   └── index.ts        # createEmailRepo(), createTagRepo(), etc.
-│   ├── imap/               # IMAP sync
-│   │   └── index.ts        # createMailSync()
-│   ├── llm/                # Claude classification
-│   │   └── index.ts        # createClassifier()
-│   └── keychain/           # Secure credential storage
-│       └── index.ts        # createSecureStorage()
+├── adapters/               # External implementations (create*() factories)
+│   ├── db/                 # SQLite repositories, schema.sql, migrations
+│   │   ├── email-signals-repo.ts       # per-email needs-reply / importance signals
+│   │   ├── reply-candidate-repo.ts     # unanswered-mail SQL
+│   │   └── reply-reminders-repo.ts     # done / dismissed / snoozed
+│   ├── imap/               # IMAP sync and folder operations
+│   ├── smtp/               # Sending (incl. the digest email)
+│   ├── llm/                # Anthropic and Ollama classifiers
+│   ├── triage/             # Pattern matcher, enhanced classifier and its decorators
+│   │   ├── signal-recorder.ts  # withSignalRecording
+│   │   └── body-privacy.ts     # withBodyPrivacy (no body text to cloud without opt-in)
+│   ├── embeddings/         # Local sentence embeddings and vector search
+│   ├── keychain/           # Secure credential storage (getPasswordIfUnlocked never prompts)
+│   ├── notifications/      # createNotifier() - native OS notifications
+│   └── ollama-manager/     # Bundled Ollama binary
 │
 ├── main/                   # Electron main process
+│   ├── index.ts            # Entry point: single-instance lock, startApp() once, window lifecycle
 │   ├── container.ts        # Composition root - wires everything
-│   ├── ipc.ts              # IPC handlers
+│   ├── window-manager.ts   # getWindow()/showWindow(), sendToRenderer() (no Electron import)
+│   ├── digest-wiring.ts    # Daily digest runtime: scheduler, wake catch-up, notification click
 │   ├── preload.ts          # Secure bridge to renderer
-│   └── index.ts            # Entry point
+│   ├── ipc/                # IPC handlers by domain, e.g. replies-handlers.ts, digest-handlers.ts
+│   │   ├── index.ts        # registerIpcHandlers(getWindow, container) - once per process
+│   │   └── *-handlers.ts   # validate input, call a use case
+│   └── schedulers/         # digest-scheduler.ts, calibration-scheduler.ts
 │
 └── renderer/               # React UI
-    ├── components/
-    │   └── SecuritySettings.tsx
-    ├── stores/
+    ├── components/         # NeedsReplyView, settings/DigestSettings, ...
+    ├── stores/             # Zustand stores
     └── App.tsx
 ```
 
@@ -77,6 +91,20 @@ Credentials are protected with layered security:
 ```
 Renderer → IPC → Use Case → Port → Adapter → External (DB/IMAP/API)
 ```
+
+### Electron lifecycle
+
+The app process outlives its window (macOS keeps running after the last window closes so the
+daily digest can still fire). Hence:
+
+- Process-wide setup (container, IPC handlers, CSP hook, digest runtime) runs once in
+  `startApp()`; creating a window only builds a `BrowserWindow`.
+- The window is reached through `window-manager.ts`; IPC handlers that push events to the renderer
+  take a window getter and no-op when there is none.
+- `registerIpcHandlers` throws if called twice, and a single-instance lock stops a second copy
+  from running a second digest.
+
+See `docs/designs/2026-10-09-reply-digest-and-system1.md` for the reply digest design.
 
 ## Core Concepts
 

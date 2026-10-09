@@ -9,8 +9,15 @@ import {
   assertBoolean,
   assertString,
 } from './validation';
+import {
+  DigestSettingsInput,
+  SendBodyExcerptsToCloudInput,
+  System1SettingsInput,
+  parseInput,
+} from './schemas';
 
-const ALLOWED_CONFIG_KEYS = ['llm'] as const;
+// `digestState` (scheduler bookkeeping) is deliberately NOT allowlisted.
+const ALLOWED_CONFIG_KEYS = ['llm', 'digest', 'system1'] as const;
 type AllowedConfigKey = (typeof ALLOWED_CONFIG_KEYS)[number];
 
 // ==========================================
@@ -76,6 +83,41 @@ export function setupConfigHandlers(container: Container): void {
       if (v.ollamaServerUrl !== undefined) {
         assertString(v.ollamaServerUrl, 'ollamaServerUrl', 200);
       }
+      if (v.sendBodyExcerptsToCloud !== undefined) {
+        parseInput(
+          SendBodyExcerptsToCloudInput,
+          v.sendBodyExcerptsToCloud,
+          'sendBodyExcerptsToCloud',
+        );
+      }
+    }
+    // Digest settings accept a partial update; merge it into the stored settings.
+    if (k === 'digest') {
+      const patch = parseInput(DigestSettingsInput, value, 'digest');
+      const current = config.get('digest');
+      return config.set('digest', {
+        enabled: patch.enabled ?? current.enabled,
+        time: patch.time ?? current.time,
+        graceHours: patch.graceHours ?? current.graceHours,
+        lookbackDays: patch.lookbackDays ?? current.lookbackDays,
+        maxItems: patch.maxItems ?? current.maxItems,
+        minImportance: patch.minImportance ?? current.minImportance,
+        emailToSelf: patch.emailToSelf ?? current.emailToSelf,
+        showSubjects: patch.showSubjects ?? current.showSubjects,
+        allowBiometricPrompt: patch.allowBiometricPrompt ?? current.allowBiometricPrompt,
+        launchAtLogin: patch.launchAtLogin ?? current.launchAtLogin,
+      });
+    }
+    // System 1 settings accept a partial update too; the encoder is an allowlist.
+    if (k === 'system1') {
+      const patch = parseInput(System1SettingsInput, value, 'system1');
+      const current = config.get('system1');
+      return config.set('system1', {
+        enabled: patch.enabled ?? current.enabled,
+        embeddingModel: patch.embeddingModel ?? current.embeddingModel,
+        targetDisagreement: patch.targetDisagreement ?? current.targetDisagreement,
+        auditRate: patch.auditRate ?? current.auditRate,
+      });
     }
     return config.set(k as AllowedConfigKey, value);
   });

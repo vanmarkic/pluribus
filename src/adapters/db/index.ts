@@ -39,3 +39,10 @@ export { createCalibrationRepo } from './calibration-repo';
 
 // Body-encryption migration (#99 follow-up)
 export { createBodyMigrationRepo } from './body-migration-repo';
+
+// Reply digest + System 1
+export { createSignalRepo } from './email-signals-repo';
+export { createReplyReminderRepo } from './reply-reminders-repo';
+export { createReplyCandidateRepo } from './reply-candidate-repo';
+export { createSystem1HeadRepo } from './system1-heads-repo';
+export { createSystem1TrainingRepo } from './system1-training-repo';

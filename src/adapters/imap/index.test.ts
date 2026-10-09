@@ -48,6 +48,7 @@ function createMockSecrets(): SecureStorage {
     setPassword: vi.fn(),
     deletePassword: vi.fn(),
     getApiKey: vi.fn(),
+    getPasswordIfUnlocked: vi.fn(),
     setApiKey: vi.fn(),
     getConfig: vi.fn(),
     setConfig: vi.fn(),
