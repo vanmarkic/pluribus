@@ -4,6 +4,7 @@ import { EmailList } from '../components/EmailList';
 import { EmailViewer } from '../components/EmailViewer';
 import { DraftsList } from '../components/DraftsList';
 import { TriageReviewView } from '../components/TriageReviewView';
+import { NeedsReplyView } from '../components/NeedsReplyView';
 import { AISortView } from '../components/ai-sort';
 import { SettingsView } from '../views/SettingsView';
 
@@ -71,6 +72,8 @@ export function MainLayout({ view }: MainLayoutProps) {
           <TriageReviewView />
         ) : view === 'ai-sort' ? (
           <AISortView />
+        ) : view === 'needs-reply' ? (
+          <NeedsReplyView />
         ) : (
           <>
             {/* Email List */}

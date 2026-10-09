@@ -177,6 +177,9 @@ export function createMockApi(): MailAPI {
     },
   ];
 
+  // Settings saved during this demo session (config.set → config.get)
+  const savedConfig = new Map<string, unknown>();
+
   // "Needs your reply" items (mutable: done / snooze / dismiss remove them)
   let forgottenReplies = buildForgottenReplies();
   const removeForgottenReply = (emailId: number) => {
@@ -431,6 +434,8 @@ export function createMockApi(): MailAPI {
 
     config: {
       get: async (key) => {
+        // Values saved this session (Settings) win over the defaults.
+        if (savedConfig.has(key)) return savedConfig.get(key);
         const defaults: Record<string, unknown> = {
           'llm.provider': 'anthropic',
           'llm.model': 'claude-3-haiku',
@@ -438,11 +443,23 @@ export function createMockApi(): MailAPI {
           'llm.dailyEmailLimit': 100,
           'llm.autoClassify': false,
           'images.remoteSetting': 'auto',
+          llm: {
+            provider: 'anthropic',
+            model: 'claude-3-haiku',
+            dailyBudget: 100000,
+            dailyEmailLimit: 100,
+            autoClassify: false,
+            confidenceThreshold: 0.7,
+            reclassifyCooldownDays: 7,
+            sendBodyExcerptsToCloud: false,
+          },
           digest: { ...DEFAULT_DIGEST_SETTINGS },
         };
         return defaults[key];
       },
-      set: async () => {},
+      set: async (key, value) => {
+        savedConfig.set(key, value);
+      },
       getTriageFolders: async () => [
         'INBOX', 'Planning', 'Review', 'Paper-Trail/Invoices', 'Paper-Trail/Admin',
         'Paper-Trail/Travel', 'Feed', 'Social', 'Promotions', 'Archive'

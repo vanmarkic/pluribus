@@ -25,6 +25,7 @@ import {
   invalidateEmailList,
   store,
 } from './stores';
+import { useRepliesStore } from './stores/repliesStore';
 import { TitleBar } from './layouts/TitleBar';
 import { MainLayout } from './layouts/MainLayout';
 import type { SyncProgress } from '../core/domain';
@@ -103,11 +104,34 @@ export function App() {
       // Reload emails when sync completes or is cancelled
       if (progress.phase === 'complete' || progress.phase === 'cancelled') {
         store.dispatch(invalidateEmailList());
+        // New mail (or a newly synced reply) changes who is waiting on an answer
+        void useRepliesStore.getState().load();
       }
     };
 
     window.mailApi.on('sync:progress', handleProgress);
     return () => window.mailApi.off('sync:progress', handleProgress);
+  }, []);
+
+  // Daily digest: the notification / digest email was clicked → "Needs your reply".
+  // If that happened before the renderer was ready, the main process kept a
+  // pending flag that we consume once on mount.
+  useEffect(() => {
+    const openNeedsReply = () => {
+      useEmailUiStore.getState().selectEmail(null);
+      useUIStore.getState().setView('needs-reply');
+      void useRepliesStore.getState().load({ force: true });
+    };
+
+    window.mailApi.on('digest:open', openNeedsReply);
+    window.mailApi.digest
+      .consumePendingOpen()
+      .then((pending) => {
+        if (pending) openNeedsReply();
+      })
+      .catch((err) => console.error('Failed to check for a pending digest open:', err));
+
+    return () => window.mailApi.off('digest:open', openNeedsReply);
   }, []);
 
   // Poll classification progress

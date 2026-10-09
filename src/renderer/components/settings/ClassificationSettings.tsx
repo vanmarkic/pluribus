@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import { IconCloud, IconLock } from 'obra-icons-react';
+import { Badge } from '../ui/badge';
 import { LlmUsageStats } from './LlmUsageStats';
 import { SemanticIndexPanel } from './SemanticIndexPanel';
 import { CalibrationPanel } from './CalibrationPanel';
@@ -32,7 +34,33 @@ type Config = {
   confidenceThreshold?: number;
   reclassifyCooldownDays?: number;
   ollamaServerUrl?: string;
+  /** Opt-in: allow short body excerpts in prompts sent to Claude (local models always may). */
+  sendBodyExcerptsToCloud?: boolean;
 };
+
+/** Where classification runs: on this device (Ollama) or in the cloud (Claude). */
+function PrivacyBadge({ provider }: { provider: Config['provider'] }) {
+  const onDevice = provider === 'ollama';
+  const Icon = onDevice ? IconLock : IconCloud;
+  return (
+    <Badge
+      className="gap-1 font-normal"
+      style={
+        onDevice
+          ? { background: 'var(--color-success-bg)', color: 'var(--color-success-text)' }
+          : { background: 'var(--color-bg-tertiary)', color: 'var(--color-text-secondary)' }
+      }
+      title={
+        onDevice
+          ? 'Emails are classified by a model running on this computer. Nothing leaves your device.'
+          : "Email details are sent to Anthropic's Claude to be classified. Body text is only included if you turn on body excerpts below."
+      }
+    >
+      <Icon className="w-3 h-3" />
+      {onDevice ? 'Private · on-device' : 'Cloud · Claude'}
+    </Badge>
+  );
+}
 
 export function ClassificationSettings() {
   const [config, setConfig] = useState<Config | null>(null);
@@ -255,8 +283,12 @@ export function ClassificationSettings() {
       <div>
         <div className="flex items-center justify-between">
           <div>
-            <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
+            <div
+              className="flex items-center gap-2 font-medium"
+              style={{ color: 'var(--color-text-primary)' }}
+            >
               Provider
+              <PrivacyBadge provider={config.provider} />
             </div>
             <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
               Choose between cloud or local LLM
@@ -284,6 +316,32 @@ export function ClassificationSettings() {
           </div>
         )}
       </div>
+
+      {/* Body excerpts: cloud opt-in (local models always get them) */}
+      {config.provider === 'anthropic' && (
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <label
+              htmlFor="llm-send-body-excerpts"
+              className="block font-medium"
+              style={{ color: 'var(--color-text-primary)' }}
+            >
+              Send short body excerpts to Claude
+            </label>
+            <div className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+              Gives Claude a short piece of each email's text to work with. Body excerpts are only
+              ever sent to local models unless you turn this on.
+            </div>
+          </div>
+          <input
+            id="llm-send-body-excerpts"
+            type="checkbox"
+            checked={config.sendBodyExcerptsToCloud ?? false}
+            onChange={(e) => updateConfig({ sendBodyExcerptsToCloud: e.target.checked })}
+            className="h-5 w-5 shrink-0"
+          />
+        </div>
+      )}
 
       {/* Anthropic API Key */}
       {config.provider === 'anthropic' && (

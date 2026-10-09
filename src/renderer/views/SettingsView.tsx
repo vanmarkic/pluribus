@@ -6,10 +6,12 @@ import { SecuritySettings } from '../components/SecuritySettings';
 import { TrainingStep } from '../components/onboarding/TrainingStep';
 import { AccountSettings } from '../components/settings/AccountSettings';
 import { ClassificationSettings } from '../components/settings/ClassificationSettings';
+import { DigestSettings } from '../components/settings/DigestSettings';
 
 /**
  * Settings View
- * Main settings panel with sections for appearance, accounts, security, and AI classification
+ * Main settings panel with sections for appearance, accounts, security, AI classification,
+ * and the daily digest
  */
 export function SettingsView() {
   const { theme, setTheme } = useTheme();
@@ -158,6 +160,24 @@ export function SettingsView() {
             </div>
             <div className="p-6">
               <ClassificationSettings />
+            </div>
+          </section>
+
+          {/* Daily Digest Section */}
+          <section
+            className="rounded-lg border"
+            style={{
+              background: 'var(--color-bg)',
+              borderColor: 'var(--color-border)',
+            }}
+          >
+            <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--color-border)' }}>
+              <h2 className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
+                Daily digest
+              </h2>
+            </div>
+            <div className="p-6">
+              <DigestSettings />
             </div>
           </section>
 
