@@ -262,7 +262,7 @@ export function DigestSettings() {
             save({ minImportance: parseInt(e.target.value, 10) as DigestMinImportance })
           }
           className="input shrink-0"
-          style={{ width: '10rem' }}
+          style={{ width: '12.5rem' }}
         >
           {MIN_IMPORTANCE_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
