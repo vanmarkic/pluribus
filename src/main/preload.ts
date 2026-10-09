@@ -6,6 +6,8 @@
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
+import type { ForgottenRepliesResult, DigestRunResult } from '../core/domain';
+import type { System1Status } from '../core/system1/types';
 
 // Event subscription tracking
 type Callback = (...args: any[]) => void;
@@ -19,6 +21,7 @@ const listeners = new Map<string, Set<Callback>>();
   'llm:error',
   'ollama:download-progress',
   'license:state-changed',
+  'digest:open',
 ].forEach((channel) => {
   ipcRenderer.on(channel, (_, data) => {
     listeners.get(channel)?.forEach((cb) => cb(data));
@@ -178,6 +181,33 @@ const api = {
           eceAfter: number | null;
         }>
       >,
+  },
+
+  // "Needs your reply" (forgotten replies) — main/ipc/replies-handlers.ts
+  replies: {
+    list: () => ipcRenderer.invoke('replies:list') as Promise<ForgottenRepliesResult[]>,
+    done: (emailId: number) => ipcRenderer.invoke('replies:done', emailId) as Promise<void>,
+    snooze: (emailId: number, hours: number) =>
+      ipcRenderer.invoke('replies:snooze', emailId, hours) as Promise<void>,
+    dismiss: (emailId: number) => ipcRenderer.invoke('replies:dismiss', emailId) as Promise<void>,
+    backfill: (accountId: number) =>
+      ipcRenderer.invoke('replies:backfill', accountId) as Promise<{
+        processed: number;
+        skipped: number;
+      }>,
+  },
+
+  // Daily digest — main/ipc/digest-handlers.ts
+  digest: {
+    runNow: () => ipcRenderer.invoke('digest:runNow') as Promise<DigestRunResult>,
+    sendTest: () => ipcRenderer.invoke('digest:sendTest') as Promise<DigestRunResult>,
+    consumePendingOpen: () => ipcRenderer.invoke('digest:consumePendingOpen') as Promise<boolean>,
+  },
+
+  // System 1 (local classifier) — main/ipc/system1-handlers.ts
+  system1: {
+    getStatus: () => ipcRenderer.invoke('system1:getStatus') as Promise<System1Status>,
+    retrain: () => ipcRenderer.invoke('system1:retrain') as Promise<System1Status>,
   },
 
   embeddings: {

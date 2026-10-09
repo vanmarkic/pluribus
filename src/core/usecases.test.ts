@@ -202,6 +202,7 @@ function createMockSecrets(overrides: Partial<SecureStorage> = {}): SecureStorag
     deletePassword: vi.fn().mockResolvedValue(true),
     setApiKey: vi.fn().mockResolvedValue(undefined),
     getApiKey: vi.fn().mockResolvedValue(null),
+    getPasswordIfUnlocked: vi.fn().mockResolvedValue(null),
     clearSession: vi.fn(),
     getConfig: vi.fn().mockReturnValue({ biometricMode: 'never', sessionTimeoutMs: 0, requireForSend: false }),
     setConfig: vi.fn(),

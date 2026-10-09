@@ -238,4 +238,19 @@ export function runMigrations(db: Database.Database): void {
     }
     console.log('[DB Migration] Applied migration 005: threads, awaiting reply, unsubscribe');
   }
+
+  // Reply digest indexes. They live here (not in schema.sql) because they
+  // reference columns added by migration 005 on legacy databases.
+  // (idx_emails_thread is created by migration 005 itself.)
+  if (hasColumn(db, 'emails', 'in_reply_to')) {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_emails_in_reply_to ON emails(in_reply_to)`);
+  }
+  if (hasColumn(db, 'emails', 'from_address')) {
+    db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_emails_account_from_date ON emails(account_id, from_address, date)`,
+    );
+  }
+  if (hasColumn(db, 'emails', 'thread_id')) {
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_emails_thread ON emails(thread_id, date DESC)`);
+  }
 }

@@ -170,6 +170,12 @@ export function createSecureStorage(): SecureStorage {
       return decrypt(`api:${service}`, `Access ${service} API key`);
     },
 
+    // TODO(P2): return the password only when it is already unlocked in the
+    // session cache. Must never call promptBiometric / promptTouchID.
+    async getPasswordIfUnlocked(_account) {
+      return null;
+    },
+
     clearSession() {
       sessionCache.clear();
     },

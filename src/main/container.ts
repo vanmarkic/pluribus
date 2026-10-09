@@ -10,7 +10,14 @@ import { app } from 'electron';
 import Store from 'electron-store';
 
 // Core
-import { createUseCases, type UseCases, type Deps } from '../core';
+import {
+  createUseCases,
+  DEFAULT_DIGEST_SETTINGS,
+  type UseCases,
+  type Deps,
+  type DigestSettings,
+  type DigestState,
+} from '../core';
 
 // Adapters
 // Tags removed - using folders for organization (Issue #54)
@@ -33,6 +40,11 @@ import {
   createSecurityEventRepo,
   createCalibrationRepo,
   createBodyMigrationRepo,
+  createSignalRepo,
+  createReplyReminderRepo,
+  createReplyCandidateRepo,
+  createSystem1HeadRepo,
+  createSystem1TrainingRepo,
   wrapEmailRepoWithEncryption,
 } from '../adapters/db';
 import { logger } from '../adapters/observability';
@@ -66,6 +78,7 @@ import { createEmbeddingRepo } from '../adapters/embeddings/embedding-repo';
 import { createVectorSearch } from '../adapters/embeddings/vector-search';
 import { createEnhancedTriageClassifier } from '../adapters/triage/enhanced-classifier';
 import { createSecureStorage } from '../adapters/keychain';
+import { createNotifier } from '../adapters/notifications';
 import { createMailSender } from '../adapters/smtp';
 import { createImageCache } from '../adapters/image-cache';
 import { createBackgroundTaskManager } from '../adapters/background';
@@ -73,7 +86,12 @@ import { createOllamaManager, type OllamaManager } from '../adapters/ollama-mana
 import { createOllamaTextGenerator } from '../adapters/ollama';
 import { createLicenseService } from '../adapters/license';
 import { createSendQueue, type SendQueue } from '../adapters/send-queue';
-import type { RemoteImagesSetting, DatabaseHealth, EmailDraft } from '../core/ports';
+import type {
+  RemoteImagesSetting,
+  DatabaseHealth,
+  EmailDraft,
+  DigestConfigStore,
+} from '../core/ports';
 
 // ============================================
 // Config Store (non-sensitive settings only)
@@ -89,10 +107,14 @@ type AppConfig = {
     confidenceThreshold: number;
     reclassifyCooldownDays: number;
     ollamaServerUrl: string;
+    sendBodyExcerptsToCloud: boolean;
   };
   security: {
     remoteImages: RemoteImagesSetting;
   };
+  digest: DigestSettings;
+  /** Internal scheduler bookkeeping. Never exposed over IPC. */
+  digestState: DigestState;
 };
 
 const LLM_DEFAULTS = {
@@ -104,6 +126,13 @@ const LLM_DEFAULTS = {
   confidenceThreshold: 0.85,
   reclassifyCooldownDays: 7,
   ollamaServerUrl: 'http://127.0.0.1:11435',
+  // Privacy-first: body excerpts only ever go to local models unless enabled.
+  sendBodyExcerptsToCloud: false,
+};
+
+const DIGEST_STATE_DEFAULTS: DigestState = {
+  lastRunDate: null,
+  pendingEmailAccountIds: [],
 };
 
 const configStore = new Store<AppConfig>({
@@ -112,6 +141,8 @@ const configStore = new Store<AppConfig>({
     security: {
       remoteImages: 'block', // Privacy-first default
     },
+    digest: DEFAULT_DIGEST_SETTINGS,
+    digestState: DIGEST_STATE_DEFAULTS,
   },
 });
 
@@ -120,6 +151,18 @@ const storedLlm = configStore.get('llm');
 const migratedLlm = { ...LLM_DEFAULTS, ...storedLlm };
 if (JSON.stringify(storedLlm) !== JSON.stringify(migratedLlm)) {
   configStore.set('llm', migratedLlm);
+}
+
+// Migration: ensure new digest fields have defaults (same shallow merge as llm)
+const storedDigest = configStore.get('digest');
+const migratedDigest = { ...DEFAULT_DIGEST_SETTINGS, ...storedDigest };
+if (JSON.stringify(storedDigest) !== JSON.stringify(migratedDigest)) {
+  configStore.set('digest', migratedDigest);
+}
+const storedDigestState = configStore.get('digestState');
+const migratedDigestState = { ...DIGEST_STATE_DEFAULTS, ...storedDigestState };
+if (JSON.stringify(storedDigestState) !== JSON.stringify(migratedDigestState)) {
+  configStore.set('digestState', migratedDigestState);
 }
 
 // Migration: update old Ollama URL (11434) to new bundled port (11435)
@@ -135,6 +178,16 @@ if (currentLlm.ollamaServerUrl?.includes(':11434')) {
 // Container Type
 // ============================================
 
+/**
+ * In-memory "open the Needs-your-reply view" flag. A digest notification click
+ * marks it pending; the renderer consumes it once on mount (or on 'digest:open').
+ */
+export type DigestOpenFlag = {
+  markPending: () => void;
+  /** Returns whether a request was pending and clears it. */
+  consume: () => boolean;
+};
+
 export type Container = {
   deps: Deps;
   useCases: UseCases;
@@ -142,6 +195,7 @@ export type Container = {
     get: <K extends keyof AppConfig>(key: K) => AppConfig[K];
     set: <K extends keyof AppConfig>(key: K, value: AppConfig[K]) => void;
   };
+  digestOpen: DigestOpenFlag;
   ollamaManager: OllamaManager;
   sendQueue: SendQueue;
   shutdown: () => Promise<void>;
@@ -210,6 +264,11 @@ export function createContainer(): Container {
   const securityEvents = createSecurityEventRepo(getDb);
   const calibration = createCalibrationRepo(getDb);
   const bodyMigration = createBodyMigrationRepo(getDb);
+  const signals = createSignalRepo(getDb);
+  const replyReminders = createReplyReminderRepo(getDb);
+  const replyCandidates = createReplyCandidateRepo(getDb);
+  const system1Heads = createSystem1HeadRepo(getDb);
+  const system1Training = createSystem1TrainingRepo(getDb);
 
   // Security audit sink (#98). Centralised so every security-relevant event
   // emitter in the container funnels through one write path. Defensive:
@@ -533,6 +592,27 @@ export function createContainer(): Container {
     },
   };
 
+  // Reply digest: settings + scheduler bookkeeping live in the electron-store
+  const digestConfig: DigestConfigStore = {
+    getSettings: () => ({ ...DEFAULT_DIGEST_SETTINGS, ...configStore.get('digest') }),
+    getState: () => ({ ...DIGEST_STATE_DEFAULTS, ...configStore.get('digestState') }),
+    setState: (state) => configStore.set('digestState', state),
+  };
+  const notifier = createNotifier();
+
+  // "Open Needs-your-reply" request flag (set by the digest notification click)
+  let digestOpenPending = false;
+  const digestOpen: DigestOpenFlag = {
+    markPending: () => {
+      digestOpenPending = true;
+    },
+    consume: () => {
+      const pending = digestOpenPending;
+      digestOpenPending = false;
+      return pending;
+    },
+  };
+
   // Image cache adapter
   const imageCache = createImageCache(getDb);
 
@@ -659,6 +739,14 @@ export function createContainer(): Container {
     calibration,
     // Email-body encryption migration (#99 follow-up)
     bodyMigration,
+    // Reply digest + System 1
+    signals,
+    replyReminders,
+    replyCandidates,
+    system1Heads,
+    system1Training,
+    notifier,
+    digestConfig,
   };
 
   // Create use cases
@@ -729,6 +817,7 @@ export function createContainer(): Container {
       get: (key) => configStore.get(key),
       set: (key, value) => configStore.set(key, value),
     },
+    digestOpen,
     ollamaManager,
     sendQueue,
     shutdown,

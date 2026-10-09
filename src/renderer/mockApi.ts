@@ -9,7 +9,16 @@
  */
 
 import type { MailAPI } from '../main/preload';
-import { demoFixtures, dripSeeds, type DemoEmail } from './mockApi/fixtures';
+import { DEFAULT_DIGEST_SETTINGS } from '../core/domain';
+import type { DigestRunResult, DigestTrigger } from '../core/domain';
+import type { System1Status } from '../core/system1/types';
+import {
+  buildForgottenReplies,
+  demoFixtures,
+  dripSeeds,
+  DEMO_ACCOUNT_EMAIL,
+  type DemoEmail,
+} from './mockApi/fixtures';
 
 // Event listeners storage
 type Callback = (...args: unknown[]) => void;
@@ -167,6 +176,40 @@ export function createMockApi(): MailAPI {
       email: mockEmails[3], // Bob Smith's email
     },
   ];
+
+  // "Needs your reply" items (mutable: done / snooze / dismiss remove them)
+  let forgottenReplies = buildForgottenReplies();
+  const removeForgottenReply = (emailId: number) => {
+    forgottenReplies = forgottenReplies.filter((r) => r.emailId !== emailId);
+  };
+  const mockDigestRun = (trigger: DigestTrigger): DigestRunResult => ({
+    ranAt: new Date(),
+    trigger,
+    totalItems: forgottenReplies.length,
+    notified: trigger === 'test' || forgottenReplies.length > 0,
+    accounts: [
+      {
+        accountId: 1,
+        itemCount: forgottenReplies.length,
+        synced: false,
+        email: trigger === 'test' ? 'sent' : 'skipped',
+        sentHealth: 'ok',
+      },
+    ],
+  });
+  const mockSystem1Status = (): System1Status => ({
+    embeddingModel: 'all-MiniLM-L6-v2',
+    heads: ['folder', 'needsReply', 'importance'].map((questionId) => ({
+      questionId,
+      armed: false,
+      version: null,
+      coverage: null,
+      agreement: null,
+      disagreementUpperBound: null,
+      trainSize: 0,
+      trainedAt: null,
+    })),
+  });
 
   return {
     emails: {
@@ -395,6 +438,7 @@ export function createMockApi(): MailAPI {
           'llm.dailyEmailLimit': 100,
           'llm.autoClassify': false,
           'images.remoteSetting': 'auto',
+          digest: { ...DEFAULT_DIGEST_SETTINGS },
         };
         return defaults[key];
       },
@@ -596,6 +640,37 @@ export function createMockApi(): MailAPI {
       getLatest: async () => null,
       getHistory: async () => [],
     },
+
+    // Needs your reply (forgotten replies)
+    replies: {
+      list: async () => [
+        {
+          accountId: 1,
+          accountEmail: DEMO_ACCOUNT_EMAIL,
+          items: forgottenReplies.map((r) => ({ ...r })),
+          sentHealth: 'ok' as const,
+          generatedAt: new Date(),
+        },
+      ],
+      done: async (emailId: number) => removeForgottenReply(emailId),
+      snooze: async (emailId: number) => removeForgottenReply(emailId),
+      dismiss: async (emailId: number) => removeForgottenReply(emailId),
+      backfill: async () => ({ processed: 0, skipped: 0 }),
+    },
+
+    // Daily digest
+    digest: {
+      runNow: async () => mockDigestRun('manual'),
+      sendTest: async () => mockDigestRun('test'),
+      consumePendingOpen: async () => false,
+    },
+
+    // System 1 (local classifier)
+    system1: {
+      getStatus: async () => mockSystem1Status(),
+      retrain: async () => mockSystem1Status(),
+    },
+
     embeddings: {
       getStats: async () => ({ totalEmails: 0, indexed: 0, coverage: 0, model: 'all-MiniLM-L6-v2' }),
       backfill: async () => ({ taskId: 'mock', total: 0 }),

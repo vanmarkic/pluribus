@@ -380,3 +380,46 @@ CREATE TABLE IF NOT EXISTS calibration_models (
 );
 
 CREATE INDEX IF NOT EXISTS idx_calibration_models_fit_at ON calibration_models(fit_at DESC);
+
+-- ============================================
+-- Reply digest + System 1
+-- ============================================
+
+-- Per-email classification signals, one row per producing source. Precedence
+-- when reading the effective signal: user > system2 (LLM) > system1 (local).
+CREATE TABLE IF NOT EXISTS email_signals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email_id INTEGER NOT NULL REFERENCES emails(id) ON DELETE CASCADE,
+  source TEXT NOT NULL CHECK (source IN ('user','system2','system1')),
+  needs_reply REAL,                -- probability 0..1 (system2/user store 0 or 1)
+  importance INTEGER CHECK (importance IS NULL OR importance BETWEEN 1 AND 4),
+  folder TEXT,
+  confidence REAL,
+  model_version TEXT,              -- e.g. 'mistral:7b', 'system1:folder@v3'
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(email_id, source)
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_signals_email ON email_signals(email_id);
+
+-- User actions on "needs your reply" items (done / not important / snoozed)
+CREATE TABLE IF NOT EXISTS reply_reminders (
+  email_id INTEGER PRIMARY KEY REFERENCES emails(id) ON DELETE CASCADE,
+  state TEXT NOT NULL CHECK (state IN ('done','dismissed','snoozed')),
+  snoozed_until TEXT,              -- ISO timestamp, only for state = 'snoozed'
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- System 1 trained heads (append-only versions per question)
+CREATE TABLE IF NOT EXISTS system1_heads (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  question_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  embedding_model TEXT NOT NULL,
+  weights_json TEXT NOT NULL,
+  threshold REAL NOT NULL,
+  armed INTEGER NOT NULL DEFAULT 0,
+  metrics_json TEXT NOT NULL,
+  trained_at TEXT NOT NULL,
+  UNIQUE(question_id, version)
+);

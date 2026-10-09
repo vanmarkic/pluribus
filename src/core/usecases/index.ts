@@ -44,5 +44,12 @@ export * from './calibration-usecases';
 // Email-body encryption migration (#99 follow-up)
 export * from './body-migration-usecases';
 
+// Reply digest ("Needs your reply")
+export * from './reply-usecases';
+export * from './digest-usecases';
+
+// System 1 (Milestone 2)
+export * from './system1-usecases';
+
 // Factory (createUseCases, UseCases type)
 export * from './factory';

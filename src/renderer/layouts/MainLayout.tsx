@@ -23,6 +23,7 @@ type View =
   | 'social'
   | 'promotions'
   | 'awaiting'
+  | 'needs-reply'
   | 'paper-trail/invoices'
   | 'paper-trail/admin'
   | 'paper-trail/travel';

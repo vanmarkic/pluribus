@@ -28,6 +28,9 @@ import { setupSecurityEventsHandlers } from './security-events-handlers';
 import { setupStreamingHandlers } from './streaming-handlers';
 import { setupCalibrationHandlers } from './calibration-handlers';
 import { setupBodyMigrationHandlers } from './body-migration-handlers';
+import { setupRepliesHandlers } from './replies-handlers';
+import { setupDigestHandlers } from './digest-handlers';
+import { setupSystem1Handlers } from './system1-handlers';
 
 // Re-export for external use
 export { getTempFiles };
@@ -49,6 +52,7 @@ export { getTempFiles };
  * - Threads
  * - Unsubscribe
  * - Send Queue (undo send)
+ * - Needs-your-reply, Daily digest, System 1
  */
 export function registerIpcHandlers(window: BrowserWindow, container: Container): void {
   setupEmailHandlers(container);
@@ -70,6 +74,9 @@ export function registerIpcHandlers(window: BrowserWindow, container: Container)
   setupStreamingHandlers(container, window);
   setupCalibrationHandlers(container);
   setupBodyMigrationHandlers(container);
+  setupRepliesHandlers(container);
+  setupDigestHandlers(container);
+  setupSystem1Handlers(container);
 }
 
 // Re-export validation helpers for testing

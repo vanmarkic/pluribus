@@ -145,6 +145,11 @@ export function wrapSecureStorageWithAudit(
       }
     },
 
+    // TODO(P2): decide whether unlocked-only reads should emit an audit event.
+    getPasswordIfUnlocked(account) {
+      return inner.getPasswordIfUnlocked(account);
+    },
+
     clearSession() {
       inner.clearSession();
       safeRecord(events, {

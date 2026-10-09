@@ -32,7 +32,15 @@ import type {
   TriageLogEntry,
   TriageFolder,
   EmailEmbedding,
+  SignalSource,
+  EmailSignal,
+  ReplyReminderState,
+  ReplyReminder,
+  ReplyCandidate,
+  DigestSettings,
+  DigestState,
 } from './domain';
+import type { HeadRecord, HeadMetrics, TrainingSample } from './system1/types';
 
 // Re-export types needed by adapters
 export type { ListEmailsOptions, ListDraftsOptions };
@@ -230,6 +238,12 @@ export type SecureStorage = {
   deletePassword: (account: string) => Promise<boolean>;
   setApiKey: (service: string, key: string) => Promise<void>;
   getApiKey: (service: string) => Promise<string | null>;
+  /**
+   * Returns the stored IMAP/SMTP password only when it is already unlocked in
+   * the in-memory session cache. NEVER prompts for biometrics, so it is safe
+   * for unattended callers (e.g. the scheduled digest).
+   */
+  getPasswordIfUnlocked: (account: string) => Promise<string | null>;
   clearSession: () => void;
   getConfig: () => SecurityConfig;
   setConfig: (config: Partial<SecurityConfig>) => void;
@@ -296,6 +310,8 @@ export type LLMConfig = {
   ollamaServerUrl?: string;
   // Parallelism for local models (Ollama) - default 1 for Anthropic (rate limited)
   classificationConcurrency?: number;
+  // Privacy: body previews go only to local models unless this is true (default false)
+  sendBodyExcerptsToCloud?: boolean;
 };
 
 // ============================================
@@ -455,11 +471,19 @@ export type PatternMatcher = {
   match: (email: Email) => PatternMatchResult;
 };
 
+export type TriageClassifyOptions = {
+  /** Short body excerpt to include in the prompt (callers gate this on privacy settings). */
+  bodyPreview?: string;
+  /** Skip System 1 and always ask the LLM (System 2). */
+  forceSystem2?: boolean;
+};
+
 export type TriageClassifier = {
   classify: (
     email: Email,
     patternHint: PatternMatchResult,
     examples: TrainingExample[],
+    opts?: TriageClassifyOptions,
   ) => Promise<TriageClassificationResult>;
 };
 
@@ -751,6 +775,72 @@ export type BodyMigrationRepo = {
 };
 
 // ============================================
+// Reply digest + System 1 ports
+// ============================================
+
+export type SignalRepo = {
+  /** UNIQUE(email_id, source): replaces any previous signal from the same source. */
+  upsert: (signal: Omit<EmailSignal, 'updatedAt'>) => Promise<void>;
+  get: (emailId: number, source: SignalSource) => Promise<EmailSignal | null>;
+  /** Effective signal with precedence user > system2 > system1. */
+  getEffective: (emailId: number) => Promise<EmailSignal | null>;
+  listByEmail: (emailId: number) => Promise<EmailSignal[]>;
+  listBySource: (source: SignalSource, opts?: { limit?: number }) => Promise<EmailSignal[]>;
+};
+
+export type ReplyReminderRepo = {
+  set: (emailId: number, state: ReplyReminderState, snoozedUntil?: Date | null) => Promise<void>;
+  get: (emailId: number) => Promise<ReplyReminder | null>;
+  clear: (emailId: number) => Promise<void>;
+};
+
+export type ReplyCandidateQuery = {
+  accountId: number;
+  /** Compared case-insensitively. */
+  myAddress: string;
+  /** Lookback start (inclusive). */
+  since: Date;
+  /** now - grace (inclusive). */
+  until: Date;
+  /** Folder paths to include, e.g. ['INBOX','Planning','Review'] (match on folders.path). */
+  folders: readonly string[];
+  /** For snooze expiry. */
+  now: Date;
+  limit?: number;
+};
+
+export type ReplyCandidateRepo = {
+  listUnanswered: (q: ReplyCandidateQuery) => Promise<ReplyCandidate[]>;
+  countSentByMe: (accountId: number, myAddress: string, since: Date) => Promise<number>;
+};
+
+export type System1HeadRepo = {
+  /** Assigns version = latest + 1 per questionId. */
+  save: (record: Omit<HeadRecord, 'version'>) => Promise<HeadRecord>;
+  getLatest: (questionId: string) => Promise<HeadRecord | null>;
+  setArmed: (questionId: string, version: number, armed: boolean) => Promise<void>;
+  updateMetrics: (questionId: string, version: number, metrics: HeadMetrics) => Promise<void>;
+};
+
+export type System1TrainingRepo = {
+  listSamples: (
+    questionId: string,
+    opts: { embeddingModel: string; limit?: number },
+  ) => Promise<TrainingSample[]>;
+};
+
+export type Notifier = {
+  isSupported: () => boolean;
+  notify: (n: { title: string; body: string; onClick?: () => void }) => void;
+};
+
+export type DigestConfigStore = {
+  getSettings: () => DigestSettings;
+  getState: () => DigestState;
+  setState: (state: DigestState) => void;
+};
+
+// ============================================
 // All Dependencies (for DI)
 // ============================================
 
@@ -797,6 +887,14 @@ export type Deps = {
   calibration: CalibrationRepo;
   // Email-body encryption migration (#99 follow-up)
   bodyMigration: BodyMigrationRepo;
+  // Reply digest + System 1
+  signals: SignalRepo;
+  replyReminders: ReplyReminderRepo;
+  replyCandidates: ReplyCandidateRepo;
+  system1Heads: System1HeadRepo;
+  system1Training: System1TrainingRepo;
+  notifier: Notifier;
+  digestConfig: DigestConfigStore;
 };
 
 // ============================================
