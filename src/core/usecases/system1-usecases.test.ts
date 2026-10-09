@@ -334,7 +334,7 @@ describe('trainSystem1', () => {
     const folders = ['INBOX', 'Feed', 'Promotions'] as const;
     const samples = [
       ...folders.flatMap((f, i) =>
-        sampleSet([{ label: f, center: centroid(40 + i), count: 150 }], 20 + i, 1 + i * 1000),
+        sampleSet([{ label: f, center: centroid(40 + i), count: 200 }], 20 + i, 1 + i * 1000),
       ),
       ...sampleSet([{ label: 'NotAFolder', center: centroid(99), count: 80 }], 30, 50_000),
     ];
@@ -345,13 +345,14 @@ describe('trainSystem1', () => {
     expect(head.weights.kind).toBe('choice');
     expect(head.weights.labels).toEqual([...TRIAGE_FOLDERS]);
     expect(head.weights.labels).not.toContain('NotAFolder');
-    expect(head.metrics.trainSize + head.metrics.holdoutSize).toBe(450);
+    expect(head.metrics.trainSize + head.metrics.holdoutSize).toBe(600);
     expect(head.armed).toBe(true);
   });
 
   it('trains the importance head as a four-level score', async () => {
     const samples = ['1', '2', '3', '4'].flatMap((label, i) =>
-      sampleSet([{ label, center: centroid(60 + i), count: 100 }], 40 + i, 1 + i * 1000),
+      // A Bonferroni-corrected bound needs ~110 clean holdout answers, so 600 samples.
+      sampleSet([{ label, center: centroid(60 + i), count: 150 }], 40 + i, 1 + i * 1000),
     );
     const { deps, heads } = makeDeps({ samples: { importance: samples } });
     await trainSystem1(deps)({ questionIds: ['importance'], now: NOW });
