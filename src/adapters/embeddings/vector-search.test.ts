@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import * as BetterSqlite3 from 'better-sqlite3';
 import { createVectorSearch } from './vector-search';
-import { createEmbeddingService } from './index';
+import { createEmbeddingService, EmbeddingModelNotInstalledError } from './index';
 import { createEmbeddingRepo } from './embedding-repo';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -246,5 +246,41 @@ describe('VectorSearch with a deterministic encoder', () => {
     await embeddingRepo.save(1, [1, 0, 0], '', false, MODEL);
     expect(await vectorSearch.findSimilar('facture', 5)).toEqual([]);
     expect(embed).not.toHaveBeenCalled();
+  });
+
+  describe('while the on-device model is not installed', () => {
+    beforeEach(() => {
+      embed.mockRejectedValue(new EmbeddingModelNotInstalledError(MODEL));
+    });
+
+    it('findSimilar answers "no neighbours" instead of failing (the LLM carries on)', async () => {
+      await embeddingRepo.save(2, [0.6, 0.8, 0], 'Paper-Trail/Invoices', false, MODEL);
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await expect(vectorSearch.findSimilar('facture', 5)).resolves.toEqual([]);
+
+      expect(embed).toHaveBeenCalledTimes(1);
+      expect(warn).not.toHaveBeenCalled();
+      warn.mockRestore();
+    });
+
+    it('findSimilar still surfaces any other embedding failure', async () => {
+      await embeddingRepo.save(2, [0.6, 0.8, 0], 'Paper-Trail/Invoices', false, MODEL);
+      embed.mockRejectedValue(new Error('onnx runtime crashed'));
+      await expect(vectorSearch.findSimilar('facture', 5)).rejects.toThrow('onnx runtime');
+    });
+
+    it('indexEmail throws the typed error and stores nothing', async () => {
+      await expect(vectorSearch.indexEmail(1, 'facture de mars', 'Feed')).rejects.toBeInstanceOf(
+        EmbeddingModelNotInstalledError,
+      );
+      expect(await embeddingRepo.count(MODEL)).toBe(0);
+    });
+
+    it('indexEmail with keepVector still relabels a vector that is already stored', async () => {
+      await embeddingRepo.save(1, [0, 0, 1], '', false, MODEL);
+      await vectorSearch.indexEmail(1, 'facture de mars', 'Feed', false, { keepVector: true });
+      expect((await embeddingRepo.findByEmail(1, MODEL))?.folder).toBe('Feed');
+    });
   });
 });

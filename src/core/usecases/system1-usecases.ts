@@ -76,9 +76,18 @@ async function buildStatus(
   deps: Pick<Deps, 'system1Heads' | 'embeddingService'>,
 ): Promise<System1Status> {
   const embeddingModel = deps.embeddingService.getModel();
+  // An encoder that cannot say (a script or test encoder) has no download step: it is "installed".
+  const model = deps.embeddingService.getDownloadState?.() ?? {
+    installed: true,
+    downloading: false,
+    error: null,
+  };
   const heads = await Promise.all(QUESTIONS.map((q) => deps.system1Heads.getLatest(q.id)));
   return {
     embeddingModel,
+    modelInstalled: model.installed,
+    modelDownloading: model.downloading,
+    modelError: model.error,
     heads: QUESTIONS.map((q, i): System1HeadStatus => {
       const head = heads[i];
       if (!head) return emptyStatus(q.id);

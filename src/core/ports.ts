@@ -42,6 +42,7 @@ import type {
   System1Settings,
 } from './domain';
 import type { HeadRecord, HeadMetrics, TrainingSample } from './system1/types';
+import type { ModelDownloadOptions, ModelDownloadState } from './embedding-model';
 
 // Re-export types needed by adapters
 export type { ListEmailsOptions, ListDraftsOptions };
@@ -583,6 +584,14 @@ export type EmbeddingService = {
   similarity: (a: number[], b: number[]) => number;
   /** Get the model identifier */
   getModel: () => string;
+  /**
+   * Download the model from huggingface.co. The only call that may use the
+   * network, so it runs only on the user's explicit request. `embed()` throws
+   * `EmbeddingModelNotInstalledError` until the model is on disk.
+   */
+  downloadModel?: (opts?: ModelDownloadOptions) => Promise<void>;
+  /** Is the model on disk, is a download running, did the last one fail? */
+  getDownloadState?: () => ModelDownloadState;
 };
 
 export type EmbeddingRepo = {

@@ -203,8 +203,11 @@ export function createMockApi(): MailAPI {
   });
   // Demo: the folder head has learned enough to answer on its own; the other
   // two are still in shadow mode (not enough, or not clean enough, data yet).
-  const mockSystem1Status = (): System1Status => ({
+  const trainedSystem1Status = (): System1Status => ({
     embeddingModel: 'Xenova/multilingual-e5-small',
+    modelInstalled: true,
+    modelDownloading: false,
+    modelError: null,
     heads: [
       {
         questionId: 'folder',
@@ -238,6 +241,47 @@ export function createMockApi(): MailAPI {
       },
     ],
   });
+
+  // The on-device model starts NOT installed, like on a fresh install (the real app never
+  // downloads it on its own). "Download model" (or the import) flips it to installed.
+  let modelState: 'missing' | 'downloading' | 'installed' = 'missing';
+  let pendingModelDownload: Promise<void> | null = null;
+  const MOCK_MODEL_DOWNLOAD_MS = 2500;
+  const mockSystem1Status = (): System1Status => {
+    const trained = trainedSystem1Status();
+    if (modelState === 'installed') return trained;
+    // Nothing can be embedded without the model, so nothing has been trained either.
+    return {
+      ...trained,
+      modelInstalled: false,
+      modelDownloading: modelState === 'downloading',
+      heads: trained.heads.map((head) => ({
+        questionId: head.questionId,
+        armed: false,
+        version: null,
+        coverage: null,
+        agreement: null,
+        disagreementUpperBound: null,
+        trainSize: 0,
+        trainedAt: null,
+      })),
+    };
+  };
+  const mockDownloadModel = async (): Promise<System1Status> => {
+    if (modelState === 'installed') return mockSystem1Status();
+    if (!pendingModelDownload) {
+      modelState = 'downloading';
+      pendingModelDownload = new Promise<void>((resolve) => {
+        setTimeout(() => {
+          modelState = 'installed';
+          pendingModelDownload = null;
+          resolve();
+        }, MOCK_MODEL_DOWNLOAD_MS);
+      });
+    }
+    await pendingModelDownload;
+    return mockSystem1Status();
+  };
 
   return {
     emails: {
@@ -713,12 +757,16 @@ export function createMockApi(): MailAPI {
       getStatus: async () => mockSystem1Status(),
       retrain: async () => mockSystem1Status(),
       // The demo has no native folder picker: pretend the user picked a valid model folder.
-      importModel: async (): Promise<System1ModelImportResult> => ({
-        status: 'imported',
-        model: 'Xenova/multilingual-e5-small',
-        files: 6,
-        bytes: 118_000_000,
-      }),
+      importModel: async (): Promise<System1ModelImportResult> => {
+        modelState = 'installed';
+        return {
+          status: 'imported',
+          model: 'Xenova/multilingual-e5-small',
+          files: 6,
+          bytes: 118_000_000,
+        };
+      },
+      downloadModel: mockDownloadModel,
     },
 
     embeddings: {
@@ -728,7 +776,10 @@ export function createMockApi(): MailAPI {
         coverage: 0,
         model: 'Xenova/multilingual-e5-small',
       }),
-      backfill: async () => ({ taskId: 'mock', total: 0 }),
+      backfill: async () =>
+        modelState === 'installed'
+          ? { taskId: 'mock', total: 0, status: 'started' as const }
+          : { taskId: '', total: 0, status: 'model-not-installed' as const },
     },
 
     // These two keys extend llm which is already in the surrounding object

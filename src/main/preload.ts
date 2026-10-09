@@ -212,6 +212,10 @@ const api = {
     // Opens a native folder picker in the main process; the renderer never supplies a path.
     importModel: () =>
       ipcRenderer.invoke('system1:importModel') as Promise<System1ModelImportResult>,
+    // Downloads the on-device model from huggingface.co (the user's IP is visible to that site, no
+    // mail data is sent). Only ever called from the "Download model" button. Resolves with the new
+    // status when done; while it runs, poll getStatus() (modelDownloading).
+    downloadModel: () => ipcRenderer.invoke('system1:downloadModel') as Promise<System1Status>,
   },
 
   embeddings: {
@@ -223,7 +227,11 @@ const api = {
         model: string;
       }>,
     backfill: (opts?: { limit?: number; accountId?: number }) =>
-      ipcRenderer.invoke('embeddings:backfill', opts) as Promise<{ taskId: string; total: number }>,
+      ipcRenderer.invoke('embeddings:backfill', opts) as Promise<{
+        taskId: string;
+        total: number;
+        status: 'started' | 'model-not-installed';
+      }>,
   },
 
   llmCalls: {

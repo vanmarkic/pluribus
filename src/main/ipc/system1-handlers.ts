@@ -8,6 +8,7 @@ import { dialog, ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
 import type { Container } from '../container';
 import type { ModelImportSummary, System1ModelImportResult } from '../../core/model-import';
+import type { System1Status } from '../../core/system1/types';
 import type { RendererWindow, WindowGetter } from '../window-manager';
 import { checkRateLimit } from './validation';
 
@@ -22,6 +23,11 @@ export type System1HandlerOptions = {
    * Without it the import channel reports "not available".
    */
   importModel?: (srcDir: string) => Promise<ModelImportSummary>;
+  /**
+   * Downloads the encoder model from huggingface.co (`createSystem1Runtime().downloadModel`).
+   * Runs only when the user clicks "Download model". Without it the channel reports "not available".
+   */
+  downloadModel?: () => Promise<void>;
   /** Folder picker. Defaults to Electron's `dialog.showOpenDialog`. */
   showOpenDialog?: (
     parent: RendererWindow | null,
@@ -51,6 +57,18 @@ export function setupSystem1Handlers(
   ipcMain.handle('system1:retrain', async () => {
     checkRateLimit('system1:retrain', 5);
     return useCases.trainSystem1();
+  });
+
+  // The model is never fetched on its own: this is the only way the app contacts huggingface.co,
+  // and it needs the user's click. The renderer supplies nothing (no URL, no path); it polls
+  // `system1:getStatus` for progress while this call is pending.
+  ipcMain.handle('system1:downloadModel', async (): Promise<System1Status> => {
+    checkRateLimit('system1:downloadModel', 5);
+    const downloadModel = options.downloadModel;
+    if (!downloadModel) throw new Error('Model download is not available');
+
+    await downloadModel();
+    return useCases.getSystem1Status();
   });
 
   // The renderer never names a path: the folder is chosen in a native picker

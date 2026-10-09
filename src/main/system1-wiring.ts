@@ -3,8 +3,8 @@
  *
  * Two pieces the composition root (container / app start) plugs in:
  *
- * - `createSystem1Runtime`: the nightly retrain job and "import model from
- *   folder". Everything it needs is passed in, so it is unit-testable.
+ * - `createSystem1Runtime`: the nightly retrain job, "import model from
+ *   folder" and "download model". Everything it needs is passed in, so it is unit-testable.
  * - `buildSystem1ClassifierDeps`: the dependency bundle of the `withSystem1`
  *   triage decorator, assembled from container pieces. It does not need the
  *   finished `Deps`/`UseCases`, so the decorator can be built while the
@@ -12,8 +12,11 @@
  *   `recordAudit: recordSystem1Audit({ system1Heads })`).
  *
  * Privacy: embedding, training and scoring all happen on this device. The
- * encoder model lives in `cacheDir` (userData/models); once it is there the
- * encoder cannot reach the network.
+ * encoder model lives in `cacheDir` (userData/models). It is never fetched on
+ * its own: `downloadModel` (huggingface.co, which sees the user's IP address)
+ * only runs when the user clicks "Download model", and importing a folder
+ * installs it with no network at all. Until it is installed System 1 is off and
+ * the LLM decides.
  */
 
 import type { Logger } from 'pino';
@@ -59,6 +62,14 @@ export type System1Runtime = {
    * Hand this to `setupSystem1Handlers(container, { importModel })`.
    */
   importModel: (srcDir: string) => Promise<ModelImportSummary>;
+  /**
+   * Download the configured encoder from huggingface.co. The only code that makes
+   * System 1 touch the network, and it runs only for the user's "Download model"
+   * click (hand this to `setupSystem1Handlers(container, { downloadModel })`).
+   * Concurrent calls share one download; a failure rejects with a readable message
+   * and a later call starts over.
+   */
+  downloadModel: () => Promise<void>;
   /** Is the configured encoder already on disk (so it will run fully offline)? */
   isModelCached: () => boolean;
 };
@@ -100,6 +111,28 @@ export function createSystem1Runtime(opts: System1RuntimeOptions): System1Runtim
         'system1.model.imported',
       );
       return { model, files: result.files.length, bytes: result.bytes };
+    },
+
+    async downloadModel() {
+      const model = getSettings().embeddingModel;
+      const service = deps.embeddingService;
+      if (!service.downloadModel) throw new Error('Model download is not available');
+
+      logger.info({ component: 'system1-wiring', model }, 'system1.model.download.start');
+      try {
+        await service.downloadModel();
+      } catch (error) {
+        logger.warn(
+          {
+            component: 'system1-wiring',
+            model,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          'system1.model.download.failed',
+        );
+        throw error;
+      }
+      logger.info({ component: 'system1-wiring', model }, 'system1.model.download.done');
     },
 
     isModelCached() {

@@ -45,7 +45,9 @@ async function createSystem1Classifier(): Promise<EvalClassifier> {
   const modelName = process.env.EVAL_EMBED_MODEL ?? DEFAULT_SYSTEM1_SETTINGS.embeddingModel;
   const cacheDir =
     process.env.EVAL_MODEL_CACHE ?? path.join(os.homedir(), '.cache', 'pluribus-eval-models');
-  const encoder = createEmbeddingService({ modelName, cacheDir });
+  // A developer running this command asked for it: the first run may fetch the model (the app
+  // itself never does, see `autoDownload` in createEmbeddingService).
+  const encoder = createEmbeddingService({ modelName, cacheDir, autoDownload: true });
   console.log(
     `[eval] System 1: encoder ${modelName}, model cache ${cacheDir}` +
       (encoder.isModelCached() ? ' (offline)' : ' (first run downloads the model once)'),

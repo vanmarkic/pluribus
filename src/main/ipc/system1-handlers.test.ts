@@ -145,6 +145,97 @@ describe('system1:importModel', () => {
   });
 });
 
+describe('system1:downloadModel', () => {
+  const installed = {
+    embeddingModel: 'm',
+    heads: [],
+    modelInstalled: true,
+    modelDownloading: false,
+    modelError: null,
+  };
+
+  it('runs the download the runtime provides and answers with the fresh status', async () => {
+    const { container, useCases } = makeContainer();
+    useCases.getSystem1Status.mockResolvedValue(installed as never);
+    const downloadModel = vi.fn(async () => {});
+    setupSystem1Handlers(container, { downloadModel });
+
+    await expect(invoke('system1:downloadModel')).resolves.toEqual(installed);
+
+    expect(downloadModel).toHaveBeenCalledTimes(1);
+    // The status is read after the download, so the renderer sees "installed".
+    expect(downloadModel.mock.invocationCallOrder[0]!).toBeLessThan(
+      useCases.getSystem1Status.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('ignores any argument the renderer sends', async () => {
+    const { container } = makeContainer();
+    const downloadModel = vi.fn(async () => {});
+    setupSystem1Handlers(container, { downloadModel });
+
+    await invoke('system1:downloadModel', { url: 'https://evil.example/model.onnx' });
+
+    expect(downloadModel).toHaveBeenCalledWith();
+  });
+
+  it('passes a failed download on to the renderer, with the reason', async () => {
+    const { container, useCases } = makeContainer();
+    const downloadModel = vi.fn(async () => {
+      throw new Error('getaddrinfo ENOTFOUND huggingface.co');
+    });
+    setupSystem1Handlers(container, { downloadModel });
+
+    await expect(invoke('system1:downloadModel')).rejects.toThrow(/ENOTFOUND huggingface\.co/);
+    expect(useCases.getSystem1Status).not.toHaveBeenCalled();
+  });
+
+  it('fails clearly when the runtime has not wired the download', async () => {
+    const { container, useCases } = makeContainer();
+    setupSystem1Handlers(container);
+    await expect(invoke('system1:downloadModel')).rejects.toThrow(/not available/i);
+    expect(useCases.getSystem1Status).not.toHaveBeenCalled();
+  });
+
+  it('does not touch the dialog (nothing for the renderer to choose)', async () => {
+    const { container } = makeContainer();
+    setupSystem1Handlers(container, { downloadModel: vi.fn(async () => {}) });
+    await invoke('system1:downloadModel');
+    expect(showOpenDialog).not.toHaveBeenCalled();
+  });
+
+  // Last: it moves the clock, and the limiter remembers it.
+  it('is rate limited', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      // A fresh minute: earlier tests of this file already used the limiter.
+      vi.setSystemTime(Date.now() + 10 * 60_000);
+      const { container } = makeContainer();
+      const downloadModel = vi.fn(async () => {});
+      setupSystem1Handlers(container, { downloadModel });
+
+      let allowed = 0;
+      let refusal: unknown = null;
+      for (let i = 0; i < 20 && refusal === null; i++) {
+        await invoke('system1:downloadModel').then(
+          () => allowed++,
+          (e: unknown) => {
+            refusal = e;
+          },
+        );
+      }
+
+      expect(refusal).toBeInstanceOf(Error);
+      expect((refusal as Error).message).toMatch(/rate limit/i);
+      expect(allowed).toBeGreaterThanOrEqual(1);
+      expect(allowed).toBeLessThanOrEqual(10);
+      expect(downloadModel).toHaveBeenCalledTimes(allowed);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('system1 status and retrain', () => {
   it('keep working with no options', async () => {
     const { container, useCases } = makeContainer();

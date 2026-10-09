@@ -35,6 +35,7 @@ import type {
   TriageClassifier,
   TriageClassifyOptions,
 } from '../../core/ports';
+import { isEmbeddingModelNotInstalled } from '../../core/embedding-model';
 import { buildFeatures, buildInput } from '../../core/system1/features';
 import { decide } from '../../core/system1/decide';
 import { system1Text } from '../../core/system1/text';
@@ -264,7 +265,14 @@ export function withSystem1(
       try {
         local = await askLocal(email, settings, opts);
       } catch (error) {
-        log('System 1 error, escalating to System 2', { emailId: email.id, error: String(error) });
+        // The user has not installed the on-device model (it is only ever downloaded on
+        // request): System 1 is simply off and System 2 decides. Not worth a log line per email.
+        if (!isEmbeddingModelNotInstalled(error)) {
+          log('System 1 error, escalating to System 2', {
+            emailId: email.id,
+            error: String(error),
+          });
+        }
       }
       if (!local) return callInner();
 

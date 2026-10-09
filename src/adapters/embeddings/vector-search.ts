@@ -7,6 +7,7 @@
 
 import type { VectorSearch, VectorSearchResult, EmbeddingService, EmbeddingRepo } from '../../core/ports';
 import type { Email } from '../../core/domain';
+import { isEmbeddingModelNotInstalled } from '../../core/embedding-model';
 import { prepareEmailText } from './index';
 
 /** Weight multiplier for user corrections (corrections are more reliable) */
@@ -42,8 +43,16 @@ export function createVectorSearch(
         return [];
       }
 
-      // Generate embedding for query
-      const queryVector = await embeddingService.embed(emailText);
+      // Generate embedding for query. Without the on-device model (it is only
+      // downloaded on the user's request) there are simply no neighbours: the
+      // classifier carries on with the LLM alone.
+      let queryVector: number[];
+      try {
+        queryVector = await embeddingService.embed(emailText);
+      } catch (error) {
+        if (isEmbeddingModelNotInstalled(error)) return [];
+        throw error;
+      }
 
       // Calculate similarities
       const scored = allEmbeddings.map((emb) => ({

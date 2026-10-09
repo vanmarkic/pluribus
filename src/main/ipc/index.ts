@@ -63,11 +63,13 @@ let ipcHandlersRegistered = false;
  * `options.importModel` installs an encoder model from a folder (it belongs to
  * the System 1 runtime, which is built from the container); without it the
  * import channel reports "not available".
+ * `options.downloadModel` is the explicit "Download model" action of the same
+ * runtime; without it that channel reports "not available" too.
  */
 export function registerIpcHandlers(
   getWindow: WindowGetter,
   container: Container,
-  options: Pick<System1HandlerOptions, 'importModel'> = {},
+  options: Pick<System1HandlerOptions, 'importModel' | 'downloadModel'> = {},
 ): void {
   // ipcMain.handle throws on a duplicate channel, so registering twice would
   // leave a half-registered, hard-to-diagnose state. Fail loudly and early.
@@ -104,6 +106,7 @@ export function registerIpcHandlers(
   setupSystem1Handlers(container, {
     getWindow,
     ...(options.importModel ? { importModel: options.importModel } : {}),
+    ...(options.downloadModel ? { downloadModel: options.downloadModel } : {}),
   });
 }
 

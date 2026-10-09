@@ -685,11 +685,14 @@ export function createContainer(): Container {
   const imapFolderOps = createImapFolderOps(secrets);
 
   // Embedding & vector search adapters. The encoder runs on this device: the model
-  // named in the System 1 settings is read from the models dir, and only downloaded
-  // (once) if it is missing. Changing the model in settings takes effect after a restart.
+  // named in the System 1 settings is read from the models dir. It is never downloaded
+  // on its own (huggingface.co would see the user's IP): only the "Download model" click
+  // in Settings (or importing a folder) installs it, and until then System 1 is off.
+  // Changing the model in settings takes effect after a restart.
   const embeddingService = createEmbeddingService({
     modelName: readSystem1Settings(config).embeddingModel,
     cacheDir: getModelsDir(),
+    autoDownload: false,
   });
   const embeddingRepo = createEmbeddingRepo(getDb());
   const vectorSearch = createVectorSearch(embeddingService, embeddingRepo);

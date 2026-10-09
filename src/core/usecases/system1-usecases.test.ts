@@ -4,6 +4,7 @@ import { mulberry32 } from '../system1/linear-head';
 import { predictProba } from '../system1/linear-head';
 import { DEFAULT_SYSTEM1_SETTINGS, TRIAGE_FOLDERS, type System1Settings } from '../domain';
 import type { ConfigStore, System1HeadRepo, System1TrainingRepo } from '../ports';
+import { EmbeddingModelNotInstalledError, type ModelDownloadState } from '../embedding-model';
 import type { HeadMetrics, HeadRecord, TrainingSample } from '../system1/types';
 
 const MODEL = 'test-encoder';
@@ -451,6 +452,104 @@ describe('getSystem1Status', () => {
       armed: false,
       version: 1,
     });
+  });
+
+  describe('on-device model state', () => {
+    const withModelState = (state: ModelDownloadState | undefined) => {
+      const { deps } = makeDeps({});
+      return {
+        ...deps,
+        embeddingService: {
+          getModel: () => MODEL,
+          ...(state ? { getDownloadState: () => state } : {}),
+        } as never,
+      };
+    };
+
+    it('says the model is not installed, with nothing downloading', async () => {
+      const status = await getSystem1Status(
+        withModelState({ installed: false, downloading: false, error: null }),
+      )();
+      expect(status).toMatchObject({
+        modelInstalled: false,
+        modelDownloading: false,
+        modelError: null,
+      });
+    });
+
+    it('says a download is running', async () => {
+      const status = await getSystem1Status(
+        withModelState({ installed: false, downloading: true, error: null }),
+      )();
+      expect(status).toMatchObject({ modelInstalled: false, modelDownloading: true });
+    });
+
+    it('carries the reason the last download failed', async () => {
+      const status = await getSystem1Status(
+        withModelState({ installed: false, downloading: false, error: 'ENOTFOUND huggingface.co' }),
+      )();
+      expect(status).toMatchObject({
+        modelInstalled: false,
+        modelDownloading: false,
+        modelError: 'ENOTFOUND huggingface.co',
+      });
+    });
+
+    it('says the model is installed', async () => {
+      const status = await getSystem1Status(
+        withModelState({ installed: true, downloading: false, error: null }),
+      )();
+      expect(status).toMatchObject({ modelInstalled: true, modelDownloading: false });
+    });
+
+    it('treats an encoder that cannot say as installed (a plain test or script encoder)', async () => {
+      const status = await getSystem1Status(withModelState(undefined))();
+      expect(status).toMatchObject({
+        modelInstalled: true,
+        modelDownloading: false,
+        modelError: null,
+      });
+    });
+  });
+});
+
+describe('trainSystem1 while the on-device model is not installed', () => {
+  it('never embeds: it trains from stored vectors only and reports the model state', async () => {
+    const embed = vi.fn(async () => {
+      throw new EmbeddingModelNotInstalledError(MODEL);
+    });
+    const { deps, heads } = makeDeps({ samples: { needsReply: cleanNeedsReply(100) } });
+    const notInstalled = {
+      ...deps,
+      embeddingService: {
+        embed,
+        getModel: () => MODEL,
+        getDownloadState: () => ({ installed: false, downloading: false, error: null }),
+      } as never,
+    };
+
+    const status = await trainSystem1(notInstalled)({ now: NOW });
+
+    expect(embed).not.toHaveBeenCalled();
+    expect(heads.rows).toHaveLength(1); // trained from the vectors that were already stored
+    expect(status.modelInstalled).toBe(false);
+  });
+
+  it('does nothing and does not fail when there are no stored vectors yet (a fresh install)', async () => {
+    const embed = vi.fn();
+    const { deps, heads } = makeDeps({});
+    const status = await trainSystem1({
+      ...deps,
+      embeddingService: {
+        embed,
+        getModel: () => MODEL,
+        getDownloadState: () => ({ installed: false, downloading: false, error: null }),
+      } as never,
+    })({ now: NOW });
+
+    expect(embed).not.toHaveBeenCalled();
+    expect(heads.rows).toEqual([]);
+    expect(status.heads.every((h) => !h.armed && h.version === null)).toBe(true);
   });
 });
 

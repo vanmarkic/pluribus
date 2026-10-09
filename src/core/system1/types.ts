@@ -118,7 +118,19 @@ export type System1HeadStatus = {
   trainedAt: Date | null;
 };
 
-export type System1Status = { embeddingModel: string; heads: System1HeadStatus[] };
+export type System1Status = {
+  embeddingModel: string;
+  heads: System1HeadStatus[];
+  /**
+   * The on-device encoder model is on disk. It is only downloaded when the user
+   * asks (or imports it); until then System 1 is off and the LLM decides.
+   */
+  modelInstalled: boolean;
+  /** The user's "Download model" request is running. */
+  modelDownloading: boolean;
+  /** Why the last download failed; null when it did not (or the model is installed since). */
+  modelError: string | null;
+};
 
 // ============================================
 // Email questions

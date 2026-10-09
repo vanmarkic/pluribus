@@ -32,6 +32,7 @@ import { createVectorSearch } from '../adapters/embeddings/vector-search';
 import { createPriorRepliesCounter } from '../adapters/embeddings/sender-history';
 import { composeTriageClassifier } from '../main/triage-composition';
 import { recordSystem1Audit, trainSystem1 } from '../core/usecases/system1-usecases';
+import { EmbeddingModelNotInstalledError } from '../core/embedding-model';
 import { FEATURE_NAMES } from '../core/system1/features';
 import { EMAIL_QUESTIONS, type HeadRecord } from '../core/system1/types';
 import {
@@ -751,6 +752,97 @@ describe('System 1 in the triage stack: learning from the LLM', () => {
     }
     expect(llm.complete.mock.calls.length).toBe(callsBefore);
   }, 60_000);
+});
+
+// ---------------------------------------------------------------------------
+// The model is only downloaded on request: until then System 1 is off
+// ---------------------------------------------------------------------------
+
+describe('System 1 in the triage stack: on-device model not installed', () => {
+  /** The encoder of a fresh install: nothing was downloaded, so every embed() refuses. */
+  function createMissingEncoder(): Encoder {
+    const calls: string[] = [];
+    return {
+      calls,
+      embed: async (text) => {
+        calls.push(text);
+        throw new EmbeddingModelNotInstalledError(MODEL);
+      },
+      similarity: (a, b) => a.reduce((sum, v, i) => sum + v * (b[i] ?? 0), 0),
+      getModel: () => MODEL,
+      getDownloadState: () => ({ installed: false, downloading: false, error: null }),
+    };
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('the LLM classifies the mail; nothing throws, nothing is logged, no vector is stored', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const stack = createStack({ encoder: createMissingEncoder() });
+    // Heads left over from an earlier install must not matter either.
+    await seedHeads(stack);
+    // A labelled neighbour exists, so the kNN path really tries to embed the query.
+    await stack.embeddingRepo.save(
+      insertEmail({ subject: 'Ancien devis' }).id,
+      CONSTANT_VECTOR,
+      'Planning',
+      false,
+      MODEL,
+    );
+    const email = insertEmail();
+
+    const result = await classify(stack, email, { bodyPreview: 'Bonjour, la date ?' });
+
+    expect(result.source).toBe('llm');
+    expect(result.folder).toBe('Planning');
+    expect(stack.llm.complete).toHaveBeenCalledTimes(1);
+    expect(await stack.signals.get(email.id, 'system2')).toMatchObject({ source: 'system2' });
+    expect(await stack.signals.get(email.id, 'system1')).toBeNull();
+    expect(await stack.embeddingRepo.findByEmail(email.id, MODEL)).toBeNull();
+    expect(stack.log).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    // System 1 and the kNN both asked, and both were refused without any fetch.
+    expect(stack.encoder.calls.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('keeps the cloud privacy rule: the body preview still never reaches the LLM', async () => {
+    const stack = createStack({ encoder: createMissingEncoder() });
+    const email = insertEmail();
+    await classify(stack, email, { bodyPreview: 'SECRET-BODY-TEXT' });
+    expect(stack.llm.prompts).toHaveLength(1);
+    expect(stack.llm.prompts[0]).not.toContain('SECRET-BODY-TEXT');
+  });
+
+  it('classifies a whole batch without a single failure', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const stack = createStack({ encoder: createMissingEncoder() });
+    for (let n = 0; n < 5; n++) {
+      const result = await classify(stack, insertEmail({ subject: `Mail ${n}` }));
+      expect(result.source).toBe('llm');
+    }
+    expect(stack.llm.complete).toHaveBeenCalledTimes(5);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('the nightly retrain never tries to embed', async () => {
+    const encoder = createMissingEncoder();
+    const stack = createStack({ encoder });
+    const status = await trainSystem1({
+      system1Heads: stack.heads,
+      system1Training: createSystem1TrainingRepo(getDb),
+      embeddingService: encoder,
+      config: stack.config,
+    })();
+
+    expect(encoder.calls).toEqual([]);
+    expect(status.modelInstalled).toBe(false);
+    expect(status.modelDownloading).toBe(false);
+    expect(status.heads.every((h) => !h.armed)).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SemanticIndexPanel } from './SemanticIndexPanel';
 import { DEFAULT_SYSTEM1_SETTINGS } from '../../../core/domain';
@@ -15,6 +15,9 @@ const MODEL = 'Xenova/multilingual-e5-small';
 
 const STATUS: System1Status = {
   embeddingModel: MODEL,
+  modelInstalled: true,
+  modelDownloading: false,
+  modelError: null,
   heads: [
     {
       questionId: 'folder',
@@ -50,7 +53,7 @@ const STATUS: System1Status = {
 };
 
 const RETRAINED: System1Status = {
-  embeddingModel: MODEL,
+  ...STATUS,
   heads: STATUS.heads.map((h) =>
     h.questionId === 'needsReply'
       ? { ...h, armed: true, version: 3, disagreementUpperBound: 0.049, trainSize: 230 }
@@ -58,12 +61,30 @@ const RETRAINED: System1Status = {
   ),
 };
 
+const NOT_INSTALLED: System1Status = {
+  ...STATUS,
+  modelInstalled: false,
+  heads: STATUS.heads.map((h) => ({
+    ...h,
+    armed: false,
+    version: null,
+    coverage: null,
+    agreement: null,
+    disagreementUpperBound: null,
+    trainSize: 0,
+    trainedAt: null,
+  })),
+};
+const DOWNLOADING: System1Status = { ...NOT_INSTALLED, modelDownloading: true };
+
 function install(
   opts: {
     settings?: Partial<System1Settings> | null;
     status?: System1Status;
     retrain?: unknown;
     importModel?: unknown;
+    downloadModel?: unknown;
+    backfill?: unknown;
     set?: unknown;
   } = {},
 ) {
@@ -84,12 +105,14 @@ function install(
     importModel:
       opts.importModel ??
       vi.fn().mockResolvedValue({ status: 'cancelled' } satisfies System1ModelImportResult),
+    downloadModel: opts.downloadModel ?? vi.fn().mockResolvedValue(STATUS),
   };
   const embeddings = {
     getStats: vi
       .fn()
       .mockResolvedValue({ totalEmails: 1000, indexed: 250, coverage: 0.25, model: MODEL }),
-    backfill: vi.fn().mockResolvedValue({ taskId: 't', total: 0 }),
+    backfill:
+      opts.backfill ?? vi.fn().mockResolvedValue({ taskId: 't', total: 0, status: 'started' }),
   };
   api.config = { ...api.config, ...config };
   api.system1 = system1;
@@ -291,5 +314,292 @@ describe('SemanticIndexPanel - System 1 block', () => {
     await screen.findByText('System 1 (on-device model)');
     expect(await screen.findByText(/Couldn't load the System 1 status/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retrain now' })).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The model is only downloaded on the user's click
+// ---------------------------------------------------------------------------
+
+/** A promise the test settles by hand. */
+function deferred<T>() {
+  let resolve: (value: T) => void = () => {};
+  let reject: (error: Error) => void = () => {};
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+describe('SemanticIndexPanel - on-device model', () => {
+  describe('not installed', () => {
+    it('explains in plain words what a download means for privacy', async () => {
+      install({ status: NOT_INSTALLED });
+      await renderLoaded();
+
+      const notice = screen.getByTestId('system1-model-state');
+      expect(notice).toHaveTextContent(/on-device model \(about 118 MB\) is not installed/i);
+      expect(notice).toHaveTextContent(/connects to huggingface\.co/i);
+      expect(notice).toHaveTextContent(/your IP address is visible to that site/i);
+      expect(notice).toHaveTextContent(/no mail or mail data is sent/i);
+      expect(notice).toHaveTextContent(/System 1 is off/i);
+      expect(screen.getByRole('button', { name: 'Download model' })).toBeEnabled();
+      expect(screen.queryByText('Model installed')).not.toBeInTheDocument();
+    });
+
+    it('never downloads by itself: not on render, not while the status is loaded', async () => {
+      const { system1 } = install({ status: NOT_INSTALLED });
+      await renderLoaded();
+      expect(system1.downloadModel).not.toHaveBeenCalled();
+    });
+
+    it('keeps the offline way: Import model from folder', async () => {
+      install({ status: NOT_INSTALLED });
+      await renderLoaded();
+      expect(screen.getByRole('button', { name: /Import model from folder/ })).toBeEnabled();
+    });
+
+    it('the Download model button starts the download, shows progress, then the installed state', async () => {
+      const download = deferred<System1Status>();
+      const { system1 } = install({
+        status: NOT_INSTALLED,
+        downloadModel: vi.fn(() => download.promise),
+      });
+      const user = userEvent.setup();
+      await renderLoaded();
+
+      await user.click(screen.getByRole('button', { name: 'Download model' }));
+
+      expect(system1.downloadModel).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('button', { name: 'Downloading…' })).toBeDisabled();
+      expect(screen.getByTestId('system1-model-state')).toHaveTextContent(/downloading/i);
+
+      download.resolve(STATUS);
+
+      expect(await screen.findByText('Model installed')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Download model|Downloading/ })).toBeNull();
+      expect(screen.queryByText(/huggingface\.co/)).not.toBeInTheDocument();
+      // The trained heads come back with the fresh status.
+      expect(within(row(/Folder/)).getByText('Armed')).toBeInTheDocument();
+    });
+
+    it('a second click while it runs does nothing', async () => {
+      const download = deferred<System1Status>();
+      const { system1 } = install({
+        status: NOT_INSTALLED,
+        downloadModel: vi.fn(() => download.promise),
+      });
+      const user = userEvent.setup();
+      await renderLoaded();
+
+      await user.click(screen.getByRole('button', { name: 'Download model' }));
+      await user.click(screen.getByRole('button', { name: 'Downloading…' }));
+
+      expect(system1.downloadModel).toHaveBeenCalledTimes(1);
+      download.resolve(STATUS);
+      await screen.findByText('Model installed');
+    });
+
+    it('shows why a download failed and offers a retry that works', async () => {
+      const downloadModel = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('getaddrinfo ENOTFOUND huggingface.co'))
+        .mockResolvedValueOnce(STATUS);
+      install({ status: NOT_INSTALLED, downloadModel });
+      const user = userEvent.setup();
+      await renderLoaded();
+
+      await user.click(screen.getByRole('button', { name: 'Download model' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(/ENOTFOUND huggingface\.co/);
+      expect(screen.getByRole('button', { name: 'Retry download' })).toBeEnabled();
+
+      await user.click(screen.getByRole('button', { name: 'Retry download' }));
+
+      expect(downloadModel).toHaveBeenCalledTimes(2);
+      expect(await screen.findByText('Model installed')).toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+
+    it('shows the failure the main process reports in the status (e.g. after reopening Settings)', async () => {
+      const { system1 } = install({
+        status: {
+          ...NOT_INSTALLED,
+          modelError: 'The model was downloaded but could not be saved.',
+        },
+      });
+      const user = userEvent.setup();
+      await renderLoaded();
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(/could not be saved/);
+      await user.click(screen.getByRole('button', { name: 'Retry download' }));
+      expect(system1.downloadModel).toHaveBeenCalledTimes(1);
+    });
+
+    it('after an import the panel shows the installed state', async () => {
+      const { system1 } = install({
+        status: NOT_INSTALLED,
+        importModel: vi.fn().mockResolvedValue({
+          status: 'imported',
+          model: MODEL,
+          files: 6,
+          bytes: 118_000_000,
+        } satisfies System1ModelImportResult),
+      });
+      const user = userEvent.setup();
+      await renderLoaded();
+      system1.getStatus.mockResolvedValue(STATUS);
+
+      await user.click(screen.getByRole('button', { name: /Import model from folder/ }));
+
+      expect(await screen.findByText('Model installed')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Download model' })).toBeNull();
+    });
+
+    it('a cancelled import leaves the "not installed" notice alone', async () => {
+      install({ status: NOT_INSTALLED });
+      const user = userEvent.setup();
+      await renderLoaded();
+      await user.click(screen.getByRole('button', { name: /Import model from folder/ }));
+      expect(screen.getByRole('button', { name: 'Download model' })).toBeInTheDocument();
+    });
+  });
+
+  describe('polling while a download runs', () => {
+    beforeEach(() => {
+      // Only the timers the panel polls with: userEvent and Testing Library keep real ones.
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('asks for the status about once a second until the model is installed, then stops', async () => {
+      const { system1 } = install({ status: DOWNLOADING });
+      await renderLoaded();
+      expect(screen.getByRole('button', { name: 'Downloading…' })).toBeDisabled();
+      const callsAtStart = system1.getStatus.mock.calls.length;
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(system1.getStatus.mock.calls.length).toBe(callsAtStart + 3);
+      expect(screen.getByRole('button', { name: 'Downloading…' })).toBeDisabled();
+
+      system1.getStatus.mockResolvedValue(STATUS);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(await screen.findByText('Model installed')).toBeInTheDocument();
+
+      const callsWhenDone = system1.getStatus.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      expect(system1.getStatus.mock.calls.length).toBe(callsWhenDone);
+    });
+
+    it('polls during a download started here, and shows a failure the poll reports', async () => {
+      const download = deferred<System1Status>();
+      const { system1 } = install({
+        status: NOT_INSTALLED,
+        downloadModel: vi.fn(() => download.promise),
+      });
+      await renderLoaded();
+      fireEvent.click(screen.getByRole('button', { name: 'Download model' }));
+      system1.getStatus.mockResolvedValue(DOWNLOADING);
+      const before = system1.getStatus.mock.calls.length;
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(system1.getStatus.mock.calls.length).toBeGreaterThanOrEqual(before + 2);
+
+      // The download fails: the invoke rejects and the status keeps the reason.
+      system1.getStatus.mockResolvedValue({ ...NOT_INSTALLED, modelError: 'network down' });
+      await act(async () => {
+        download.reject(new Error('network down'));
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(await screen.findByRole('alert')).toHaveTextContent(/network down/);
+      expect(screen.getByRole('button', { name: 'Retry download' })).toBeEnabled();
+    });
+
+    it('does not poll when nothing is downloading', async () => {
+      const { system1 } = install({ status: NOT_INSTALLED });
+      await renderLoaded();
+      const calls = system1.getStatus.mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+      expect(system1.getStatus.mock.calls.length).toBe(calls);
+    });
+  });
+
+  describe('installed', () => {
+    it('shows a small "Model installed" line and no download button', async () => {
+      install({ status: STATUS });
+      await renderLoaded();
+      expect(screen.getByText('Model installed')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Download model/ })).toBeNull();
+      expect(screen.queryByText(/huggingface\.co/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Rebuild index needs the model', () => {
+    it('is disabled and says why while the model is not installed', async () => {
+      const { embeddings } = install({ status: NOT_INSTALLED });
+      await renderLoaded();
+
+      const rebuild = await screen.findByRole('button', { name: 'Rebuild index' });
+      expect(rebuild).toBeDisabled();
+      expect(screen.getByTestId('rebuild-needs-model')).toHaveTextContent(
+        /needs the on-device model first/i,
+      );
+      expect(screen.getByTestId('rebuild-needs-model')).toHaveTextContent(/download/i);
+      fireEvent.click(rebuild);
+      expect(embeddings.backfill).not.toHaveBeenCalled();
+    });
+
+    it('is disabled while the model is still downloading', async () => {
+      install({ status: DOWNLOADING });
+      await renderLoaded();
+      expect(await screen.findByRole('button', { name: 'Rebuild index' })).toBeDisabled();
+    });
+
+    it('works again once the model is installed', async () => {
+      const { embeddings } = install({ status: NOT_INSTALLED });
+      const user = userEvent.setup();
+      await renderLoaded();
+      expect(await screen.findByRole('button', { name: 'Rebuild index' })).toBeDisabled();
+
+      await user.click(screen.getByRole('button', { name: 'Download model' }));
+
+      await screen.findByText('Model installed');
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Rebuild index' })).toBeEnabled(),
+      );
+      expect(screen.queryByTestId('rebuild-needs-model')).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Rebuild index' }));
+      expect(embeddings.backfill).toHaveBeenCalledWith({ limit: 5000 });
+    });
+
+    it('also explains it when the main process refuses (a stale panel)', async () => {
+      install({
+        status: STATUS,
+        backfill: vi
+          .fn()
+          .mockResolvedValue({ taskId: '', total: 0, status: 'model-not-installed' }),
+      });
+      const user = userEvent.setup();
+      await renderLoaded();
+
+      await user.click(await screen.findByRole('button', { name: 'Rebuild index' }));
+
+      expect(await screen.findByText(/needs the on-device model first/i)).toBeInTheDocument();
+      expect(screen.queryByText(/Indexing 0 emails/)).not.toBeInTheDocument();
+    });
   });
 });

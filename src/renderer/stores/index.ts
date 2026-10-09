@@ -242,6 +242,7 @@ declare global {
         getStatus: () => Promise<System1Status>;
         retrain: () => Promise<System1Status>;
         importModel: () => Promise<System1ModelImportResult>;
+        downloadModel: () => Promise<System1Status>;
       };
       embeddings: {
         getStats: () => Promise<{
@@ -250,7 +251,11 @@ declare global {
           coverage: number;
           model: string;
         }>;
-        backfill: (opts?: { limit?: number; accountId?: number }) => Promise<{ taskId: string; total: number }>;
+        backfill: (opts?: { limit?: number; accountId?: number }) => Promise<{
+          taskId: string;
+          total: number;
+          status: 'started' | 'model-not-installed';
+        }>;
       };
       llmCalls: {
         getStats: () => Promise<{

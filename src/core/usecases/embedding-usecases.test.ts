@@ -6,6 +6,7 @@ import {
   getEmbeddingIndexStats,
 } from './embedding-usecases';
 import { system1Text } from '../system1/text';
+import { EmbeddingModelNotInstalledError } from '../embedding-model';
 import type { Email } from '../domain';
 
 const mkEmail = (
@@ -150,6 +151,48 @@ describe('indexEmailForSearch', () => {
   });
 });
 
+describe('indexEmailForSearch while the on-device model is not installed', () => {
+  const notInstalled = () =>
+    vi.fn().mockRejectedValue(new EmbeddingModelNotInstalledError('Xenova/multilingual-e5-small'));
+
+  it('skips the email quietly: false, no throw, no warning', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const deps = mkDeps({ vectorSearch: { indexEmail: notInstalled() } });
+
+    await expect(indexEmailForSearch(deps as any)(1, 'Feed')).resolves.toBe(false);
+
+    expect(deps.vectorSearch.indexEmail).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('still reports any other failure', async () => {
+    const deps = mkDeps({
+      vectorSearch: { indexEmail: vi.fn().mockRejectedValue(new Error('disk full')) },
+    });
+    await expect(indexEmailForSearch(deps as any)(1, 'Feed')).rejects.toThrow('disk full');
+  });
+
+  it('indexClassifiedBatch counts those emails as neither indexed nor failed', async () => {
+    const deps = mkDeps({ vectorSearch: { indexEmail: notInstalled() } });
+    const result = await indexClassifiedBatch(deps as any)([
+      { emailId: 1, folder: 'Feed' },
+      { emailId: 2, folder: 'Feed' },
+    ]);
+    expect(result).toEqual({ indexed: 0, failed: 0 });
+  });
+
+  it('indexes again as soon as the model is there', async () => {
+    const indexEmail = vi
+      .fn()
+      .mockRejectedValueOnce(new EmbeddingModelNotInstalledError('m'))
+      .mockResolvedValue(undefined);
+    const deps = mkDeps({ vectorSearch: { indexEmail } });
+    expect(await indexEmailForSearch(deps as any)(1, 'Feed')).toBe(false);
+    expect(await indexEmailForSearch(deps as any)(1, 'Feed')).toBe(true);
+  });
+});
+
 describe('indexClassifiedBatch', () => {
   it('counts successes and failures independently', async () => {
     const indexSpy = vi
@@ -286,6 +329,75 @@ describe('backfillEmbeddings', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(indexSpy).toHaveBeenCalledTimes(3);
     expect(progress).toHaveBeenCalledTimes(3);
+    warn.mockRestore();
+  });
+});
+
+describe('backfillEmbeddings while the on-device model is not installed', () => {
+  const missingService = (state = { installed: false, downloading: false, error: null }) => ({
+    getModel: () => 'Xenova/multilingual-e5-small',
+    getDownloadState: () => state,
+  });
+
+  it('starts nothing and says the model is needed first', async () => {
+    const start = vi.fn();
+    const list = vi.fn(async () => [mkEmail(1), mkEmail(2)]);
+    const deps = mkDeps({
+      embeddingService: missingService(),
+      backgroundTasks: { start },
+      emails: { findById: async (id: number) => mkEmail(id), list, getBody: async () => null },
+    });
+
+    const result = await backfillEmbeddings(deps as any)({ limit: 100 });
+
+    expect(result).toEqual({ taskId: '', total: 0, status: 'model-not-installed' });
+    expect(start).not.toHaveBeenCalled();
+    expect(list).not.toHaveBeenCalled();
+    expect(deps.vectorSearch.indexEmail).not.toHaveBeenCalled();
+  });
+
+  it('says the same while a download is still running', async () => {
+    const deps = mkDeps({
+      embeddingService: missingService({ installed: false, downloading: true, error: null }),
+    });
+    const result = await backfillEmbeddings(deps as any)({ limit: 100 });
+    expect(result.status).toBe('model-not-installed');
+    expect(deps.backgroundTasks.start).not.toHaveBeenCalled();
+  });
+
+  it('starts normally once the model is installed', async () => {
+    const deps = mkDeps({
+      embeddingService: missingService({ installed: true, downloading: false, error: null }),
+    });
+    const result = await backfillEmbeddings(deps as any)({ limit: 100 });
+    expect(result).toMatchObject({ total: 3, status: 'started' });
+    expect(deps.backgroundTasks.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports "started" for an encoder that cannot say whether it is installed', async () => {
+    const deps = mkDeps();
+    expect((await backfillEmbeddings(deps as any)({ limit: 100 })).status).toBe('started');
+  });
+
+  it('a running backfill stops quietly when the model disappears, instead of one warning per email', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const indexEmail = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValue(new EmbeddingModelNotInstalledError('m'));
+    const deps = mkDeps({
+      backgroundTasks: {
+        start: async (_id: string, _total: number, fn: (cb: () => void) => Promise<void>) =>
+          fn(() => {}),
+      },
+      vectorSearch: { indexEmail },
+    });
+
+    await backfillEmbeddings(deps as any)({ limit: 100 });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(indexEmail).toHaveBeenCalledTimes(2); // 3 emails, the second one found no model
+    expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 });

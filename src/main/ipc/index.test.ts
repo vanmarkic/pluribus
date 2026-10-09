@@ -82,6 +82,27 @@ describe('registerIpcHandlers', () => {
     expect(getWindow).not.toHaveBeenCalled();
   });
 
+  it('hands the System 1 runtime actions (model import and download) to the System 1 handlers', async () => {
+    const { ipc, system1 } = await load();
+    const importModel = vi.fn();
+    const downloadModel = vi.fn();
+    ipc.registerIpcHandlers(() => null, container, { importModel, downloadModel });
+
+    expect(system1.setupSystem1Handlers).toHaveBeenCalledWith(
+      container,
+      expect.objectContaining({ importModel, downloadModel }),
+    );
+  });
+
+  it('wires neither System 1 action when the runtime provides none', async () => {
+    const { ipc, system1 } = await load();
+    ipc.registerIpcHandlers(() => null, container);
+
+    const options = vi.mocked(system1.setupSystem1Handlers).mock.calls[0]![1]!;
+    expect(options).not.toHaveProperty('importModel');
+    expect(options).not.toHaveProperty('downloadModel');
+  });
+
   it('throws a clear error when called a second time and registers nothing again', async () => {
     const { ipc, email, sync } = await load();
     ipc.registerIpcHandlers(() => null, container);

@@ -13,6 +13,14 @@ const ok =
 
 const noop = async () => {};
 
+const system1Status = (installed: boolean) => ({
+  embeddingModel: '',
+  heads: [],
+  modelInstalled: installed,
+  modelDownloading: false,
+  modelError: null,
+});
+
 export const mockMailApi = {
   emails: {
     list: ok([]),
@@ -55,10 +63,12 @@ export const mockMailApi = {
     }),
     consumePendingOpen: ok(false),
   },
+  // A fresh install: the on-device model is not installed until "Download model" is clicked.
   system1: {
-    getStatus: ok({ embeddingModel: '', heads: [] }),
-    retrain: ok({ embeddingModel: '', heads: [] }),
+    getStatus: ok(system1Status(false)),
+    retrain: ok(system1Status(false)),
     importModel: ok({ status: 'cancelled' }),
+    downloadModel: ok(system1Status(true)),
   },
   config: { get: ok(null), set: noop, getTriageFolders: ok([]) },
   on: () => {},

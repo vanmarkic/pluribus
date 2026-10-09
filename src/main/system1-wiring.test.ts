@@ -9,12 +9,19 @@ import * as os from 'os';
 import * as path from 'path';
 import { createSystem1Runtime, buildSystem1ClassifierDeps } from './system1-wiring';
 import { DEFAULT_SYSTEM1_SETTINGS, type System1Settings } from '../core/domain';
+import { EmbeddingModelNotInstalledError } from '../core/embedding-model';
 import type { System1Status } from '../core/system1/types';
 
 const mkLogger = () =>
   ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: vi.fn() }) as any;
 
-const STATUS: System1Status = { embeddingModel: 'Xenova/multilingual-e5-small', heads: [] };
+const STATUS: System1Status = {
+  embeddingModel: 'Xenova/multilingual-e5-small',
+  heads: [],
+  modelInstalled: true,
+  modelDownloading: false,
+  modelError: null,
+};
 
 describe('createSystem1Runtime', () => {
   let work: string;
@@ -32,7 +39,7 @@ describe('createSystem1Runtime', () => {
     overrides: {
       settings?: Partial<System1Settings>;
       env?: Record<string, string>;
-      embeddingService?: { reset?: () => void };
+      embeddingService?: { reset?: () => void; downloadModel?: () => Promise<void> };
     } = {},
   ) {
     const trainSystem1 = vi.fn(async () => STATUS);
@@ -90,6 +97,73 @@ describe('createSystem1Runtime', () => {
     runtime.stop();
     await vi.advanceTimersByTimeAsync(3 * 24 * 60 * 60 * 1000);
     expect(trainSystem1).toHaveBeenCalledTimes(1);
+  });
+
+  describe('downloadModel (the only way System 1 reaches the network)', () => {
+    it('runs the encoder download once and logs it without any mail data', async () => {
+      const downloadModel = vi.fn(async () => {});
+      const { runtime, logger } = make({ embeddingService: { downloadModel } });
+
+      await runtime.downloadModel();
+
+      expect(downloadModel).toHaveBeenCalledTimes(1);
+      const logged = JSON.stringify([...logger.info.mock.calls, ...logger.warn.mock.calls]);
+      expect(logged).toMatch(/system1\.model\.download\.start/);
+      expect(logged).toMatch(/system1\.model\.download\.done/);
+    });
+
+    it('passes the failure on (the renderer shows it) and logs a warning', async () => {
+      const downloadModel = vi.fn(async () => {
+        throw new Error('getaddrinfo ENOTFOUND huggingface.co');
+      });
+      const { runtime, logger } = make({ embeddingService: { downloadModel } });
+
+      await expect(runtime.downloadModel()).rejects.toThrow(/ENOTFOUND/);
+
+      expect(logger.warn).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(logger.warn.mock.calls)).toMatch(/system1\.model\.download\.failed/);
+    });
+
+    it('can be retried after a failure', async () => {
+      const downloadModel = vi
+        .fn<() => Promise<void>>()
+        .mockRejectedValueOnce(new Error('network down'))
+        .mockResolvedValue(undefined);
+      const { runtime } = make({ embeddingService: { downloadModel } });
+
+      await expect(runtime.downloadModel()).rejects.toThrow('network down');
+      await expect(runtime.downloadModel()).resolves.toBeUndefined();
+      expect(downloadModel).toHaveBeenCalledTimes(2);
+    });
+
+    it('fails clearly when the encoder cannot download', async () => {
+      const { runtime } = make();
+      await expect(runtime.downloadModel()).rejects.toThrow(/not available/i);
+    });
+
+    it('is never triggered by the runtime itself: not on start, not by the nightly retrain, not by an import', async () => {
+      const downloadModel = vi.fn(async () => {});
+      const reset = vi.fn();
+      const { runtime, trainSystem1 } = make({ embeddingService: { downloadModel, reset } });
+
+      runtime.start();
+      await vi.advanceTimersByTimeAsync(3 * 24 * 60 * 60 * 1000);
+      expect(trainSystem1.mock.calls.length).toBeGreaterThanOrEqual(2);
+      const src = path.join(work, 'download');
+      for (const rel of [
+        'config.json',
+        'tokenizer.json',
+        'tokenizer_config.json',
+        'onnx/model_quantized.onnx',
+      ]) {
+        fs.mkdirSync(path.dirname(path.join(src, rel)), { recursive: true });
+        fs.writeFileSync(path.join(src, rel), 'data');
+      }
+      await runtime.importModel(src);
+      runtime.stop();
+
+      expect(downloadModel).not.toHaveBeenCalled();
+    });
   });
 
   describe('importModel', () => {
@@ -190,6 +264,13 @@ describe('buildSystem1ClassifierDeps', () => {
     expect(deps.getSettings).toBe(getSettings);
     await deps.recordAudit({ questionId: 'folder', version: 2, agreed: true });
     expect(recordAudit).toHaveBeenCalledWith({ questionId: 'folder', version: 2, agreed: true });
+  });
+
+  it('lets "model not installed" through untouched, so the System 1 decorator can recognise it', async () => {
+    const { deps, embeddingService } = make();
+    const missing = new EmbeddingModelNotInstalledError(MODEL);
+    embeddingService.embed.mockRejectedValueOnce(missing);
+    await expect(deps.embed('From: <x.be>')).rejects.toBe(missing);
   });
 
   it('embeds with the local encoder and returns a Float32Array', async () => {

@@ -279,7 +279,10 @@ async function startApp(): Promise<void> {
   system1Runtime = system1;
 
   // Handlers look the window up per event; there is no window yet.
-  registerIpcHandlers(() => windowManager.getWindow(), c, { importModel: system1.importModel });
+  registerIpcHandlers(() => windowManager.getWindow(), c, {
+    importModel: system1.importModel,
+    downloadModel: system1.downloadModel,
+  });
   startOllamaInBackground(c);
 
   const runtime = createDigestRuntime({

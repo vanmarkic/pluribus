@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { withSystem1, type System1ClassifierDeps } from './system1-classifier';
+import { EmbeddingModelNotInstalledError } from '../../core/embedding-model';
 import { FEATURE_NAMES } from '../../core/system1/features';
 import { system1Text } from '../../core/system1/text';
 import {
@@ -366,6 +367,51 @@ describe('withSystem1: forced System 2, settings and errors', () => {
     expect(t.inner).toHaveBeenCalledTimes(1);
     expect(result.source).toBe('llm');
     expect(t.log).toHaveBeenCalledWith(expect.stringMatching(/error|fail/i), expect.anything());
+  });
+
+  it('escalates quietly while the on-device model is not installed (no log, no stored vector)', async () => {
+    const t = setup({
+      embed: async () => {
+        throw new EmbeddingModelNotInstalledError(MODEL);
+      },
+    });
+
+    for (let i = 0; i < 3; i++) {
+      const result = await t.classifier.classify(email, hint, []);
+      expect(result.source).toBe('llm');
+    }
+
+    expect(t.inner).toHaveBeenCalledTimes(3);
+    expect(t.embed).toHaveBeenCalledTimes(3);
+    expect(t.log).not.toHaveBeenCalled();
+    expect(t.storeEmbedding).not.toHaveBeenCalled();
+    expect(t.recordAudit).not.toHaveBeenCalled();
+  });
+
+  it('passes the options (body preview) to inner unchanged when the model is missing', async () => {
+    const t = setup({
+      embed: async () => {
+        throw new EmbeddingModelNotInstalledError(MODEL);
+      },
+    });
+    const opts = { bodyPreview: 'Bonjour' };
+    await t.classifier.classify(email, hint, [], opts);
+    expect(t.inner).toHaveBeenCalledWith(email, hint, [], opts);
+  });
+
+  it('keeps answering locally once the model is installed (no stale "missing" state)', async () => {
+    let installed = false;
+    const t = setup({
+      embed: async () => {
+        if (!installed) throw new EmbeddingModelNotInstalledError(MODEL);
+        return Float32Array.from([0.5, -0.5, 0.25, 0.1]);
+      },
+    });
+
+    expect((await t.classifier.classify(email, hint, [])).source).toBe('llm');
+    installed = true;
+    expect((await t.classifier.classify(email, hint, [])).source).toBe('system1');
+    expect(t.inner).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to inner when loading the heads fails', async () => {

@@ -13,11 +13,16 @@
  * System 1 scores at inference time, so the RAG corpus and the System 1
  * training data are one and the same. A vector the System 1 decorator already
  * stored for an (email, model) is never overwritten here (`keepVector`).
+ *
+ * The encoder model is only ever downloaded on the user's request. Until it is
+ * installed nothing here can be embedded: every path skips quietly (no error,
+ * no log line per email) and classification carries on with the LLM.
  */
 
 import * as crypto from 'crypto';
 import type { Deps } from '../ports';
 import type { Email } from '../domain';
+import { isEmbeddingModelNotInstalled } from '../embedding-model';
 import { system1Text } from '../system1/text';
 import { isHumanCandidate, makeBodyPreview } from './body-preview';
 
@@ -72,7 +77,13 @@ export const indexEmailForSearch =
     const text = await textToIndex(deps, email);
     if (text === null) return false;
 
-    await deps.vectorSearch.indexEmail(emailId, text, folder, isCorrection, { keepVector: true });
+    try {
+      await deps.vectorSearch.indexEmail(emailId, text, folder, isCorrection, { keepVector: true });
+    } catch (error) {
+      // No on-device model yet: nothing to index, and nothing worth reporting.
+      if (isEmbeddingModelNotInstalled(error)) return false;
+      throw error;
+    }
     return true;
   };
 
@@ -101,6 +112,17 @@ export const indexClassifiedBatch =
 
 type BackfillDeps = IndexDeps & Pick<Deps, 'classificationState' | 'backgroundTasks'>;
 
+export type BackfillEmbeddingsResult = {
+  /** Empty when nothing was started. */
+  taskId: string;
+  total: number;
+  /**
+   * `model-not-installed`: nothing was started because the on-device model has to
+   * be installed (Settings > Download model) before anything can be embedded.
+   */
+  status: 'started' | 'model-not-installed';
+};
+
 /**
  * Start a background backfill pass. Counts un-indexed emails up front so the
  * progress bar is accurate, then indexes them one-by-one in the task runner.
@@ -115,7 +137,13 @@ export const backfillEmbeddings =
   (deps: BackfillDeps) =>
   async (
     options: { limit?: number; accountId?: number } = {},
-  ): Promise<{ taskId: string; total: number }> => {
+  ): Promise<BackfillEmbeddingsResult> => {
+    // Embedding needs the model, which is only downloaded on request: say so rather than
+    // start a task that could only fail on every email.
+    if (deps.embeddingService.getDownloadState?.().installed === false) {
+      return { taskId: '', total: 0, status: 'model-not-installed' };
+    }
+
     const limit = options.limit ?? 5000;
     const model = deps.embeddingService.getModel();
 
@@ -143,6 +171,9 @@ export const backfillEmbeddings =
             });
           }
         } catch (err) {
+          // The model went away mid-run: no email can be embedded, so stop instead of warning
+          // once per email.
+          if (isEmbeddingModelNotInstalled(err)) return;
           // Keep going — one flaky embedding shouldn't nuke the whole backfill.
           console.warn(`Backfill: failed for email ${item.email.id}:`, err);
         }
@@ -150,7 +181,7 @@ export const backfillEmbeddings =
       }
     });
 
-    return { taskId, total: toIndex.length };
+    return { taskId, total: toIndex.length, status: 'started' };
   };
 
 /**

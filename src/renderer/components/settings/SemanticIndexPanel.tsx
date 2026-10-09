@@ -15,10 +15,13 @@ type Stats = {
  * the same local embeddings.
  */
 export function SemanticIndexPanel() {
+  // Building the index needs the on-device model, which the System 1 block below
+  // installs. It reports whether the model is there (null while that is unknown).
+  const [modelInstalled, setModelInstalled] = useState<boolean | null>(null);
   return (
     <div className="space-y-6">
-      <SemanticIndexStats />
-      <System1Block />
+      <SemanticIndexStats modelInstalled={modelInstalled} />
+      <System1Block onModelInstalledChange={setModelInstalled} />
     </div>
   );
 }
@@ -28,7 +31,11 @@ export function SemanticIndexPanel() {
  * mailbox has been embedded into the RAG corpus, and offers a backfill
  * button for existing inboxes.
  */
-function SemanticIndexStats() {
+const NEEDS_MODEL_FIRST =
+  'Rebuilding the index needs the on-device model first. Download it (or import it) in the System 1 section below.';
+
+function SemanticIndexStats({ modelInstalled }: { modelInstalled: boolean | null }) {
+  const needsModel = modelInstalled === false;
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [backfilling, setBackfilling] = useState(false);
@@ -55,7 +62,11 @@ function SemanticIndexStats() {
     setBackfilling(true);
     setBackfillInfo(null);
     try {
-      const { total } = await window.mailApi.embeddings.backfill({ limit: 5000 });
+      const { total, status } = await window.mailApi.embeddings.backfill({ limit: 5000 });
+      if (status === 'model-not-installed') {
+        setBackfillInfo(NEEDS_MODEL_FIRST);
+        return;
+      }
       setBackfillInfo(
         total === 0
           ? 'Nothing to index — every email already has an embedding.'
@@ -102,14 +113,14 @@ function SemanticIndexStats() {
         <button
           type="button"
           onClick={handleBackfill}
-          disabled={backfilling}
+          disabled={backfilling || needsModel}
           className="px-3 py-1.5 rounded-md text-sm border"
           style={{
             background: 'var(--color-bg)',
             borderColor: 'var(--color-border)',
             color: 'var(--color-text-primary)',
-            opacity: backfilling ? 0.5 : 1,
-            cursor: backfilling ? 'wait' : 'pointer',
+            opacity: backfilling || needsModel ? 0.5 : 1,
+            cursor: needsModel ? 'not-allowed' : backfilling ? 'wait' : 'pointer',
           }}
         >
           {backfilling ? 'Starting…' : 'Rebuild index'}
@@ -129,6 +140,16 @@ function SemanticIndexStats() {
           }}
         />
       </div>
+
+      {needsModel && (
+        <div
+          data-testid="rebuild-needs-model"
+          className="text-xs"
+          style={{ color: 'var(--color-text-secondary)' }}
+        >
+          {NEEDS_MODEL_FIRST}
+        </div>
+      )}
 
       {backfillInfo && (
         <div className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
@@ -214,12 +235,76 @@ function HeadRow({ head }: { head: System1HeadStatus }) {
 }
 
 /**
+ * Is the on-device model on this disk? It is never downloaded on its own: huggingface.co
+ * would see the user's IP address, so the download needs a click (or an import).
+ */
+function ModelState({
+  installed,
+  downloading,
+  error,
+  onDownload,
+}: {
+  installed: boolean;
+  downloading: boolean;
+  error: string | null;
+  onDownload: () => void;
+}) {
+  if (installed) {
+    return (
+      <div
+        data-testid="system1-model-state"
+        className="text-sm"
+        style={{ color: 'var(--color-text-secondary)' }}
+      >
+        Model installed
+      </div>
+    );
+  }
+
+  return (
+    <div
+      data-testid="system1-model-state"
+      className="rounded-md border p-3 space-y-2"
+      style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary)' }}
+    >
+      <div className="font-medium">On-device model not installed</div>
+      <div className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
+        {downloading
+          ? 'Downloading the on-device model (about 118 MB) from huggingface.co. This can take a few minutes; you can leave this page, the download keeps going.'
+          : 'The on-device model (about 118 MB) is not installed. Downloading it connects to huggingface.co; your IP address is visible to that site, no mail or mail data is sent. Until it is installed, System 1 is off and the LLM classifies every email. You can also install it without any network with "Import model from folder…" below.'}
+      </div>
+      {error && !downloading && (
+        <div role="alert" className="text-sm" style={{ color: 'var(--color-danger)' }}>
+          Couldn't download the model: {error}
+        </div>
+      )}
+      <div>
+        <button
+          type="button"
+          onClick={onDownload}
+          disabled={downloading}
+          aria-busy={downloading}
+          className="px-3 py-1.5 rounded-md text-sm border"
+          style={buttonStyle(downloading)}
+        >
+          {downloading ? 'Downloading…' : error ? 'Retry download' : 'Download model'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
  * System 1: a small model that runs on this device and answers the easy
  * emails itself (folder, needs a reply, importance). It starts in shadow mode
  * and is armed per question only when its measured disagreement with the LLM
  * is low enough. The enabled flag is the `system1` config section.
  */
-function System1Block() {
+function System1Block({
+  onModelInstalledChange,
+}: {
+  onModelInstalledChange: (installed: boolean | null) => void;
+}) {
   const [settings, setSettings] = useState<System1Settings>({ ...DEFAULT_SYSTEM1_SETTINGS });
   const [status, setStatus] = useState<System1Status | null>(null);
   const [statusFailed, setStatusFailed] = useState(false);
@@ -227,6 +312,9 @@ function System1Block() {
   const [info, setInfo] = useState<string | null>(null);
   const [retraining, setRetraining] = useState(false);
   const [importing, setImporting] = useState(false);
+  // The user's "Download model" request is pending (the call returns when it is done).
+  const [downloadRequested, setDownloadRequested] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -251,6 +339,32 @@ function System1Block() {
       alive = false;
     };
   }, []);
+
+  useEffect(() => {
+    onModelInstalledChange(status ? status.modelInstalled : null);
+  }, [status, onModelInstalledChange]);
+
+  // A download takes minutes and also runs when Settings was closed and reopened:
+  // follow it by asking for the status every second until it is over.
+  const downloading = downloadRequested || status?.modelDownloading === true;
+  useEffect(() => {
+    if (!downloading) return;
+    let alive = true;
+    const timer = setInterval(() => {
+      window.mailApi.system1.getStatus().then(
+        (next) => {
+          if (alive) setStatus(next);
+        },
+        () => {
+          // Transient: the next tick asks again.
+        },
+      );
+    }, 1000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [downloading]);
 
   const handleToggle = async (enabled: boolean) => {
     const previous = settings;
@@ -280,6 +394,30 @@ function System1Block() {
     }
   };
 
+  // Only ever started by a click on "Download model" / "Retry download": nothing here
+  // fetches the model on its own.
+  const handleDownload = async () => {
+    if (downloading) return;
+    setDownloadRequested(true);
+    setDownloadError(null);
+    setError(null);
+    setInfo(null);
+    try {
+      setStatus(await window.mailApi.system1.downloadModel());
+      setStatusFailed(false);
+    } catch (err) {
+      console.error('System 1 model download failed:', err);
+      setDownloadError(errorMessage(err, "Couldn't download the model."));
+      try {
+        setStatus(await window.mailApi.system1.getStatus());
+      } catch {
+        // Keep what is shown; the error above says what happened.
+      }
+    } finally {
+      setDownloadRequested(false);
+    }
+  };
+
   const handleImport = async () => {
     setImporting(true);
     setError(null);
@@ -290,6 +428,12 @@ function System1Block() {
         setInfo(
           `Installed ${result.model} (${formatMegabytes(result.bytes)}). It now runs fully offline.`,
         );
+        setDownloadError(null);
+        try {
+          setStatus(await window.mailApi.system1.getStatus());
+        } catch {
+          // The info line above already says it worked.
+        }
       }
     } catch (err) {
       console.error('System 1 model import failed:', err);
@@ -300,6 +444,7 @@ function System1Block() {
   };
 
   const modelId = status?.embeddingModel || settings.embeddingModel;
+  const modelError = downloadError ?? status?.modelError ?? null;
 
   return (
     <div className="space-y-3" style={{ color: 'var(--color-text-primary)' }}>
@@ -330,6 +475,15 @@ function System1Block() {
           className="h-5 w-5 shrink-0"
         />
       </div>
+
+      {status && (
+        <ModelState
+          installed={status.modelInstalled}
+          downloading={downloading}
+          error={modelError}
+          onDownload={() => void handleDownload()}
+        />
+      )}
 
       {status ? (
         <table
