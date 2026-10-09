@@ -46,7 +46,13 @@ jobs:
       #                    and electron-builder has no automatic ad-hoc fallback.
       #  - entitlements  : CI-only file (package.json points to build/*.plist, which is not in git).
       #  - --publish never: never try to upload to GitHub Releases from a PR.
+      #  - CSC_FOR_PULL_REQUEST: electron-builder skips ALL signing on PR builds (even with identity "-"),
+      #    which leaves a bundle with a broken signature that will not launch on Apple Silicon. The
+      #    warning it prints is about real certificates and secrets; this job has neither (ad-hoc
+      #    identity, `contents: read`, and fork PRs get no secrets under the `pull_request` trigger).
       - name: Build app and .dmg
+        env:
+          CSC_FOR_PULL_REQUEST: 'true'
         run: >
           npm run dist:dmg --
           --arm64
@@ -60,10 +66,16 @@ jobs:
       - name: Verify code signature
         run: |
           APP="$(find release -maxdepth 2 -name '*.app' -type d | head -n 1)"
+          [ -n "$APP" ] || { echo "::error::No .app bundle found under release/"; exit 1; }
           echo "App bundle: $APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
           codesign -d --verbose=2 "$APP" 2>&1 | grep -E 'Identifier|Signature|flags' || true
-          codesign -d --entitlements - "$APP" 2>&1 | grep -E 'allow-jit|allow-unsigned-executable-memory|disable-library-validation'
+          ENTITLEMENTS="$(codesign -d --entitlements :- "$APP" 2>/dev/null)"
+          echo "$ENTITLEMENTS"
+          for key in allow-jit allow-unsigned-executable-memory disable-library-validation; do
+            echo "$ENTITLEMENTS" | grep -q "com.apple.security.cs.$key" \
+              || { echo "::error::Entitlement com.apple.security.cs.$key is missing from the signed app"; exit 1; }
+          done
 
       - name: Upload .dmg
         uses: actions/upload-artifact@v4
