@@ -1,10 +1,12 @@
 name: CI
 
+# The default branch is `master`; `main` is kept so a future rename keeps CI working.
+# (These workflows used to list only `main`, so they never ran on pushes or PRs.)
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 
 # Cancel in-progress runs when a new commit lands on the same branch/PR.
 concurrency:

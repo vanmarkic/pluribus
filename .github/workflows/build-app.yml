@@ -4,9 +4,11 @@ name: Build macOS app
 # can be downloaded from a pull request run and tried without building locally.
 # It is not a release build: there is no Developer ID certificate in CI.
 
+# The default branch is `master`; `main` is kept so a future rename keeps CI working.
+# (These workflows used to list only `main`, so they never ran on pushes or PRs.)
 on:
   pull_request:
-    branches: [main]
+    branches: [main, master]
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
