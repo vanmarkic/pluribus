@@ -87,6 +87,8 @@ function makeHarness(opts: {
   settings?: Partial<DigestSettings>;
   unlocked?: string[];
   state?: Partial<DigestState>;
+  /** The system language tag reported by digestConfig.getLocale; omitted when undefined. */
+  locale?: string;
 }) {
   const accounts = opts.accounts ?? [mkAccount(1, 'me@example.com')];
   const unlocked = new Set(opts.unlocked ?? []);
@@ -128,6 +130,7 @@ function makeHarness(opts: {
       setState: (s: DigestState) => {
         state = { ...s, pendingEmailAccountIds: [...s.pendingEmailAccountIds] };
       },
+      ...(opts.locale !== undefined ? { getLocale: () => opts.locale as string } : {}),
     },
     replyCandidates: {},
     notifier: { isSupported: () => true, notify },
@@ -488,7 +491,7 @@ describe('runDailyDigest', () => {
       await run(h);
       expect(h.notify).toHaveBeenCalledWith({
         title: 'Needs your reply',
-        body: '4 important emails are waiting for your reply',
+        body: '4 emails are waiting for your reply',
       });
       const arg = JSON.stringify(h.notify.mock.calls[0]);
       expect(arg).not.toContain('Top one');
@@ -498,7 +501,7 @@ describe('runDailyDigest', () => {
     it('uses the singular for one email', async () => {
       const h = makeHarness({});
       await run(h);
-      expect(notification(h).body).toBe('1 important email is waiting for your reply');
+      expect(notification(h).body).toBe('1 email is waiting for your reply');
     });
 
     it('showSubjects lists at most 3 "Sender — Subject" lines, best first', async () => {
@@ -518,7 +521,7 @@ describe('runDailyDigest', () => {
       m.find.mockImplementation(async () => mkResult(mkAccount(1, 'me@example.com'), []));
       const h = makeHarness({ settings: { showSubjects: true } });
       await run(h, 'test');
-      expect(notification(h).body).toBe('0 important emails are waiting for your reply');
+      expect(notification(h).body).toBe('No emails are waiting for your reply');
     });
 
     it('aggregates the count across accounts', async () => {
@@ -533,7 +536,7 @@ describe('runDailyDigest', () => {
       const h = makeHarness({ accounts: [a, b] });
       const res = await run(h);
       expect(res.totalItems).toBe(4);
-      expect(notification(h).body).toBe('4 important emails are waiting for your reply');
+      expect(notification(h).body).toBe('4 emails are waiting for your reply');
       expect(h.notify).toHaveBeenCalledTimes(1);
     });
 
@@ -683,15 +686,14 @@ describe('renderDigestEmail', () => {
     expect(two.subject).toBe('[Pluribus] 2 emails need your reply');
   });
 
-  it('escapes HTML in subject, sender name, address, reason and account email', () => {
+  it('escapes HTML in subject, sender name, address and account email', () => {
     const evil = '<script>alert(1)</script>';
     const html = renderDigestEmail(
       {
         ...mkResult(account, [
           mkItem({
-            subject: `Hello ${evil}`,
+            subject: `Hello ${evil} & "quoted" 'single'`,
             from: { address: `"><img src=x onerror=1>@evil.test`, name: evil },
-            reason: `${evil} & "quoted" 'single'`,
           }),
         ]),
         accountEmail: `me+${evil}@example.com`,
@@ -716,10 +718,10 @@ describe('renderDigestEmail', () => {
     expect(text).toContain('Line1 Injected: header More');
   });
 
-  it('contains sender, subject, age, importance label and reason for every item', () => {
+  it('contains sender, subject, age, importance label and a reason for every item', () => {
     const r = renderDigestEmail(
       mkResult(account, [
-        mkItem({ importance: 4, reason: 'Deadline mentioned', ageHours: 72 }),
+        mkItem({ importance: 4, ageHours: 72, basis: 'signal', signalSource: 'system2' }),
         mkItem({
           emailId: 2,
           from: { address: 'bob@acme.test', name: null },
@@ -727,7 +729,8 @@ describe('renderDigestEmail', () => {
           date: new Date('2026-03-10T05:00:00.000Z'),
           ageHours: 3,
           importance: 2,
-          reason: 'Direct question to you',
+          basis: 'heuristic',
+          signalSource: null,
         }),
       ]),
       { now: NOW },
@@ -738,16 +741,33 @@ describe('renderDigestEmail', () => {
       expect(part).toContain('Contract renewal');
       expect(part).toContain('3 days ago');
       expect(part).toContain('Critical');
-      expect(part).toContain('Deadline mentioned');
+      expect(part).toContain('Flagged by the AI model');
       expect(part).toContain('bob@acme.test');
       expect(part).toContain('Quick question');
       expect(part).toContain('3 hours ago');
       expect(part).toContain('Normal');
-      expect(part).toContain('Direct question to you');
+      expect(part).toContain('Looks like a question for you');
       expect(part).toContain(
-        'Generated on your device by Pluribus. Turn off in Settings → Digest.',
+        'Generated on your device by Pluribus. Turn off in Settings → Daily digest.',
       );
     }
+  });
+
+  it('builds the reason from structured fields and ignores the stored UI reason text', () => {
+    const r = renderDigestEmail(
+      mkResult(account, [mkItem({ reason: 'STORED-UI-REASON', signalSource: 'user' })]),
+      { now: NOW },
+    );
+    expect(r.text).not.toContain('STORED-UI-REASON');
+    expect(r.html).not.toContain('STORED-UI-REASON');
+    expect(r.text).toContain('You marked this as needing a reply');
+  });
+
+  it('does not repeat the importance label inside the reason line', () => {
+    const { text } = renderDigestEmail(mkResult(account, [mkItem({ importance: 3 })]), {
+      now: NOW,
+    });
+    expect(text.match(/Important/g)).toHaveLength(1);
   });
 
   it('never includes body text or snippets even if the data carries them', () => {
@@ -777,9 +797,9 @@ describe('renderDigestEmail', () => {
 
   it('renders a friendly message when there are no items (test digest)', () => {
     const r = renderDigestEmail(mkResult(account, []), { now: NOW });
-    expect(r.subject).toBe('[Pluribus] 0 emails need your reply');
-    expect(r.text).toContain('No important emails are waiting for your reply');
-    expect(r.html).toContain('No important emails are waiting for your reply');
+    expect(r.subject).toBe('[Pluribus] No emails need your reply');
+    expect(r.text).toContain('No emails are waiting for your reply');
+    expect(r.html).toContain('No emails are waiting for your reply');
   });
 
   it('formats ages: hours, singular, days, and falls back to ageHours for an invalid date', () => {
@@ -791,5 +811,161 @@ describe('renderDigestEmail', () => {
     expect(at('2026-03-09T08:00:00.000Z')).toContain('1 day ago');
     expect(at('2026-03-01T08:00:00.000Z')).toContain('9 days ago');
     expect(at('not-a-date', { ageHours: 50 })).toContain('2 days ago');
+  });
+});
+
+// ============================================
+// Language: follows the system language (French or English)
+// ============================================
+
+describe('digest language', () => {
+  const account = mkAccount(1, 'me@example.com');
+  const draftOf = (h: Harness) =>
+    h.send.mock.calls[0]?.[2] as { to: string[]; subject: string; text: string; html: string };
+
+  const twoItems = () => [
+    mkItem({ importance: 4, ageHours: 72, signalSource: 'system2' }),
+    mkItem({
+      emailId: 2,
+      from: { address: 'bob@acme.test', name: 'Bob Dupont' },
+      subject: 'Devis à valider',
+      date: new Date('2026-03-06T08:00:00.000Z'), // 4 days before NOW; age is read from the date
+      ageHours: 96,
+      importance: 3,
+      basis: 'signal',
+      signalSource: 'system1',
+    }),
+  ];
+
+  it.each(['fr', 'fr-BE', 'fr_FR', 'FR-ch'])(
+    'is French for the system language %s',
+    async (tag) => {
+      m.find.mockImplementation(async () => mkResult(account, twoItems()));
+      const h = makeHarness({ locale: tag, unlocked: ['me@example.com'] });
+      await run(h);
+
+      expect(notification(h)).toEqual({
+        title: 'Réponses en attente',
+        body: '2 e-mails attendent votre réponse',
+      });
+      expect(draftOf(h).subject).toBe('[Pluribus] 2 e-mails attendent votre réponse');
+    },
+  );
+
+  it.each([['en-US'], ['en'], ['de-DE'], ['es'], ['']])(
+    'is English for the system language "%s"',
+    async (tag) => {
+      m.find.mockImplementation(async () => mkResult(account, twoItems()));
+      const h = makeHarness({ locale: tag, unlocked: ['me@example.com'] });
+      await run(h);
+
+      expect(notification(h).title).toBe('Needs your reply');
+      expect(notification(h).body).toBe('2 emails are waiting for your reply');
+      expect(draftOf(h).subject).toBe('[Pluribus] 2 emails need your reply');
+    },
+  );
+
+  it('is English when the config store reports no language at all', async () => {
+    m.find.mockImplementation(async () => mkResult(account, twoItems()));
+    const h = makeHarness({ unlocked: ['me@example.com'] });
+    await run(h);
+    expect(notification(h).title).toBe('Needs your reply');
+    expect(draftOf(h).subject).toBe('[Pluribus] 2 emails need your reply');
+  });
+
+  it('writes the whole French email: ages, importance, reasons, footer and html lang', async () => {
+    m.find.mockImplementation(async () => mkResult(account, twoItems()));
+    const h = makeHarness({ locale: 'fr-BE', unlocked: ['me@example.com'] });
+    await run(h);
+
+    const { text, html } = draftOf(h);
+    for (const part of [text, html]) {
+      expect(part).toContain('il y a 3 jours');
+      expect(part).toContain('il y a 4 jours');
+      expect(part).toContain('Critique');
+      expect(part).toContain('Important');
+      expect(part).toContain('Repéré par le modèle d’IA');
+      expect(part).toContain('Repéré par le modèle sur l’appareil');
+      expect(part).toContain('Pour le désactiver : Settings → Daily digest.');
+      expect(part).toContain('Réponses en attente (2)');
+    }
+    expect(html).toContain('<html lang="fr">');
+    expect(html).not.toMatch(/\bago\b|Flagged by|Needs your reply/);
+    expect(text).not.toMatch(/\bago\b|Flagged by|Needs your reply/);
+  });
+
+  it('keeps the English email lang attribute', async () => {
+    m.find.mockImplementation(async () => mkResult(account, twoItems()));
+    const h = makeHarness({ unlocked: ['me@example.com'] });
+    await run(h);
+    expect(draftOf(h).html).toContain('<html lang="en">');
+  });
+
+  it('prefixes a French test digest with [test] and says nothing is waiting', async () => {
+    m.find.mockImplementation(async () => mkResult(account, []));
+    const h = makeHarness({ locale: 'fr', unlocked: ['me@example.com'] });
+    await run(h, 'test');
+
+    const draft = draftOf(h);
+    expect(draft.subject).toBe('[test] [Pluribus] Aucun e-mail n’attend votre réponse');
+    expect(draft.text).toContain('Aucun e-mail n’attend votre réponse.');
+    expect(notification(h).body).toBe('Aucun e-mail n’attend votre réponse');
+  });
+
+  it('uses the singular in French for one email', async () => {
+    m.find.mockImplementation(async () => mkResult(account, [mkItem()]));
+    const h = makeHarness({ locale: 'fr', unlocked: ['me@example.com'] });
+    await run(h);
+    expect(notification(h).body).toBe('1 e-mail attend votre réponse');
+    expect(draftOf(h).subject).toBe('[Pluribus] 1 e-mail attend votre réponse');
+  });
+
+  it('shows sender and subject lines in French mode too, untranslated', async () => {
+    m.find.mockImplementation(async () => mkResult(account, twoItems()));
+    const h = makeHarness({ locale: 'fr', settings: { showSubjects: true } });
+    await run(h);
+    expect(notification(h).title).toBe('Réponses en attente');
+    expect(notification(h).body).toContain('Bob Dupont — Devis à valider');
+  });
+
+  it('still escapes everything and leaks no body text in French', () => {
+    const evil = '<script>alert(1)</script>';
+    const r = renderDigestEmail(
+      mkResult(account, [
+        {
+          ...mkItem({ subject: `Salut ${evil}`, from: { address: 'x@y.test', name: evil } }),
+          snippet: 'SECRET-SNIPPET',
+          body: 'SECRET-BODY',
+        } as ForgottenReply,
+      ]),
+      { now: NOW, locale: 'fr' },
+    );
+    expect(r.html).not.toContain('<script');
+    expect(r.html).toContain('&lt;script&gt;');
+    for (const part of [r.subject, r.text, r.html]) expect(part).not.toContain('SECRET');
+  });
+
+  it('sends a deferred digest in the system language', async () => {
+    m.find.mockImplementation(async () => mkResult(account, [mkItem()]));
+    const h = makeHarness({
+      locale: 'fr',
+      unlocked: ['me@example.com'],
+      state: { pendingEmailAccountIds: [1] },
+    });
+    expect(await sendPendingDigestEmails(h.deps)({ now: NOW })).toBe(1);
+    expect(draftOf(h).subject).toBe('[Pluribus] 1 e-mail attend votre réponse');
+  });
+
+  it('formats French ages: under an hour, singular and plural hours and days', () => {
+    const at = (iso: string) =>
+      renderDigestEmail(mkResult(account, [mkItem({ date: new Date(iso) })]), {
+        now: NOW,
+        locale: 'fr',
+      }).text;
+    expect(at('2026-03-10T07:30:00.000Z')).toContain('il y a moins d’une heure');
+    expect(at('2026-03-10T07:00:00.000Z')).toContain('il y a 1 heure');
+    expect(at('2026-03-10T03:00:00.000Z')).toContain('il y a 5 heures');
+    expect(at('2026-03-09T08:00:00.000Z')).toContain('il y a 1 jour');
+    expect(at('2026-03-06T08:00:00.000Z')).toContain('il y a 4 jours');
   });
 });

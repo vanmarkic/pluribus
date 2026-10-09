@@ -81,6 +81,7 @@ import { createPriorRepliesCounter } from '../adapters/embeddings/sender-history
 import { createVectorSearch } from '../adapters/embeddings/vector-search';
 import { readSystem1Settings } from '../core/system1/settings';
 import { composeTriageClassifier } from './triage-composition';
+import { pickSystemLocale } from './system-locale';
 import { createSecureStorage } from '../adapters/keychain';
 import { createNotifier } from '../adapters/notifications';
 import { createMailSender } from '../adapters/smtp';
@@ -629,6 +630,8 @@ export function createContainer(): Container {
     getSettings: () => ({ ...DEFAULT_DIGEST_SETTINGS, ...configStore.get('digest') }),
     getState: () => ({ ...DIGEST_STATE_DEFAULTS, ...configStore.get('digestState') }),
     setState: (state) => configStore.set('digestState', state),
+    // The digest notification and email follow the system language (French or English).
+    getLocale: () => pickSystemLocale(app),
   };
   // The notification click opens the Needs-your-reply view, but the digest
   // runtime that implements that is built after the container. Bind it late.

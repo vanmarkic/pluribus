@@ -852,6 +852,12 @@ export type DigestConfigStore = {
   getSettings: () => DigestSettings;
   getState: () => DigestState;
   setState: (state: DigestState) => void;
+  /**
+   * The user's system language tag (e.g. 'fr-BE', 'en-US'). The digest notification
+   * and email are French when it starts with `fr`, English otherwise. Optional so
+   * older mocks keep working; without it the digest is in English.
+   */
+  getLocale?: () => string;
 };
 
 // ============================================

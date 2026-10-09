@@ -11,6 +11,10 @@
  * - The email goes out through `sender.send` directly (not the `sendEmail` use
  *   case), so nothing is appended to the Sent folder.
  * - Neither the notification nor the email ever contains body text or snippets.
+ *
+ * Language: the notification and the email follow the system language (French
+ * or English, see core/digest-i18n.ts). The locale is read from
+ * `digestConfig.getLocale`, which is optional; without it everything is English.
  */
 
 import type { Deps, SmtpConfig } from '../ports';
@@ -22,8 +26,8 @@ import type {
   DigestTrigger,
   ForgottenReply,
   ForgottenRepliesResult,
-  ImportanceLevel,
 } from '../domain';
+import { digestStrings, resolveDigestLocale, type DigestLocale } from '../digest-i18n';
 import { findForgottenReplies } from './reply-usecases';
 import { syncMailbox } from './sync-usecases';
 
@@ -42,7 +46,6 @@ type DigestDeps = Pick<
   | 'folders'
 >;
 
-const NOTIFICATION_TITLE = 'Needs your reply';
 const MAX_NOTIFICATION_LINES = 3;
 const MAX_NOTIFICATION_LINE_LENGTH = 100;
 const HOUR_MS = 60 * 60 * 1000;
@@ -93,16 +96,21 @@ const addPending = (deps: Pick<Deps, 'digestConfig'>, accountId: number): void =
 const removePending = (deps: Pick<Deps, 'digestConfig'>, accountId: number): void =>
   updatePending(deps, (ids) => ids.filter((id) => id !== accountId));
 
+/** The language of the digest: the system language when French, English otherwise. */
+const localeOf = (deps: Pick<Deps, 'digestConfig'>): DigestLocale =>
+  resolveDigestLocale(deps.digestConfig.getLocale?.());
+
 const digestDraft = (
   result: ForgottenRepliesResult,
   account: Account,
   now: Date,
   isTest: boolean,
+  locale: DigestLocale,
 ) => {
-  const rendered = renderDigestEmail(result, { now });
+  const rendered = renderDigestEmail(result, { now, locale });
   return {
     to: [account.email],
-    subject: isTest ? `[test] ${rendered.subject}` : rendered.subject,
+    subject: isTest ? `${digestStrings(locale).testPrefix} ${rendered.subject}` : rendered.subject,
     text: rendered.text,
     html: rendered.html,
   };
@@ -112,6 +120,7 @@ function notificationBody(
   results: ForgottenRepliesResult[],
   totalItems: number,
   showSubjects: boolean,
+  locale: DigestLocale,
 ): string {
   if (showSubjects && totalItems > 0) {
     return results
@@ -126,9 +135,7 @@ function notificationBody(
       )
       .join('\n');
   }
-  return totalItems === 1
-    ? '1 important email is waiting for your reply'
-    : `${totalItems} important emails are waiting for your reply`;
+  return digestStrings(locale).notificationCount(totalItems);
 }
 
 // ============================================
@@ -181,9 +188,10 @@ export const runDailyDigest =
     if ((totalItems > 0 || trigger === 'test') && deps.notifier.isSupported()) {
       try {
         // No onClick: the notifier's default handler opens the Needs-your-reply view.
+        const locale = localeOf(deps);
         deps.notifier.notify({
-          title: NOTIFICATION_TITLE,
-          body: notificationBody(results, totalItems, settings.showSubjects),
+          title: digestStrings(locale).notificationTitle,
+          body: notificationBody(results, totalItems, settings.showSubjects, locale),
         });
         notified = true;
       } catch (err) {
@@ -239,7 +247,7 @@ async function digestAccount(
         await deps.sender.send(
           account.email,
           smtpConfigFor(account),
-          digestDraft(result, account, now, trigger === 'test'),
+          digestDraft(result, account, now, trigger === 'test', localeOf(deps)),
         );
         email = 'sent';
         // A fresh digest supersedes one that was deferred earlier.
@@ -309,7 +317,7 @@ export const sendPendingDigestEmails =
         await deps.sender.send(
           account.email,
           smtpConfigFor(account),
-          digestDraft(result, account, now, false),
+          digestDraft(result, account, now, false, localeOf(deps)),
         );
         removePending(deps, accountId);
         sent++;
@@ -326,16 +334,6 @@ export const sendPendingDigestEmails =
 // Rendering
 // ============================================
 
-const IMPORTANCE_LABELS: Record<ImportanceLevel, string> = {
-  1: 'Low',
-  2: 'Normal',
-  3: 'Important',
-  4: 'Critical',
-};
-
-const FOOTER = 'Generated on your device by Pluribus. Turn off in Settings → Digest.';
-const EMPTY_MESSAGE = 'No important emails are waiting for your reply.';
-
 const escapeHtml = (value: string): string =>
   value
     .replace(/&/g, '&amp;')
@@ -344,47 +342,45 @@ const escapeHtml = (value: string): string =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
-const plural = (n: number, unit: string): string => `${n} ${unit}${n === 1 ? '' : 's'}`;
-
-/** "3 days ago" / "5 hours ago" / "less than an hour ago". */
-function formatAge(item: ForgottenReply, now: Date): string {
+/** Whole hours the mail has waited, measured from its date when that is usable. */
+function ageInHours(item: ForgottenReply, now: Date): number {
   const fromDate = now.getTime() - item.date.getTime();
   const ms = Number.isFinite(fromDate) ? fromDate : item.ageHours * HOUR_MS;
-  const hours = Math.max(0, Math.floor(ms / HOUR_MS));
-  if (hours < 1) return 'less than an hour ago';
-  if (hours < 24) return `${plural(hours, 'hour')} ago`;
-  return `${plural(Math.floor(hours / 24), 'day')} ago`;
+  return Math.max(0, Math.floor(ms / HOUR_MS));
 }
 
 /**
  * Render the digest email. Pure: never includes body text or snippets, and
  * HTML-escapes every interpolated value. Inline styles only, no remote content.
+ * `locale` defaults to English.
  */
 export const renderDigestEmail = (
   result: ForgottenRepliesResult,
-  opts: { now: Date },
+  opts: { now: Date; locale?: DigestLocale },
 ): { subject: string; text: string; html: string } => {
+  const strings = digestStrings(opts.locale ?? 'en');
   const { items } = result;
   const count = items.length;
-  const subject = `[Pluribus] ${count} ${count === 1 ? 'email needs' : 'emails need'} your reply`;
+  const subject = strings.emailSubject(count);
 
   const rows = items.map((item) => {
     const senderName = item.from.name && item.from.name.trim() ? oneLine(item.from.name) : null;
     return {
       sender: senderName ?? oneLine(item.from.address),
       address: senderName ? oneLine(item.from.address) : null,
-      subject: oneLine(item.subject) || '(no subject)',
-      age: formatAge(item, opts.now),
-      importance: IMPORTANCE_LABELS[item.importance] ?? IMPORTANCE_LABELS[2],
-      reason: oneLine(item.reason),
+      subject: oneLine(item.subject) || strings.noSubject,
+      age: strings.age(ageInHours(item, opts.now)),
+      importance: strings.importance[item.importance] ?? strings.importance[2],
+      // Built from structured fields, not from item.reason (which is English UI text).
+      reason: strings.reason(item),
     };
   });
   const account = oneLine(result.accountEmail);
 
   // ---- plain text ----
-  const textLines: string[] = [`Needs your reply (${count}) — ${account}`, ''];
+  const textLines: string[] = [`${strings.heading(count)} — ${account}`, ''];
   if (rows.length === 0) {
-    textLines.push(EMPTY_MESSAGE, '');
+    textLines.push(strings.empty, '');
   }
   rows.forEach((row, i) => {
     textLines.push(
@@ -394,7 +390,7 @@ export const renderDigestEmail = (
       '',
     );
   });
-  textLines.push('--', FOOTER, '');
+  textLines.push('--', strings.footer, '');
   const text = textLines.join('\n');
 
   // ---- HTML ----
@@ -412,17 +408,19 @@ export const renderDigestEmail = (
     )
     .join('');
   const emptyHtml =
-    rows.length === 0 ? `<p style="font-size:14px;color:#374151;">${EMPTY_MESSAGE}</p>` : '';
+    rows.length === 0
+      ? `<p style="font-size:14px;color:#374151;">${escapeHtml(strings.empty)}</p>`
+      : '';
 
   const html =
-    `<!doctype html><html><head><meta charset="utf-8"></head>` +
+    `<!doctype html><html lang="${strings.htmlLang}"><head><meta charset="utf-8"></head>` +
     `<body style="margin:0;padding:24px;background:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">` +
     `<div style="max-width:560px;margin:0 auto;">` +
-    `<h1 style="font-size:18px;color:#111827;margin:0 0 4px;">Needs your reply (${count})</h1>` +
+    `<h1 style="font-size:18px;color:#111827;margin:0 0 4px;">${escapeHtml(strings.heading(count))}</h1>` +
     `<div style="font-size:13px;color:#6b7280;margin-bottom:12px;">${escapeHtml(account)}</div>` +
     emptyHtml +
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">${itemHtml}</table>` +
-    `<p style="font-size:12px;color:#6b7280;margin-top:20px;border-top:1px solid #e5e7eb;padding-top:12px;">${escapeHtml(FOOTER)}</p>` +
+    `<p style="font-size:12px;color:#6b7280;margin-top:20px;border-top:1px solid #e5e7eb;padding-top:12px;">${escapeHtml(strings.footer)}</p>` +
     `</div></body></html>`;
 
   return { subject, text, html };
