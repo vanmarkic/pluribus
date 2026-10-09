@@ -9,6 +9,9 @@
  *
  * The configuration is read on every call (settings can change at any time),
  * and an unreadable configuration counts as "no consent".
+ *
+ * The stored snippet is body-derived too (first characters of a viewed body),
+ * so it is blanked under the same rule.
  */
 
 import type { LLMConfig, TriageClassifier } from '../../core/ports';
@@ -28,12 +31,15 @@ export function withBodyPrivacy(
 ): TriageClassifier {
   return {
     async classify(email, patternHint, examples, opts) {
-      if (opts === undefined) return inner.classify(email, patternHint, examples);
-      if (opts.bodyPreview === undefined || mayShareBody(getLLMConfig)) {
-        return inner.classify(email, patternHint, examples, opts);
+      if (mayShareBody(getLLMConfig)) {
+        return opts === undefined
+          ? inner.classify(email, patternHint, examples)
+          : inner.classify(email, patternHint, examples, opts);
       }
+      const redacted = email.snippet ? { ...email, snippet: '' } : email;
+      if (opts === undefined) return inner.classify(redacted, patternHint, examples);
       const { bodyPreview: _withheld, ...rest } = opts;
-      return inner.classify(email, patternHint, examples, rest);
+      return inner.classify(redacted, patternHint, examples, rest);
     },
   };
 }

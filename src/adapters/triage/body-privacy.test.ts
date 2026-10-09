@@ -90,6 +90,22 @@ describe('withBodyPrivacy', () => {
     expect((classify.mock.calls[0] as unknown[])[3]).toEqual({ forceSystem2: true });
   });
 
+  it('blanks the body-derived snippet for cloud providers without the opt-in', async () => {
+    const withSnippet = { ...email, snippet: 'first lines of a viewed body' } as Email;
+
+    const cloud = makeInner();
+    await withBodyPrivacy(cloud.inner, () => config()).classify(withSnippet, hint, []);
+    expect((cloud.classify.mock.calls[0] as unknown[])[0]).toMatchObject({ snippet: '' });
+
+    const local = makeInner();
+    await withBodyPrivacy(local.inner, () => config({ provider: 'ollama' })).classify(
+      withSnippet,
+      hint,
+      [],
+    );
+    expect((local.classify.mock.calls[0] as unknown[])[0]).toBe(withSnippet);
+  });
+
   it('passes calls without options straight through', async () => {
     const { inner, classify } = makeInner();
     const getLLMConfig = vi.fn(() => config());
