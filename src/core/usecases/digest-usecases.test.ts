@@ -90,7 +90,14 @@ function makeHarness(opts: {
 }) {
   const accounts = opts.accounts ?? [mkAccount(1, 'me@example.com')];
   const unlocked = new Set(opts.unlocked ?? []);
-  const settings: DigestSettings = { ...DEFAULT_DIGEST_SETTINGS, ...opts.settings };
+  // Conservative baseline: no Touch ID prompt and a count-only notification. Tests that rely on
+  // the opposite say so explicitly; the product defaults have their own test ("product defaults").
+  const settings: DigestSettings = {
+    ...DEFAULT_DIGEST_SETTINGS,
+    allowBiometricPrompt: false,
+    showSubjects: false,
+    ...opts.settings,
+  };
   let state: DigestState = {
     lastRunDate: '2026-03-09',
     pendingEmailAccountIds: [],
@@ -176,6 +183,21 @@ afterEach(() => {
 // ============================================
 // runDailyDigest
 // ============================================
+
+describe('product defaults', () => {
+  it('asks for Touch ID at the scheduled run, shows senders and subjects, starts at login', () => {
+    expect(DEFAULT_DIGEST_SETTINGS).toMatchObject({
+      enabled: true,
+      time: '09:00',
+      graceHours: 96,
+      minImportance: 2,
+      emailToSelf: true,
+      showSubjects: true,
+      allowBiometricPrompt: true,
+      launchAtLogin: true,
+    });
+  });
+});
 
 describe('runDailyDigest', () => {
   describe('locked credentials', () => {
@@ -460,7 +482,7 @@ describe('runDailyDigest', () => {
       }),
     ];
 
-    it('is count-only by default (no senders, subjects or body text)', async () => {
+    it('is count-only when showSubjects is off (no senders, subjects or body text)', async () => {
       m.find.mockImplementation(async () => mkResult(mkAccount(1, 'me@example.com'), items));
       const h = makeHarness({});
       await run(h);

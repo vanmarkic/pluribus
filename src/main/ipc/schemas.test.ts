@@ -118,10 +118,25 @@ describe('DigestSettingsInput', () => {
     graceHours: 24,
     lookbackDays: 14,
     maxItems: 10,
+    minImportance: 2,
     emailToSelf: true,
     showSubjects: false,
     allowBiometricPrompt: false,
+    launchAtLogin: true,
   };
+
+  it('validates minImportance as 2, 3 or 4', () => {
+    for (const ok of [2, 3, 4]) {
+      expect(parseInput(DigestSettingsInput, { minImportance: ok }, 'digest')).toEqual({
+        minImportance: ok,
+      });
+    }
+    for (const bad of [0, 1, 5, 2.5, '3', null]) {
+      expect(() => parseInput(DigestSettingsInput, { minImportance: bad }, 'digest')).toThrow(
+        /minImportance/,
+      );
+    }
+  });
 
   it('accepts a full settings object', () => {
     expect(parseInput(DigestSettingsInput, valid, 'digest')).toEqual(valid);
@@ -165,7 +180,13 @@ describe('DigestSettingsInput', () => {
   });
 
   it('requires real booleans', () => {
-    for (const key of ['enabled', 'emailToSelf', 'showSubjects', 'allowBiometricPrompt']) {
+    for (const key of [
+      'enabled',
+      'emailToSelf',
+      'showSubjects',
+      'allowBiometricPrompt',
+      'launchAtLogin',
+    ]) {
       expect(() => parseInput(DigestSettingsInput, { [key]: 'yes' }, 'digest')).toThrow(
         new RegExp(key),
       );

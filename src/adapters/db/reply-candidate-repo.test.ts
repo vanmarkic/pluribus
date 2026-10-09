@@ -458,7 +458,9 @@ describe('findForgottenReplies on a real database', () => {
     lastSync: null,
   };
 
-  const settings: DigestSettings = { ...DEFAULT_DIGEST_SETTINGS };
+  // These tests are about signals and reminders, not the grace period: pin it so the mails
+  // (about 2 days old) are past it whatever the product default is.
+  const settings: DigestSettings = { ...DEFAULT_DIGEST_SETTINGS, graceHours: 24 };
 
   function run(overrides: Partial<DigestSettings> = {}) {
     return findForgottenReplies({

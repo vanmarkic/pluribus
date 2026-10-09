@@ -101,9 +101,11 @@ export function setupConfigHandlers(container: Container): void {
         graceHours: patch.graceHours ?? current.graceHours,
         lookbackDays: patch.lookbackDays ?? current.lookbackDays,
         maxItems: patch.maxItems ?? current.maxItems,
+        minImportance: patch.minImportance ?? current.minImportance,
         emailToSelf: patch.emailToSelf ?? current.emailToSelf,
         showSubjects: patch.showSubjects ?? current.showSubjects,
         allowBiometricPrompt: patch.allowBiometricPrompt ?? current.allowBiometricPrompt,
+        launchAtLogin: patch.launchAtLogin ?? current.launchAtLogin,
       });
     }
     // System 1 settings accept a partial update too; the encoder is an allowlist.

@@ -123,8 +123,13 @@ describe('findForgottenReplies', () => {
       now: NOW,
     });
     expect(q.since.getTime()).toBe(NOW.getTime() - 14 * DAY);
-    expect(q.until.getTime()).toBe(NOW.getTime() - 24 * HOUR);
+    expect(q.until.getTime()).toBe(NOW.getTime() - DEFAULT_DIGEST_SETTINGS.graceHours * HOUR);
     expect(countSentByMe).toHaveBeenCalledWith(1, 'me@test.com', q.since);
+  });
+
+  it('waits 4 days by default before a mail counts as forgotten', () => {
+    expect(DEFAULT_DIGEST_SETTINGS.graceHours).toBe(4 * 24);
+    expect(DEFAULT_DIGEST_SETTINGS.minImportance).toBe(2);
   });
 
   it('lets opts.settings override the stored digest settings', async () => {
@@ -159,17 +164,31 @@ describe('findForgottenReplies', () => {
     expect(listUnanswered).not.toHaveBeenCalled();
   });
 
-  it('gates, scores and sorts the candidates', async () => {
-    const { deps } = makeQueryDeps([
-      candidate(1, signal(1, { importance: 3 })),
-      candidate(2, signal(2, { importance: 4 })),
-      candidate(3, signal(3, { needsReply: 0.2 })),
-      candidate(4, signal(4, { importance: 2 })),
-      candidate(5, null, { subject: 'ok merci' }),
-    ]);
+  const mixedCandidates = () => [
+    candidate(1, signal(1, { importance: 3 })),
+    candidate(2, signal(2, { importance: 4 })),
+    candidate(3, signal(3, { needsReply: 0.2 })),
+    candidate(4, signal(4, { importance: 2 })),
+    candidate(5, null, { subject: 'ok merci' }),
+    candidate(6, signal(6, { importance: 1 })),
+  ];
+
+  it('gates, scores and sorts the candidates; normal mail is included by default, last', async () => {
+    const { deps } = makeQueryDeps(mixedCandidates());
     const result = await findForgottenReplies(deps)({ accountId: 1, now: NOW });
-    expect(result.items.map((i) => i.emailId)).toEqual([2, 1]);
+    expect(result.items.map((i) => i.emailId)).toEqual([2, 1, 4]);
     expect(result.items[0]!.score).toBeGreaterThan(result.items[1]!.score);
+    expect(result.items[1]!.score).toBeGreaterThan(result.items[2]!.score);
+  });
+
+  it.each([
+    [2, [2, 1, 4]],
+    [3, [2, 1]],
+    [4, [2]],
+  ] as const)('minImportance %i lists %j', async (minImportance, expected) => {
+    const { deps } = makeQueryDeps(mixedCandidates(), { settings: { minImportance } });
+    const result = await findForgottenReplies(deps)({ accountId: 1, now: NOW });
+    expect(result.items.map((i) => i.emailId)).toEqual(expected);
   });
 
   it('includes heuristic items for mail without a signal', async () => {

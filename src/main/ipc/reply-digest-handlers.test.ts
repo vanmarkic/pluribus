@@ -36,9 +36,11 @@ const STORED_DIGEST = {
   graceHours: 24,
   lookbackDays: 14,
   maxItems: 10,
+  minImportance: 2,
   emailToSelf: true,
   showSubjects: false,
   allowBiometricPrompt: false,
+  launchAtLogin: false,
 };
 
 function makeContainer() {
@@ -208,6 +210,27 @@ describe('config handlers: digest section', () => {
     );
   });
 
+  it('config:set stores minImportance and launchAtLogin, and can switch launchAtLogin off', async () => {
+    const { container, config } = makeContainer();
+    setupConfigHandlers(container);
+
+    await invoke('config:set', 'digest', { minImportance: 4 });
+    expect(config.set).toHaveBeenLastCalledWith(
+      'digest',
+      expect.objectContaining({ minImportance: 4, launchAtLogin: false }),
+    );
+
+    // Switching it ON then OFF: the explicit `false` must win over the stored value.
+    const second = makeContainer();
+    second.store.digest = { ...STORED_DIGEST, launchAtLogin: true };
+    setupConfigHandlers(second.container);
+    await invoke('config:set', 'digest', { launchAtLogin: false });
+    expect(second.config.set).toHaveBeenLastCalledWith(
+      'digest',
+      expect.objectContaining({ launchAtLogin: false }),
+    );
+  });
+
   it('config:set rejects invalid digest values without writing', async () => {
     const { container, config } = makeContainer();
     setupConfigHandlers(container);
@@ -219,6 +242,9 @@ describe('config handlers: digest section', () => {
       { graceHours: 337 },
       { lookbackDays: 91 },
       { maxItems: 51 },
+      { minImportance: 1 },
+      { minImportance: 5 },
+      { launchAtLogin: 'yes' },
       { enabled: 'true' },
       { lastRunDate: '2026-01-01' },
       null,

@@ -75,6 +75,7 @@ export const findForgottenReplies =
       now,
       graceHours: settings.graceHours,
       maxItems: settings.maxItems,
+      minImportance: settings.minImportance,
     });
     return { ...base, items, sentHealth: 'ok' };
   };

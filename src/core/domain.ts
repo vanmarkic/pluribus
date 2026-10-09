@@ -542,29 +542,39 @@ export type ForgottenRepliesResult = {
   generatedAt: Date;
 };
 
+/** Lowest importance a mail may have to enter the digest (2 normal, 3 important, 4 critical). */
+export type DigestMinImportance = 2 | 3 | 4;
+
 export type DigestSettings = {
   enabled: boolean;
   /** 'HH:MM' local 24h */
   time: string;
+  /** How long an unanswered mail waits before it counts as forgotten. */
   graceHours: number;
   lookbackDays: number;
   maxItems: number;
+  /** Mails rated below this never enter the digest. */
+  minImportance: DigestMinImportance;
   emailToSelf: boolean;
-  /** Show subjects in the OS notification. */
+  /** Show sender and subject (first 3) in the OS notification instead of only a count. */
   showSubjects: boolean;
   /** Allow a Touch ID prompt at the scheduled run. */
   allowBiometricPrompt: boolean;
+  /** Start the app hidden at login (macOS, Windows) so the scheduled digest always runs. */
+  launchAtLogin: boolean;
 };
 
 export const DEFAULT_DIGEST_SETTINGS: DigestSettings = {
   enabled: true,
   time: '09:00',
-  graceHours: 24,
+  graceHours: 96, // 4 days
   lookbackDays: 14,
   maxItems: 10,
+  minImportance: 2,
   emailToSelf: true,
-  showSubjects: false,
-  allowBiometricPrompt: false,
+  showSubjects: true,
+  allowBiometricPrompt: true,
+  launchAtLogin: true,
 };
 
 // ============================================

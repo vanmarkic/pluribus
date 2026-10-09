@@ -4,6 +4,7 @@ import { useAccountStore } from '../../stores';
 import { DEFAULT_DIGEST_SETTINGS } from '../../../core/domain';
 import type {
   DigestAccountOutcome,
+  DigestMinImportance,
   DigestRunResult,
   DigestSettings as DigestSettingsValue,
 } from '../../../core/domain';
@@ -17,9 +18,22 @@ import type {
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-const GRACE_HOURS = [12, 24, 48, 72];
+const GRACE_HOURS = [12, 24, 48, 72, 96];
 const LOOKBACK_DAYS = [7, 14, 30];
 const MAX_ITEMS = [5, 10, 20];
+
+const MIN_IMPORTANCE_OPTIONS: { value: DigestMinImportance; label: string }[] = [
+  { value: 2, label: 'Normal and above' },
+  { value: 3, label: 'Important and above' },
+  { value: 4, label: 'Critical only' },
+];
+
+/**
+ * "Start at login" only exists on macOS and Windows (Electron has no login-item
+ * API on Linux), so the toggle is hidden there.
+ */
+const supportsLoginItem = (): boolean =>
+  typeof navigator !== 'undefined' && /Mac|Win/i.test(navigator.platform || navigator.userAgent);
 
 /** The presets, plus the stored value when it isn't one of them (e.g. set elsewhere). */
 const withCurrent = (presets: number[], current: number): number[] =>
@@ -176,7 +190,7 @@ export function DigestSettings() {
       <Row
         id="digest-enabled"
         label="Enabled"
-        helper="A daily reminder of important emails you haven't answered"
+        helper="A daily reminder of emails you haven't answered"
       >
         <input
           id="digest-enabled"
@@ -236,25 +250,60 @@ export function DigestSettings() {
       </Row>
 
       <Row
-        id="digest-lookback"
-        label="Look back"
-        helper="How far back to look for unanswered emails"
+        id="digest-importance"
+        label="Include"
+        helper="Emails the model rates below this are never listed"
       >
         <select
-          id="digest-lookback"
-          value={settings.lookbackDays}
-          aria-describedby="digest-lookback-help"
-          onChange={(e) => save({ lookbackDays: parseInt(e.target.value, 10) })}
+          id="digest-importance"
+          value={settings.minImportance}
+          aria-describedby="digest-importance-help"
+          onChange={(e) =>
+            save({ minImportance: parseInt(e.target.value, 10) as DigestMinImportance })
+          }
           className="input shrink-0"
           style={{ width: '10rem' }}
         >
-          {withCurrent(LOOKBACK_DAYS, settings.lookbackDays).map((days) => (
-            <option key={days} value={days}>
-              {plural(days, 'day', 'days')}
+          {MIN_IMPORTANCE_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
             </option>
           ))}
         </select>
       </Row>
+
+      <div>
+        <Row
+          id="digest-lookback"
+          label="Look back"
+          helper="How far back to look for unanswered emails"
+        >
+          <select
+            id="digest-lookback"
+            value={settings.lookbackDays}
+            aria-describedby="digest-lookback-help"
+            onChange={(e) => save({ lookbackDays: parseInt(e.target.value, 10) })}
+            className="input shrink-0"
+            style={{ width: '10rem' }}
+          >
+            {withCurrent(LOOKBACK_DAYS, settings.lookbackDays).map((days) => (
+              <option key={days} value={days}>
+                {plural(days, 'day', 'days')}
+              </option>
+            ))}
+          </select>
+        </Row>
+        {settings.graceHours >= settings.lookbackDays * 24 && (
+          <div
+            role="status"
+            className="mt-1 text-sm"
+            style={{ color: 'var(--color-warning-text, var(--color-danger))' }}
+          >
+            Emails older than the look-back are ignored, so nothing can be listed with these two
+            values. Choose a longer look-back or a shorter wait.
+          </div>
+        )}
+      </div>
 
       <Row id="digest-max" label="Max items" helper="The most emails listed in one digest">
         <select
@@ -292,7 +341,7 @@ export function DigestSettings() {
         <Row
           id="digest-subjects"
           label="Show subjects in notifications"
-          helper="Off keeps subjects off your lock screen"
+          helper="Shows the sender and subject of the first 3 emails. Off shows only a count, which keeps subjects off your lock screen"
         >
           <input
             id="digest-subjects"
@@ -307,7 +356,7 @@ export function DigestSettings() {
         <Row
           id="digest-biometric"
           label="Allow Touch ID prompt for the scheduled digest"
-          helper="When off, the digest email waits until you unlock Pluribus"
+          helper="Asks for Touch ID at the scheduled time so the digest email can be sent right away. When off, the email waits until you unlock Pluribus"
         >
           <input
             id="digest-biometric"
@@ -318,6 +367,23 @@ export function DigestSettings() {
             className="h-5 w-5 shrink-0"
           />
         </Row>
+
+        {supportsLoginItem() && (
+          <Row
+            id="digest-login"
+            label="Start Pluribus at login"
+            helper="Opens it hidden when you log in, so the daily digest still runs. macOS may ask you to allow it in System Settings → Login Items"
+          >
+            <input
+              id="digest-login"
+              type="checkbox"
+              checked={settings.launchAtLogin}
+              aria-describedby="digest-login-help"
+              onChange={(e) => save({ launchAtLogin: e.target.checked })}
+              className="h-5 w-5 shrink-0"
+            />
+          </Row>
+        )}
       </div>
 
       {saveError && (

@@ -6,10 +6,11 @@
  * human-readable reason. No dependencies, no I/O.
  *
  * Gate (when a classifier/user signal exists):
- *   importance >= 3 (important) AND needsReply >= 0.6
+ *   importance >= minImportance (default 2 = normal; the user setting) AND
+ *   needsReply >= 0.6
  * Gate (no usable signal): the cheap text heuristic from awaiting.ts says the
  * mail asks something AND the sender looks like a person - treated as
- * importance 3 / needsReply 0.6.
+ * importance 3 / needsReply 0.6 (so it is dropped when minImportance is 4).
  *
  * Score = importanceWeight(importance) * needsReply * ageFactor(age) [* 1.1 if
  * the user is a direct recipient]. Higher first.
@@ -22,8 +23,11 @@ import { quickCheck } from './usecases/awaiting';
 // Constants
 // ============================================
 
-/** Signals below this importance (3 = "important") never surface. */
-export const GATE_MIN_IMPORTANCE: ImportanceLevel = 3;
+/**
+ * Default for signals below which nothing surfaces (2 = "normal"). The digest
+ * setting `minImportance` overrides it per call via {@link ScoringContext}.
+ */
+export const GATE_MIN_IMPORTANCE: ImportanceLevel = 2;
 /** Signals below this needs-reply probability never surface. */
 export const GATE_MIN_NEEDS_REPLY = 0.6;
 
@@ -113,10 +117,12 @@ export type ScoringContext = {
   now: Date;
   /** Grace period used for the candidate query; the age factor starts here. */
   graceHours: number;
+  /** Lowest importance that may surface. Defaults to {@link GATE_MIN_IMPORTANCE}. */
+  minImportance?: ImportanceLevel;
 };
 
 function importanceLabel(importance: ImportanceLevel): string {
-  return importance >= 4 ? 'Critical' : 'Important';
+  return importance >= 4 ? 'Critical' : importance === 3 ? 'Important' : 'Normal';
 }
 
 /** Who produced the signal, for the reason line. */
@@ -149,6 +155,8 @@ export function scoreCandidate(
   const { email, signal } = candidate;
   const ageHours = Math.max(0, (ctx.now.getTime() - email.date.getTime()) / HOUR_MS);
 
+  const minImportance = ctx.minImportance ?? GATE_MIN_IMPORTANCE;
+
   let importance: ImportanceLevel;
   let needsReply: number;
   let basis: ForgottenReply['basis'];
@@ -157,13 +165,14 @@ export function scoreCandidate(
   if (signal && signal.needsReply !== null) {
     // A "done" mark from the user stores needsReply=1 without importance: the
     // user said it needs a reply, so treat it as important. Machine signals
-    // with no importance count as normal (they do not pass the gate).
+    // with no importance count as normal (they pass only when minImportance <= 2).
     importance = signal.importance ?? (signal.source === 'user' ? 3 : 2);
     needsReply = signal.needsReply;
-    if (importance < GATE_MIN_IMPORTANCE || needsReply < GATE_MIN_NEEDS_REPLY) return null;
+    if (importance < minImportance || needsReply < GATE_MIN_NEEDS_REPLY) return null;
     basis = 'signal';
     reason = signalReason(signal, importance);
   } else {
+    if (HEURISTIC_IMPORTANCE < minImportance) return null;
     if (!looksPersonalSender(email.from.address)) return null;
     if (quickCheck(`${email.subject}\n${email.snippet}`) !== true) return null;
     importance = HEURISTIC_IMPORTANCE;

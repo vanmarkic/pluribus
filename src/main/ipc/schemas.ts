@@ -93,9 +93,12 @@ export const DigestSettingsInput = z
     graceHours: positiveInt.max(336),
     lookbackDays: positiveInt.max(90),
     maxItems: positiveInt.max(50),
+    /** 2 = normal and above, 3 = important and above, 4 = critical only. */
+    minImportance: z.union([z.literal(2), z.literal(3), z.literal(4)]),
     emailToSelf: z.boolean(),
     showSubjects: z.boolean(),
     allowBiometricPrompt: z.boolean(),
+    launchAtLogin: z.boolean(),
   })
   .partial();
 

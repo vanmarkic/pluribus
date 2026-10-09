@@ -10,15 +10,18 @@ import { useAccountStore } from '../../stores';
 import { DEFAULT_DIGEST_SETTINGS } from '../../../core/domain';
 import type { DigestRunResult, DigestSettings as DigestSettingsValue } from '../../../core/domain';
 
+// Every value differs from the product default, so loading is proven field by field.
 const STORED: DigestSettingsValue = {
   enabled: true,
   time: '08:30',
   graceHours: 48,
   lookbackDays: 30,
   maxItems: 20,
+  minImportance: 3,
   emailToSelf: false,
-  showSubjects: true,
+  showSubjects: false,
   allowBiometricPrompt: false,
+  launchAtLogin: false,
 };
 
 function install(
@@ -55,6 +58,8 @@ function install(
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
+  // The login-item toggle only exists on macOS and Windows; jsdom reports Linux.
+  vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('MacIntel');
 });
 
 afterEach(() => {
@@ -79,17 +84,26 @@ describe('DigestSettings', () => {
     expect(field('Remind me after')).toHaveValue('48');
     expect(field('Look back')).toHaveValue('30');
     expect(field('Max items')).toHaveValue('20');
+    expect(field('Include')).toHaveValue('3');
     expect(field('Email the digest to myself')).not.toBeChecked();
-    expect(field('Show subjects in notifications')).toBeChecked();
+    expect(field('Show subjects in notifications')).not.toBeChecked();
     expect(field('Allow Touch ID prompt for the scheduled digest')).not.toBeChecked();
+    expect(field('Start Pluribus at login')).not.toBeChecked();
   });
 
-  it('falls back to the defaults when nothing is stored', async () => {
+  it('falls back to the product defaults when nothing is stored', async () => {
     install(null);
     await renderLoaded();
 
-    expect(field('Time')).toHaveValue(DEFAULT_DIGEST_SETTINGS.time);
+    expect(field('Time')).toHaveValue('09:00');
     expect(field('Enabled')).toBeChecked();
+    expect(field('Remind me after')).toHaveValue('96'); // 4 days
+    expect(field('Include')).toHaveValue('2'); // normal mail and above
+    expect(field('Show subjects in notifications')).toBeChecked();
+    expect(field('Allow Touch ID prompt for the scheduled digest')).toBeChecked();
+    expect(field('Start Pluribus at login')).toBeChecked();
+    // The test pins the intent, not just "whatever DEFAULT_DIGEST_SETTINGS says".
+    expect(DEFAULT_DIGEST_SETTINGS.graceHours).toBe(96);
   });
 
   it('offers the documented choices', async () => {
@@ -98,9 +112,38 @@ describe('DigestSettings', () => {
 
     const values = (label: string) =>
       Array.from((field(label) as HTMLSelectElement).options).map((o) => o.value);
-    expect(values('Remind me after')).toEqual(['12', '24', '48', '72']);
+    const labels = (label: string) =>
+      Array.from((field(label) as HTMLSelectElement).options).map((o) => o.textContent);
+    expect(values('Remind me after')).toEqual(['12', '24', '48', '72', '96']);
+    expect(labels('Remind me after')).toContain('4 days');
     expect(values('Look back')).toEqual(['7', '14', '30']);
     expect(values('Max items')).toEqual(['5', '10', '20']);
+    expect(values('Include')).toEqual(['2', '3', '4']);
+    expect(labels('Include')).toEqual(['Normal and above', 'Important and above', 'Critical only']);
+  });
+
+  it('hides the login-item toggle where the OS has no such feature (Linux)', async () => {
+    vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('Linux x86_64');
+    install();
+    await renderLoaded();
+
+    expect(screen.queryByLabelText('Start Pluribus at login')).not.toBeInTheDocument();
+  });
+
+  describe('look-back versus wait', () => {
+    const warning = /nothing can be listed/i;
+
+    it('warns when the wait is as long as the look-back', async () => {
+      install({ ...STORED, graceHours: 96, lookbackDays: 4 });
+      await renderLoaded();
+      expect(screen.getByRole('status')).toHaveTextContent(warning);
+    });
+
+    it('stays quiet when the look-back is longer than the wait', async () => {
+      install({ ...STORED, graceHours: 96, lookbackDays: 14 });
+      await renderLoaded();
+      expect(screen.queryByText(warning)).not.toBeInTheDocument();
+    });
   });
 
   it('keeps a stored value that is not one of the presets', async () => {
@@ -119,9 +162,20 @@ describe('DigestSettings', () => {
         'Sent through your own mail server to your own address — reaches your phone',
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText('Off keeps subjects off your lock screen')).toBeInTheDocument();
     expect(
-      screen.getByText('When off, the digest email waits until you unlock Pluribus'),
+      screen.getByText(
+        'Shows the sender and subject of the first 3 emails. Off shows only a count, which keeps subjects off your lock screen',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Asks for Touch ID at the scheduled time so the digest email can be sent right away. When off, the email waits until you unlock Pluribus',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Opens it hidden when you log in, so the daily digest still runs. macOS may ask you to allow it in System Settings → Login Items',
+      ),
     ).toBeInTheDocument();
   });
 
@@ -155,17 +209,31 @@ describe('DigestSettings', () => {
       const user = userEvent.setup();
       await renderLoaded();
 
-      await user.selectOptions(field('Remind me after'), '72');
-      await user.selectOptions(field('Look back'), '7');
+      await user.selectOptions(field('Remind me after'), '96');
+      await user.selectOptions(field('Look back'), '14');
       await user.selectOptions(field('Max items'), '5');
+      await user.selectOptions(field('Include'), '4');
 
       await waitFor(() =>
         expect(config.set).toHaveBeenLastCalledWith('digest', {
           ...STORED,
-          graceHours: 72,
-          lookbackDays: 7,
+          graceHours: 96,
+          lookbackDays: 14,
           maxItems: 5,
+          minImportance: 4,
         }),
+      );
+    });
+
+    it('saves the login-item toggle', async () => {
+      const { config } = install();
+      const user = userEvent.setup();
+      await renderLoaded();
+
+      await user.click(field('Start Pluribus at login'));
+
+      await waitFor(() =>
+        expect(config.set).toHaveBeenCalledWith('digest', { ...STORED, launchAtLogin: true }),
       );
     });
 
@@ -203,7 +271,7 @@ describe('DigestSettings', () => {
       await user.click(field('Show subjects in notifications'));
 
       expect(await screen.findByRole('alert')).toHaveTextContent(/couldn't save/i);
-      expect(field('Show subjects in notifications')).toBeChecked();
+      expect(field('Show subjects in notifications')).not.toBeChecked();
     });
   });
 

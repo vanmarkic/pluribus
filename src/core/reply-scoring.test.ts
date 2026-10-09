@@ -169,7 +169,7 @@ describe('looksPersonalSender', () => {
 
 describe('scoreCandidate - gating with a signal', () => {
   it('exposes the documented thresholds', () => {
-    expect(GATE_MIN_IMPORTANCE).toBe(3);
+    expect(GATE_MIN_IMPORTANCE).toBe(2);
     expect(GATE_MIN_NEEDS_REPLY).toBe(0.6);
   });
 
@@ -186,9 +186,32 @@ describe('scoreCandidate - gating with a signal', () => {
     });
   });
 
-  it('rejects importance below 3', () => {
-    expect(scoreCandidate(candidate({}, makeSignal({ importance: 2 })), ctx)).toBeNull();
+  it('by default accepts normal mail (importance 2) and rejects low (1)', () => {
+    expect(scoreCandidate(candidate({}, makeSignal({ importance: 2 })), ctx)?.importance).toBe(2);
     expect(scoreCandidate(candidate({}, makeSignal({ importance: 1 })), ctx)).toBeNull();
+  });
+
+  it.each<[ImportanceLevel, ImportanceLevel, boolean]>([
+    // [minImportance, mail importance, surfaces?]
+    [2, 2, true],
+    [2, 1, false],
+    [3, 2, false],
+    [3, 3, true],
+    [3, 4, true],
+    [4, 3, false],
+    [4, 4, true],
+  ])('minImportance %i with a mail rated %i surfaces: %s', (min, rated, surfaces) => {
+    const item = scoreCandidate(candidate({}, makeSignal({ importance: rated })), {
+      ...ctx,
+      minImportance: min,
+    });
+    expect(item !== null).toBe(surfaces);
+  });
+
+  it('applies minImportance to the text heuristic, which counts as importance 3', () => {
+    const asks = candidate({ subject: 'Can you confirm the date?' }, null);
+    expect(scoreCandidate(asks, { ...ctx, minImportance: 3 })?.basis).toBe('heuristic');
+    expect(scoreCandidate(asks, { ...ctx, minImportance: 4 })).toBeNull();
   });
 
   it('rejects needsReply below 0.6', () => {
@@ -216,9 +239,10 @@ describe('scoreCandidate - gating with a signal', () => {
     expect(item?.signalSource).toBe('user');
   });
 
-  it('treats a machine signal with null importance as normal (rejected)', () => {
+  it('treats a machine signal with null importance as normal: listed by default, not when only important mail is wanted', () => {
     const sig = makeSignal({ source: 'system1', needsReply: 0.95, importance: null });
-    expect(scoreCandidate(candidate({}, sig), ctx)).toBeNull();
+    expect(scoreCandidate(candidate({}, sig), ctx)?.importance).toBe(2);
+    expect(scoreCandidate(candidate({}, sig), { ...ctx, minImportance: 3 })).toBeNull();
   });
 
   it('falls back to the heuristic when the signal has no needsReply value', () => {
@@ -404,7 +428,7 @@ describe('scoreCandidate - reason', () => {
 
 describe('rankCandidates', () => {
   it('drops ungated mail and sorts the rest best-first', () => {
-    const low = candidate({ id: 1 }, makeSignal({ emailId: 1, importance: 2 }));
+    const low = candidate({ id: 1 }, makeSignal({ emailId: 1, importance: 1 }));
     const mid = candidate({ id: 2, date: hoursAgo(30) }, makeSignal({ emailId: 2, importance: 3 }));
     const high = candidate(
       { id: 3, date: hoursAgo(30) },
@@ -415,6 +439,25 @@ describe('rankCandidates', () => {
     const ranked = rankCandidates([low, mid, none, high], { ...ctx, maxItems: 10 });
     expect(ranked.map((r) => r.emailId)).toEqual([3, 2]);
     expect(ranked[0]!.score).toBeGreaterThan(ranked[1]!.score);
+  });
+
+  it('lists normal mail after important mail by default, and drops it when asked to', () => {
+    const normal = candidate(
+      { id: 1, date: hoursAgo(30) },
+      makeSignal({ emailId: 1, importance: 2 }),
+    );
+    const important = candidate(
+      { id: 2, date: hoursAgo(30) },
+      makeSignal({ emailId: 2, importance: 3 }),
+    );
+    expect(
+      rankCandidates([normal, important], { ...ctx, maxItems: 10 }).map((r) => r.emailId),
+    ).toEqual([2, 1]);
+    expect(
+      rankCandidates([normal, important], { ...ctx, maxItems: 10, minImportance: 3 }).map(
+        (r) => r.emailId,
+      ),
+    ).toEqual([2]);
   });
 
   it('caps the list at maxItems', () => {

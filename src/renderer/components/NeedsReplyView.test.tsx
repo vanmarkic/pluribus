@@ -128,7 +128,7 @@ describe('NeedsReplyView', () => {
       expect(
         screen.getByRole('heading', { level: 1, name: 'Needs your reply' }),
       ).toBeInTheDocument();
-      expect(screen.getByText("Important emails you haven't answered yet")).toBeInTheDocument();
+      expect(screen.getByText("Emails you haven't answered yet")).toBeInTheDocument();
 
       expect(await screen.findByText('Ana Costa')).toBeInTheDocument();
       expect(screen.getByText('Quote for the Q3 rollout')).toBeInTheDocument();

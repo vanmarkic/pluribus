@@ -275,7 +275,7 @@ export function NeedsReplyView() {
             Needs your reply
           </h1>
           <p className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
-            Important emails you haven't answered yet
+            Emails you haven't answered yet
           </p>
         </div>
         {loaded && total > 0 && <span className="email-list-count shrink-0">{total} waiting</span>}
