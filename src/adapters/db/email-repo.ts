@@ -5,9 +5,9 @@
  */
 
 import type { EmailRepo, ListEmailsOptions } from '../../core/ports';
-import type { Email, EmailBody } from '../../core/domain';
 import { getDb, escapeLike, escapeFtsQuery, checkIntegrity } from './connection';
 import { mapEmail } from './mappers';
+import { isEncrypted } from '../keychain/body-cipher';
 
 export function createEmailRepo(): EmailRepo {
   return {
@@ -96,9 +96,12 @@ export function createEmailRepo(): EmailRepo {
         VALUES (?, ?, ?)
       `).run(id, body.text, body.html);
 
+      // With body encryption on, `body.text` is ciphertext: a snippet cut from it is
+      // garbage, and storing a plaintext one would defeat the encryption.
+      const snippet = isEncrypted(body.text) ? '' : body.text.replace(/\s+/g, ' ').trim().slice(0, 200);
       db.prepare(`
         UPDATE emails SET body_fetched = 1, snippet = ? WHERE id = ?
-      `).run(body.text.slice(0, 200), id);
+      `).run(snippet, id);
     },
 
     async insert(email) {

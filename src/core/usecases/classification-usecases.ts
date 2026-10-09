@@ -17,7 +17,9 @@ import type { Classification, ClassificationState, ClassificationStats, Classifi
 import { extractDomain, extractSubjectPattern } from '../domain';
 
 // Import triage function (will be resolved after barrel export)
-import { triageAndMoveEmail } from './triage-usecases';
+import { triageAndMoveEmail, shouldSkipTriage } from './triage-usecases';
+// Best-effort body excerpts for the triage LLM (privacy-gated)
+import { fetchBodyPreview, isHumanCandidate, mayUseBodyPreview } from './body-preview';
 // #88: auto-index classified emails into the semantic-search corpus
 import { indexEmailForSearch } from './embedding-usecases';
 // #96: post-classification confidence calibration
@@ -89,7 +91,7 @@ export const classifyAndTriage = (deps: Pick<Deps, 'emails' | 'classifier' | 'cl
  * - Uses pattern matching + training examples (triage system)
  * - Keeps classificationState in sync for ReviewQueue UI
  */
-export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'classifier' | 'classificationState' | 'accounts' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'config' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService' | 'calibration'>) =>
+export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'classifier' | 'classificationState' | 'accounts' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'config' | 'sync' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService' | 'calibration'>) =>
   async (emailIds: number[], confidenceThreshold = 0.85): Promise<{ classified: number; skipped: number; triaged: number }> => {
     const budget = deps.classifier.getEmailBudget();
 
@@ -109,10 +111,49 @@ export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'classifier' | 'cl
       .filter((e): e is NonNullable<typeof e> => e !== null)
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
+    // Never triage (or spend budget on) mail the user wrote or that sits in
+    // Sent/Drafts/Trash/Junk/Spam. Lookups are cached per batch; a failed
+    // lookup means "cannot tell", so the email stays in.
+    const accountEmails = new Map<number, string | null>();
+    const folderPaths = new Map<number, string | null>();
+    const lookup = async <T>(cache: Map<number, T | null>, key: number, load: () => Promise<T | null>) => {
+      if (!cache.has(key)) {
+        try {
+          cache.set(key, await load());
+        } catch {
+          cache.set(key, null);
+        }
+      }
+      return cache.get(key) ?? null;
+    };
+    const triageable: Email[] = [];
+    for (const email of sortedEmails) {
+      const accountEmail = await lookup(accountEmails, email.accountId, async () => (await deps.accounts.findById(email.accountId))?.email ?? null);
+      const folderPath = await lookup(folderPaths, email.folderId, async () => (await deps.folders.findById(email.folderId))?.path ?? null);
+      if (!shouldSkipTriage(email, accountEmail, folderPath)) triageable.push(email);
+    }
+
     // Limit to remaining budget (prioritizing most recent), unlimited if limit=0
-    const remainingBudget = budget.limit > 0 ? budget.limit - budget.used : sortedEmails.length;
-    const emailsToClassify = sortedEmails.slice(0, remainingBudget);
+    const remainingBudget = budget.limit > 0 ? budget.limit - budget.used : triageable.length;
+    const emailsToClassify = triageable.slice(0, remainingBudget);
     const skipped = emailIds.length - emailsToClassify.length;
+
+    // Body excerpts help the model judge reply-needed/importance, but only go
+    // to local models (or with explicit opt-in). Fail closed on config errors.
+    let previewsAllowed = false;
+    try {
+      previewsAllowed = mayUseBodyPreview(deps.config.getLLMConfig());
+    } catch {
+      previewsAllowed = false;
+    }
+    // Fetched one email ahead of the classifier, so at most 2 fetches are in flight.
+    const previews = new Map<number, Promise<string | undefined>>();
+    const startPreview = (index: number): void => {
+      const candidate = emailsToClassify[index];
+      if (!previewsAllowed || !candidate || previews.has(candidate.id)) return;
+      if (!isHumanCandidate(candidate, accountEmails.get(candidate.accountId))) return;
+      previews.set(candidate.id, fetchBodyPreview(deps)(candidate.id));
+    };
 
     // Load the active Platt calibration once per batch (#96). All emails
     // in the batch share the same calibrated mapping, which keeps the
@@ -126,12 +167,17 @@ export const classifyNewEmails = (deps: Pick<Deps, 'emails' | 'classifier' | 'cl
     let classified = 0;
     let triaged = 0;
 
-    for (const email of emailsToClassify) {
+    for (let index = 0; index < emailsToClassify.length; index++) {
+      const email = emailsToClassify[index]!;
+      startPreview(index);
+      startPreview(index + 1);
       try {
+        const bodyPreview = await previews.get(email.id);
         // Use unified triage system (pattern matching + training + LLM + folder move)
         // This replaces the old dual-call pattern
         const triageResult = await triageAndMoveEmail(deps)(email.id, {
           confidenceThreshold: Math.min(confidenceThreshold, 0.7), // Use lower of the two thresholds
+          ...(bodyPreview !== undefined ? { bodyPreview } : {}),
         });
 
         // Apply calibration (#96) — the raw LLM confidence is typically
@@ -772,7 +818,7 @@ export const getPendingReviewCount = (deps: Pick<Deps, 'classificationState'>) =
     return counts.pending_review;
   };
 
-export const classifyUnprocessed = (deps: Pick<Deps, 'emails' | 'classifier' | 'classificationState' | 'config' | 'accounts' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService' | 'calibration'>) =>
+export const classifyUnprocessed = (deps: Pick<Deps, 'emails' | 'classifier' | 'classificationState' | 'config' | 'accounts' | 'folders' | 'sync' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps' | 'vectorSearch' | 'embeddingRepo' | 'embeddingService' | 'calibration'>) =>
   async (): Promise<{ classified: number; skipped: number }> => {
     const llmConfig = deps.config.getLLMConfig();
 

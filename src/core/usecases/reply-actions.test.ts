@@ -7,6 +7,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { markReplyDone, snoozeReply, dismissReply, listForgottenReplies } from './reply-usecases';
 import { createUseCases } from './factory';
 import type { Deps } from '../ports';
+import { DEFAULT_DIGEST_SETTINGS } from '../domain';
 import type { Account } from '../domain';
 
 function makeDeps() {
@@ -66,7 +67,7 @@ describe('snoozeReply', () => {
   });
 });
 
-describe('listForgottenReplies (stub)', () => {
+describe('listForgottenReplies', () => {
   const account = (id: number, isActive: boolean): Account => ({
     id,
     name: `Account ${id}`,
@@ -87,8 +88,8 @@ describe('listForgottenReplies (stub)', () => {
         findAll: async () => accounts,
         findById: async (id: number) => accounts.find((a) => a.id === id) ?? null,
       },
-      replyCandidates: { listUnanswered: async () => [], countSentByMe: async () => 0 },
-      digestConfig: {},
+      replyCandidates: { listUnanswered: async () => [], countSentByMe: async () => 1 },
+      digestConfig: { getSettings: () => DEFAULT_DIGEST_SETTINGS },
     } as unknown as Pick<Deps, 'accounts' | 'replyCandidates' | 'digestConfig'>;
 
     const now = new Date('2026-06-01T09:00:00.000Z');

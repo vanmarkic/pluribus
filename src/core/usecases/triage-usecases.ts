@@ -16,6 +16,47 @@ import type { Email, TriageClassificationResult, TriageFolder, TrainingExample }
 import { extractDomain } from '../domain';
 
 // ============================================
+// Mail that must never be triaged
+// ============================================
+
+/**
+ * Special folders (English and French provider names, e.g. `[Gmail]/Sent Mail`,
+ * `Sent Items`, `Éléments envoyés`, `Brouillons`, `Corbeille`, `Courrier indésirable`).
+ * Matched on whole words of the lower-cased, accent-stripped path, so
+ * `Absent` or `Spamassassin` are not special folders.
+ */
+const UNTRIAGED_FOLDER =
+  /(^|[^a-z])(sent|outbox|drafts?|trash|bin|deleted|junk|spam|brouillons?|corbeille|envoye[es]?|indesirables?)([^a-z]|$)/;
+
+/** True for Sent / Drafts / Trash / Junk / Spam folders: nothing there is triaged or moved. */
+export function isUntriagedFolderPath(path: string): boolean {
+  const folded = path
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return UNTRIAGED_FOLDER.test(folded);
+}
+
+/**
+ * Mail the user wrote, or that sits in Sent/Drafts/Trash/Junk/Spam, is not
+ * inbound mail: classifying it would waste budget and could move it out of
+ * place. Unknown account/folder means "cannot tell", so the mail is kept.
+ */
+export function shouldSkipTriage(
+  email: Email,
+  accountEmail: string | null | undefined,
+  folderPath: string | null | undefined,
+): boolean {
+  if (accountEmail && email.from.address.toLowerCase() === accountEmail.toLowerCase()) return true;
+  return folderPath ? isUntriagedFolderPath(folderPath) : false;
+}
+
+/** Which classifier answered, as recorded in the triage log. */
+function logSource(result: TriageClassificationResult): 'llm' | 'system1' {
+  return result.source === 'system1' ? 'system1' : 'llm';
+}
+
+// ============================================
 // Email Triage Use Cases
 // ============================================
 
@@ -42,7 +83,7 @@ export const triageEmail = (deps: Pick<Deps, 'emails' | 'patternMatcher' | 'tria
       llmConfidence: result.confidence,
       patternAgreed: result.patternAgreed,
       finalFolder: result.folder,
-      source: 'llm',
+      source: logSource(result),
       reasoning: result.reasoning,
     });
 
@@ -57,11 +98,27 @@ export const triageEmail = (deps: Pick<Deps, 'emails' | 'patternMatcher' | 'tria
  * If below threshold, classification still happens but email stays in place.
  */
 export const triageAndMoveEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'folders' | 'patternMatcher' | 'triageClassifier' | 'trainingRepo' | 'triageLog' | 'imapFolderOps'>) =>
-  async (emailId: number, options: { confidenceThreshold?: number } = {}): Promise<TriageClassificationResult> => {
-    const { confidenceThreshold = 0.7 } = options;
+  async (emailId: number, options: { confidenceThreshold?: number; bodyPreview?: string } = {}): Promise<TriageClassificationResult> => {
+    const { confidenceThreshold = 0.7, bodyPreview } = options;
 
     const email = await deps.emails.findById(emailId);
     if (!email) throw new Error('Email not found');
+
+    const account = await deps.accounts.findById(email.accountId);
+    const currentFolder = await deps.folders.findById(email.folderId);
+
+    // Guard: the user's own mail and Sent/Drafts/Trash/Junk/Spam are not triaged
+    // or moved. Neutral result, nothing logged.
+    if (shouldSkipTriage(email, account?.email, currentFolder?.path)) {
+      return {
+        folder: 'Review',
+        tags: [],
+        confidence: 0,
+        patternAgreed: false,
+        reasoning: 'Skipped: sent, draft, trash and junk mail is not triaged',
+        source: 'fallback',
+      };
+    }
 
     // Step 1: Pattern matching (fast, local)
     const patternResult = deps.patternMatcher.match(email);
@@ -69,8 +126,10 @@ export const triageAndMoveEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'fol
     // Step 2: Get relevant training examples
     const examples = await deps.trainingRepo.getRelevantExamples(email.accountId, email, 30);
 
-    // Step 3: LLM classification with pattern hint
-    const result = await deps.triageClassifier.classify(email, patternResult, examples);
+    // Step 3: LLM classification with pattern hint (and a body excerpt when the caller supplied one)
+    const result = bodyPreview !== undefined
+      ? await deps.triageClassifier.classify(email, patternResult, examples, { bodyPreview })
+      : await deps.triageClassifier.classify(email, patternResult, examples);
 
     // Step 4: Log the classification
     await deps.triageLog.log({
@@ -81,18 +140,16 @@ export const triageAndMoveEmail = (deps: Pick<Deps, 'emails' | 'accounts' | 'fol
       llmConfidence: result.confidence,
       patternAgreed: result.patternAgreed,
       finalFolder: result.folder,
-      source: 'llm',
+      source: logSource(result),
       reasoning: result.reasoning,
     });
 
     // Step 5: Move to folder if confidence is above threshold
     if (result.confidence >= confidenceThreshold) {
-      const currentFolder = await deps.folders.findById(email.folderId);
       if (!currentFolder) throw new Error('Folder not found');
 
       // Skip if already in the target folder
       if (currentFolder.path !== result.folder) {
-        const account = await deps.accounts.findById(email.accountId);
         if (!account) throw new Error('Account not found');
 
         // Move via IMAP
