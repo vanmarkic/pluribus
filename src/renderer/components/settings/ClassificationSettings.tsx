@@ -44,7 +44,7 @@ function PrivacyBadge({ provider }: { provider: Config['provider'] }) {
   const Icon = onDevice ? IconLock : IconCloud;
   return (
     <Badge
-      className="gap-1 font-normal"
+      className="gap-1 font-normal whitespace-nowrap shrink-0"
       style={
         onDevice
           ? { background: 'var(--color-success-bg)', color: 'var(--color-success-text)' }
@@ -297,7 +297,8 @@ export function ClassificationSettings() {
           <select
             value={config.provider}
             onChange={(e) => updateConfig({ provider: e.target.value as 'anthropic' | 'ollama', model: '' })}
-            className="input w-48"
+            className="input shrink-0"
+            style={{ width: '12rem' }}
           >
             <option value="anthropic">Anthropic Claude</option>
             <option value="ollama">Local (Ollama)</option>

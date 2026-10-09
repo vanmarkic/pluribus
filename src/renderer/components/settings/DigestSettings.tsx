@@ -198,7 +198,8 @@ export function DigestSettings() {
             aria-describedby={timeInvalid ? 'digest-time-error' : 'digest-time-help'}
             onChange={(e) => handleTimeChange(e.target.value)}
             onBlur={handleTimeBlur}
-            className="input w-32 shrink-0"
+            className="input shrink-0"
+            style={{ width: '8rem' }}
           />
         </Row>
         {timeInvalid && (
@@ -223,7 +224,8 @@ export function DigestSettings() {
           value={settings.graceHours}
           aria-describedby="digest-grace-help"
           onChange={(e) => save({ graceHours: parseInt(e.target.value, 10) })}
-          className="input w-40 shrink-0"
+          className="input shrink-0"
+          style={{ width: '10rem' }}
         >
           {withCurrent(GRACE_HOURS, settings.graceHours).map((hours) => (
             <option key={hours} value={hours}>
@@ -243,7 +245,8 @@ export function DigestSettings() {
           value={settings.lookbackDays}
           aria-describedby="digest-lookback-help"
           onChange={(e) => save({ lookbackDays: parseInt(e.target.value, 10) })}
-          className="input w-40 shrink-0"
+          className="input shrink-0"
+          style={{ width: '10rem' }}
         >
           {withCurrent(LOOKBACK_DAYS, settings.lookbackDays).map((days) => (
             <option key={days} value={days}>
@@ -259,7 +262,8 @@ export function DigestSettings() {
           value={settings.maxItems}
           aria-describedby="digest-max-help"
           onChange={(e) => save({ maxItems: parseInt(e.target.value, 10) })}
-          className="input w-40 shrink-0"
+          className="input shrink-0"
+          style={{ width: '10rem' }}
         >
           {withCurrent(MAX_ITEMS, settings.maxItems).map((count) => (
             <option key={count} value={count}>
