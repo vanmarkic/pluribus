@@ -136,6 +136,9 @@ ipcMain.handle('emails:list', (_, opts) => {
 - `reply-candidate-repo` anti-joins received mail against the user's own sent mail (In-Reply-To, References, same-thread-later) and `reply_reminders` (done / dismissed / snoozed).
 - `main/digest-wiring.ts` + `main/schedulers/digest-scheduler.ts` run the digest once per local day with launch/wake catch-up. Email is sent with `sender.send` directly (never lands in Sent).
 - The user's mail is mostly French: never rely on English phrases or `?` alone.
+- **Digest language:** the notification and the email are French when the system language is French, English otherwise. All strings and the rule live in `core/digest-i18n.ts` (`resolveDigestLocale`, `digestStrings`); never inline digest text elsewhere. The tag comes from `main/system-locale.ts` via `DigestConfigStore.getLocale`. The in-app UI stays English.
+- **Defaults are decisions** (`DEFAULT_DIGEST_SETTINGS`): 09:00, `graceHours` 96, `minImportance` 2, Touch ID allowed, subjects shown, launch at login on. Change them only with the owner.
+- **Launch at login** is `main/login-item.ts` (Electron injected): packaged macOS/Windows builds only, applied once then on settings change, hidden start when the OS launched the app. Never register the dev binary.
 
 **Privacy invariants (do not break; all have tests):**
 

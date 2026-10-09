@@ -91,22 +91,27 @@ probably not synced and every mail would look unanswered. The result is flagged
 
 ### Scoring
 
-Gate, when a signal exists: `importance >= 3` and `needsReply >= 0.6`.
+Gate, when a signal exists: `importance >= minImportance` (setting, default 2 = "Normal and
+above") and `needsReply >= 0.6`.
 Gate, when it does not: the sender looks like a person **and** the heuristic says the mail asks
-something. Such items count as importance 3 and needsReply 0.6 and are labelled `heuristic`.
+something. Such items count as importance 3 and needsReply 0.6 and are labelled `heuristic`; they
+are left out only when `minImportance` is 4 (Critical only).
 
 ```
 score = importanceWeight(importance) * needsReply * ageFactor(ageHours) * (1.1 if you are in To)
 
 importanceWeight: 1 -> 0.2   2 -> 0.5   3 -> 1.0   4 -> 1.8
 ageFactor:        1.0 while age <= graceHours, then linear up to 1.5 at 7 days, flat afterwards
+                  (flat 1.0 when graceHours is 7 days or more: no zero or negative ramp)
 ```
 
 A user `Done` mark stores needsReply 1 without an importance; the scorer treats that as
 importance 3. Ties are broken by signal before heuristic, then longer waiting, then lower id, so
 the order is deterministic. At most `maxItems` are kept. The `reason` shown to the user is built
 from fixed phrases ("Important - flagged by Claude", "Asked you a question 3 days ago") and never
-quotes the mail.
+quotes the mail. In the digest email and the notification the reason is rebuilt from the structured
+fields (basis, signal source, importance, age) in the digest language, not taken from the stored
+English `reason`.
 
 ### Settings (`config.digest`)
 
@@ -114,13 +119,21 @@ quotes the mail.
 |---|---|---|
 | `enabled` | true | Run the daily digest |
 | `time` | `09:00` | Local time, 24 h |
-| `graceHours` | 24 | Give people time to be answered before they are reminded |
-| `lookbackDays` | 14 | How far back to look |
+| `graceHours` | 96 | Give people time to be answered before they are reminded (12 h to 4 days in the UI) |
+| `lookbackDays` | 14 | How far back to look (keep it above `graceHours`; the UI warns otherwise) |
 | `maxItems` | 10 | Items per account |
+| `minImportance` | 2 | Lowest importance that can enter the digest: 2 Normal, 3 Important, 4 Critical |
 | `emailToSelf` | true | Also email the digest to the account's own address |
-| `showSubjects` | false | Notification shows sender and subject instead of a count |
-| `allowBiometricPrompt` | false | Let a scheduled run trigger Touch ID |
+| `showSubjects` | true | Notification shows "sender - subject" for the first 3 mails instead of a count |
+| `allowBiometricPrompt` | true | Let a scheduled run trigger Touch ID (one prompt at the scheduled time) |
+| `launchAtLogin` | true | Start Pluribus at login, without a window (macOS and Windows, packaged builds) |
 
+These defaults are the owner's decisions of 2026-10-09. Stored values override defaults, and
+electron-store does not deep-merge; the container fills in missing keys at startup. The feature was
+unreleased when the defaults changed, so there is no migration of earlier values.
+
+Settings are validated at the IPC boundary (`DigestSettingsInput`): `minImportance` must be 2, 3 or
+4, `launchAtLogin` a boolean.
 Scheduler bookkeeping (`digestState`: last run date, accounts with a deferred email) lives in the
 same store but is not readable or writable over IPC.
 
@@ -133,10 +146,18 @@ same store but is not readable or writable over IPC.
   that was missed (app closed, laptop asleep at 09:00) runs immediately.
 - **Per account.** Sync first (so the list reflects the mailbox now; a failed sync falls back to
   local data), compute the result, then email it to the account's own address.
-- **Notification.** Native (Electron `Notification`). Count only ("3 important emails are waiting
-  for your reply") unless `showSubjects`. Clicking it marks an open request pending, shows or
-  creates the window and sends `digest:open`; a window that is still loading pulls the request with
-  `digest:consumePendingOpen` when it mounts.
+- **Notification.** Native (Electron `Notification`). With `showSubjects` (default) it lists
+  sender and subject of the first 3 mails, one per line; otherwise only a count ("3 emails are
+  waiting for your reply"). Never body text or a snippet. Clicking it marks an open request pending,
+  shows or creates the window and sends `digest:open`; a window that is still loading pulls the
+  request with `digest:consumePendingOpen` when it mounts.
+- **Language.** The notification and the email are French when the system language is French
+  (`fr`, `fr-BE`, `fr_CH`, ...) and English otherwise. The tag comes from
+  `app.getPreferredSystemLanguages()[0]`, falling back to `app.getLocale()` (macOS often reports
+  `en-US` for the app bundle of a French user, so the preferred languages win). The rule and all
+  strings live in the pure `core/digest-i18n.ts` (`resolveDigestLocale`, `digestStrings`); the
+  port is the optional `DigestConfigStore.getLocale`, implemented in `main/system-locale.ts`. Only
+  the digest email and the notification are localised; the in-app UI is English.
 - **Email to self.** Sent through the mail sender directly, so it is **not** appended to Sent and
   cannot itself look like an answered thread. Plain text and inline-styled HTML, no remote content,
   every interpolated value escaped.
@@ -152,8 +173,10 @@ The scheduled run happens when nobody is watching, so it must not prompt.
   in `digestState.pendingEmailAccountIds`. The notification still fires from local data.
 - Deferred emails are sent when credentials become available: on unlock, on wake, and on app focus
   (throttled to once per 5 minutes). The digest is recomputed at send time, never replayed.
-- `allowBiometricPrompt` opts in to one prompt for a scheduled sync. If that sync fails, the email
-  is deferred rather than prompting a second time. Manual and test runs never prompt on their own.
+- `allowBiometricPrompt` (default on) allows one prompt for a scheduled sync. If that sync fails,
+  the email is deferred rather than prompting a second time. Manual and test runs never prompt on
+  their own. Turn it off and a locked scheduled run only notifies from local data and defers the
+  email.
 
 ### Lifecycle
 
@@ -170,6 +193,19 @@ The window is a view; the app is the process.
 - macOS: closing the last window does not quit, so the 09:00 digest still fires. Clicking the dock
   icon (`activate`) or the digest notification re-creates the window. Other platforms quit when the
   last window closes (so the digest only runs while the app is open there).
+- **Launch at login (`main/login-item.ts`).** With `launchAtLogin` on, a packaged build on macOS or
+  Windows registers itself with `app.setLoginItemSettings` and, when the OS started it at login,
+  runs everything except the first window (container, IPC, digest and System 1 jobs still start;
+  a dock click or a second launch opens the window). The stored setting is applied once on the
+  first packaged launch (`digestState.loginItemApplied`), so a login item the user later removed in
+  System Settings is not re-added on every start; changing the setting applies it at once
+  (`container.config.onChange('digest', ...)`). The development binary is never registered, and
+  Linux has no login-item API (the toggle is hidden there). macOS reports a login launch through
+  `wasOpenedAtLogin`; Windows has no such flag, so the login item carries `--hidden`. A launch-time
+  `activate` event within 3 s of a hidden start is ignored. Not verifiable without a real OS: on
+  macOS 13+ the user may have to allow the app in System Settings -> Login Items, and an ad-hoc
+  signed, non-notarized app may be treated more strictly. On Windows closing the last window still
+  quits the app, so the digest then stops until the next login.
 - A single-instance lock makes a second launch focus the first and exit, so two copies can never
   both send the daily digest. The losing instance registers no lifecycle handlers, so its quit
   cannot clean up the running instance's temp files.
@@ -180,8 +216,9 @@ The window is a view; the app is the process.
    `llm.sendBodyExcerptsToCloud` is true. `withBodyPrivacy` enforces this at the last moment and
    treats an unreadable config as "no consent". With Anthropic and no opt-in, no body text is in any
    prompt.
-2. The notification and the digest email never contain body text or snippets. Notification text is
-   a count unless `showSubjects`.
+2. The notification and the digest email never contain body text or snippets. The notification
+   lists sender and subject of the first 3 mails when `showSubjects` is on (default), otherwise a
+   count.
 3. `getPasswordIfUnlocked` never prompts biometrics.
 4. `digestState` is not exposed over IPC; `digest` settings are validated at the boundary.
 5. System 1 never sends anything anywhere. It reads body previews (and embeds them) on this device;
@@ -438,7 +475,7 @@ downloaded once (or imported); it cannot run in CI.
 Unit tests cover the logic with injected Electron pieces. These need a real run:
 
 1. **Notification fires on time.** Set the digest time to one or two minutes ahead, leave the app
-   open, wait. A notification appears (count only by default). Use Settings -> Daily digest ->
+   open, wait. A notification appears (sender - subject of the first 3 mails by default). Use Settings -> Daily digest ->
    "Send test digest now" for an immediate one.
 2. **Click opens the view.** Click the notification with the app focused, in the background, and
    with the window closed: the Needs your reply view is shown each time, including right after a
@@ -454,7 +491,7 @@ Unit tests cover the logic with injected Electron pieces. These need a real run:
 7. **Missed digest catches up.** Quit before the digest time, relaunch after it: it runs about 10
    seconds after launch. Sleep the Mac across the time and wake it: it runs on wake.
 8. **Locked credentials defer the email.** Set the biometric mode to `always`, or let the session
-   lapse, and run a scheduled digest with `allowBiometricPrompt` off: no Touch ID prompt appears, the
+   lapse, and run a scheduled digest with `allowBiometricPrompt` turned off: no Touch ID prompt appears, the
    notification fires, the email does not. Unlock (use the app so credentials are read) and the
    deferred email arrives within a few minutes or on the next focus.
 9. **Not in Sent.** The digest email is in the inbox and not in Sent.
@@ -479,3 +516,15 @@ Unit tests cover the logic with injected Electron pieces. These need a real run:
     the opt-in is on.
 16. **Real encoder, real French.** `EVAL_CLASSIFIER=system1 npm run eval` with the real model
     reports language-weighted accuracy; compare encoders with `EVAL_EMBED_MODEL`.
+17. **Touch ID at the scheduled time.** With `allowBiometricPrompt` on (default) and a locked
+    session, a scheduled run at the digest time shows one Touch ID prompt, then syncs, notifies
+    and emails. Cancel the prompt: the notification still appears, the email is deferred, and no
+    second prompt follows.
+18. **Language.** With the system language set to French (System Settings -> Language & Region,
+    first preferred language French), the test digest's notification and email are in French
+    ("Réponses en attente", "il y a 4 jours"); with English first they are in English.
+19. **Launch at login.** Install the build in Applications, leave "Start Pluribus at login" on,
+    log out and in: Pluribus appears in System Settings -> Login Items (allow it if macOS asks), is
+    running (Dock icon) with no window, and the digest still fires at the digest time. A Dock click
+    opens the window. Turn the toggle off: the item disappears from Login Items. Remove the item in
+    System Settings and relaunch: it is not re-added.
