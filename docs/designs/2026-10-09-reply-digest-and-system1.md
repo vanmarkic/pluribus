@@ -236,7 +236,7 @@ The window is a view; the app is the process.
 | The user's IMAP and SMTP servers | Sync, send, digest email | Normal mail traffic with the user's own provider |
 | Ollama at `127.0.0.1:11435` | Default LLM provider | Triage prompts; stays on the machine |
 | `api.anthropic.com` | Only if the user chose the Anthropic provider | Triage prompts. Body excerpts only with `sendBodyExcerptsToCloud` |
-| Hugging Face (model files) | Once, the first time the on-device encoder is needed and is not in `userData/models` | Model download request only; no mail data. Afterwards remote loading is switched off entirely (`allowRemoteModels = false`); "Import model from folder" installs the model with no network at all. The download uses the `main` revision until `PINNED_MODEL_REVISIONS` is filled in (see Encoder) |
+| Hugging Face (model files) | **Only when the user clicks "Download model"** in Settings (about 118 MB). Never automatic | Model download request only; no mail data. Hugging Face sees the user's IP address. Remote loading is off at all other times (`allowRemoteModels = false`); "Import model from folder" installs the model with no network at all. The download uses the `main` revision until `PINNED_MODEL_REVISIONS` is filled in (see Encoder) |
 | GitHub releases (`ollama-darwin.tgz`) | Only when the user clicks to download the bundled Ollama | A download request |
 | Ollama model registry | Only when the user pulls a model, done by the local Ollama server | A download request |
 | License server (HTTPS) | License activation and validation | License key and machine identifier |
@@ -309,11 +309,23 @@ the order exists in one place.
   the settings. Changing the model takes effect after a restart (the settings panel says so);
   heads trained on another encoder never answer, so a switch starts in shadow mode until the next
   retrain.
-- **No network once cached.** Right before the model loads, the service checks the cache. If the
-  model files are there (`config.json`, `tokenizer.json`, `tokenizer_config.json`,
-  `onnx/model_quantized.onnx`) it sets `env.allowRemoteModels = false`, so the library cannot reach
-  the network at all. Only a missing model may be downloaded, once. A failed load is not retried
-  for 60 seconds.
+- **Never downloaded on its own (consent first).** The model (about 118 MB) comes from
+  huggingface.co, which sees the user's IP address, so the app never fetches it by itself.
+  `createEmbeddingService` has `autoDownload: false` (the container never turns it on; only the
+  developer-run evals do) and switches `env.allowRemoteModels` off as soon as a service exists. If
+  the model files (`config.json`, `tokenizer.json`, `tokenizer_config.json`,
+  `onnx/model_quantized.onnx`) are not on disk, `embed()` throws `EmbeddingModelNotInstalledError`
+  (`core/embedding-model.ts`) without touching the network. The only code that turns remote loading
+  on is `downloadModel()`, for the duration of that call, started by the "Download model" button
+  (`system1:downloadModel`, rate limited, no arguments from the renderer). Concurrent calls share
+  one download; a failure shows a readable error and a retry; a download that leaves no files
+  on disk (disk full) is reported as a failure. A failed load is not retried for 60 seconds.
+- **Until the model is installed, everything degrades quietly.** System 1 escalates every question
+  to the LLM (no log line per email), the semantic index and kNN search return nothing,
+  `backfillEmbeddings` reports `model-not-installed` instead of starting, and training only reads
+  vectors already stored. Classification keeps working through System 2. `system1:getStatus`
+  carries `modelInstalled`, `modelDownloading` and `modelError`, and the panel shows a "Download"
+  button with the size and the privacy wording, progress by polling, and an error with retry.
 - **Import from folder.** Settings -> Classification -> Semantic index -> "Import model from folder". A native folder
   picker (the renderer never names a path); the main process validates the required files, copies
   them through temporary names so an interrupted copy never looks complete, and resets the encoder
@@ -429,7 +441,7 @@ finds a qualifying threshold again.
 | `auditRate` | 0.05 | Share of confident answers also sent to the LLM (0 to 0.5) |
 
 Validated at the IPC boundary (`config:set`). IPC: `system1:getStatus`, `system1:retrain`,
-`system1:importModel`.
+`system1:importModel`, `system1:downloadModel`.
 
 ### Tests
 
@@ -498,10 +510,13 @@ Unit tests cover the logic with injected Electron pieces. These need a real run:
 10. **Cloud privacy.** With the Anthropic provider and "Send short body excerpts" off, inspect the
     outgoing requests with a proxy and confirm no body text, then turn the option on and confirm
     short excerpts now appear.
-11. **Encoder downloads once, then runs offline.** With an empty `userData/models`, enable System 1
-    and classify some mail: the only new outbound traffic is the model download from Hugging Face
-    (no mail data), and `userData/models/Xenova/multilingual-e5-small/` appears. Quit, disconnect
-    the network, relaunch, classify new mail: embedding still works and nothing is requested.
+11. **Encoder downloads only on click, then runs offline.** With an empty `userData/models`,
+    enable System 1 and classify some mail: nothing is requested from Hugging Face (check with a
+    proxy), the panel says the model is not installed, and the LLM classifies. Click "Download
+    model": the only new outbound traffic is the download from Hugging Face (no mail data),
+    `userData/models/Xenova/multilingual-e5-small/` appears and the panel says "Model installed".
+    Quit, disconnect the network, relaunch, classify new mail: embedding still works and nothing is
+    requested. Cut the network during a download: a readable error and a working "Retry".
 12. **Import from folder.** Delete the model folder, click "Import model from folder" and pick a
     downloaded copy: the panel confirms the size, and embedding works with the network off. Pick a
     wrong folder: a readable error naming the missing files, nothing half-copied.

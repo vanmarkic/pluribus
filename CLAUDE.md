@@ -163,6 +163,7 @@ Most of the user's mail is French; System 1 runs entirely on this device (embedd
 - **Canonical text rule:** every vector System 1 trains or scores on comes from `system1Text(email, bodyPreview?)` and the encoder service (which adds the e5 `query: ` prefix in one place). Never embed an email for System 1 any other way, and never overwrite a stored vector (`keepVector`). The embedding model id is `embeddingService.getModel()` everywhere.
 - **Never train on `email_embeddings.folder`** (LLM pseudo-labels and old `INBOX` placeholders), on fallback results, or on `system1` signals. Labels are user actions (gold) and System 2 signals (teacher) only.
 - **Privacy invariant:** no body text or snippet reaches a cloud LLM unless `llm.sendBodyExcerptsToCloud`; `src/__tests__/system1-pipeline.test.ts` proves it with System 1 in the stack. Keep it green.
+- **Never auto-download the encoder model.** It comes from huggingface.co (the user's IP is visible), so it is fetched only by `downloadModel()` after the user clicks "Download model" in Settings (or installed by "Import model from folder"). `createEmbeddingService` defaults to `autoDownload: false`; `embed()` then throws `EmbeddingModelNotInstalledError` and every caller must degrade quietly to the LLM (use `isEmbeddingModelNotInstalled`). Never set `autoDownload: true` in the app.
 - **Tests use fake embedders.** Hugging Face is not reachable from CI; never download a model in a test. `npm run eval` uses the rule-based stub; `EVAL_CLASSIFIER=system1` needs the real model locally.
 
 ## Commands
